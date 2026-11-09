@@ -272,8 +272,11 @@ Consumed detail helpers contribute world terrain. Runtime brush-model terrain re
 Supported opaque single-base terrain and plain unbumped two-base
 `WorldVertexTransition` terrain receive this preview. Both declared static 2D
 color textures must be available. Vertex paint blends the bases before the same
-shared lighting calculation. Base display overrides, material texture transforms, bump maps,
-detail layers, blend modulation, proxies and translucent effects remain excluded.
+shared lighting calculation. For ordinary single-base normal-mapped terrain,
+enable **Normal map preview** and use **Detail · per-fragment**. See [Normal-map preview](normal-maps.md).
+Base display overrides, unsupported material transforms, detail layers, blend
+modulation, proxies and translucent effects remain excluded. Two-base normal
+maps are not yet supported.
 See [lighting preview](lighting-preview.md).
 
 ## Mirror or shear terrain

@@ -276,7 +276,7 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
     prepared
 }
 
-pub(super) fn lighting_error(
+pub(crate) fn receiver_error(
     mesh: &DisplacementMesh,
     normals: &[[f64; 3]],
 ) -> Option<&'static str> {

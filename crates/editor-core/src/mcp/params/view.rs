@@ -491,7 +491,7 @@ pub struct SetViewArgs {
 
     /// Opt-in authored mode5 Sprite resource guides with SRC_ALPHA/ONE RGB; raw guides remain the default. Requires Entity images.
     pub additive_sprite_guides: Option<bool>,
-    /// Opt-in flat-brush normals under fixed editor light or Detail authored-light preview. Defaults off.
+    /// Opt-in flat-brush and world/func_detail terrain normals under fixed editor light or Detail authored-light preview. Defaults off.
     pub normal_maps: Option<bool>,
     /// Stronger fixed ambient/directional sculpt-relief shading in Textured view. Defaults off, preserving ordinary weak shading. Authored-light receivers override it; tools/helpers remain unchanged.
     pub surface_shading: Option<bool>,
@@ -553,7 +553,7 @@ pub struct RenderArgs {
 
     /// Temporary authored Additive Sprite guide override; no shared settings or literal-icon changes.
     pub additive_sprite_guides: Option<bool>,
-    /// Temporary flat-brush normal-map preview; never changes shared settings. Textured only, no terrain/models.
+    /// Temporary flat-brush and world/func_detail terrain normal-map preview; never changes shared settings. Textured only; models excluded.
     pub normal_maps: Option<bool>,
     /// Temporary stronger fixed ambient/directional surface shading in Textured view; leaves shared settings unchanged. False preserves ordinary weak shading; authored-light receivers override it.
     pub surface_shading: Option<bool>,

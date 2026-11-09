@@ -68,8 +68,8 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |
-| ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on brick](docs/images/normal-maps-on.png) |
-| Filter native materials and inspect both blend-image layers. | Inspect supported surface detail before compiling. |
+| ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on curved stone terrain](docs/images/normal-maps-on.png) |
+| Filter native materials and inspect both blend-image layers. | Inspect normal detail on brushes and curved terrain. |
 
 | [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
 | --- | --- |

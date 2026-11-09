@@ -350,7 +350,8 @@ fn terrain_lighting_error(
     }
     lighting_error(material).or_else(|| {
         material.params.iter().find_map(|(key, _)| {
-            if key.starts_with("$bump") || key.starts_with("$normal") || key.starts_with("$ssbump")
+            if (key.starts_with("$bump") && !["$bumpmap", "$bumptransform"].contains(&key.as_str()))
+                || key.starts_with("$normal") || key.starts_with("$ssbump")
                 || key == "$forcebump" {
                 Some("Terrain authored lighting excludes declared bump and normal maps".into())
             } else if key.starts_with("$detail")

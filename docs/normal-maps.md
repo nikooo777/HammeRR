@@ -4,7 +4,7 @@
 
 Show small surface detail without adding geometry.
 
-1. Apply a supported normal-mapped material to a flat brush face.
+1. Apply a supported normal-mapped material, such as `shadertest/diffusebump`, to a flat brush or terrain face.
 2. Choose **Textured** in the viewport header.
 3. Enable **Normal map preview**.
 4. Check the status for unavailable materials.
@@ -12,16 +12,18 @@ Show small surface detail without adding geometry.
 
 | Ordinary shading | Normal-map preview |
 | --- | --- |
-| ![Brick with ordinary shading](images/normal-maps-off.png) | ![The same brick with normal-map detail](images/normal-maps-on.png) |
+| ![Curved stone terrain with ordinary shading](images/normal-maps-off.png) | ![The same terrain with normal-map detail](images/normal-maps-on.png) |
 
 For authored lights, set **Overlays → Lighting → Quality** to **Detail · per-fragment**. Fast lighting cannot use normal maps.
 Use **Reload material assets** after changing material files.
 
 ## Limits
 
-- Flat `LightmappedGeneric` brush faces only; terrain and models are excluded.
+- Flat `LightmappedGeneric` brush faces and world or `func_detail` terrain. Models remain excluded.
+- Terrain uses its curved geometry and prepared border normals. Rotated and mirrored face mapping is supported. Singular UVs and unsafe tangent frames are excluded.
 - One static LDR normal texture; no SSBump, signed textures, proxies or second normal map.
 - Base transforms must be identity. Bump transforms support positive scale and translation, with zero rotation.
+- At most 1,048,576 expanded terrain triangle vertices per prepared scene. Other terrain stays explicitly unavailable for this effect.
 - No specular, reflections, animation or game brightness match.
 - Unsupported faces keep their base image and report why the effect is unavailable.
 

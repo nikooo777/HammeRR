@@ -609,6 +609,23 @@ the required 0 without changing scene exposure.
 
 See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
 
+## Preview normal maps
+
+1. Enable `normal_maps:true` with `set_view` in Textured view, or pass the same
+   temporary override to `render_view`.
+2. Read `get_normal_map_preview`: `report.applied_faces` and `rejected_faces`
+   count flat brush polygons; `report.terrain` counts admitted/excluded terrain
+   surfaces and drawn triangles. Errors identify the affected terrain side/brush.
+3. For authored lighting, select `lighting_quality:"detail"`. Fixed directional
+   shading also supports the effect. Reload material assets after file changes.
+
+Ordinary single-base LightmappedGeneric world/func_detail terrain supports rotated
+and mirrored UVs. Invalid packed geometry, singular UVs and invalid tangent
+frames remain explicit exclusions. Normal assets share the existing cache and
+limits. `report.terrain_vertices` counts expanded triangle vertices against
+`limits.terrain_vertices`; exhausted geometry budgets remain explicit exclusions.
+Models, two-base bump mapping and special encodings remain unsupported.
+
 ## Preview authored lighting
 
 1. Call `get_view` to inspect shared viewport settings.

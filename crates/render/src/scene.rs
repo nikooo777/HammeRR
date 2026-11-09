@@ -13,7 +13,7 @@ use crate::materials::{MaterialId, MaterialLibrary};
 mod model_lighting;
 mod rope_mesh;
 
-mod terrain;
+pub(crate) mod terrain;
 
 const HELPER_SEGMENTS: usize = 16;
 const MAX_PREVIEW_ISSUES: usize = 64;
@@ -357,14 +357,14 @@ impl Builder<'_> {
                     .iter()
                     .filter(|side| side.displacement.is_some())
                 {
-                    self.exclude_terrain(
+                    self.exclude_terrain_geometry(
                         FaceId {
                             solid: solid.id,
                             side: side.id,
                         },
                         &side.material,
                         0,
-                        "No prepared terrain geometry; authored lighting excluded",
+                        "No prepared terrain geometry",
                     );
                 }
                 return;
@@ -417,7 +417,7 @@ impl Builder<'_> {
                     }
                     let displacement = self.displacements.remove(&id);
                     let Some(Displacement { mesh, normals }) = displacement else {
-                        self.exclude_terrain(
+                        self.exclude_terrain_geometry(
                             id,
                             &side.material,
                             0,
@@ -512,6 +512,9 @@ impl Builder<'_> {
         let result = map_core::surface::validate_projection(side, normal, points)
             .and_then(|()| map_core::surface::validate_lightmap_scale(side.lightmap_scale));
         if let Err(error) = result {
+            if side.displacement.is_some() {
+                self.exclude_terrain_geometry(face, &side.material, 0, &error.to_string());
+            }
             self.issues.push(SceneIssue::Surface {
                 face,
                 message: error.to_string(),
@@ -564,35 +567,19 @@ impl Builder<'_> {
         }
         let mut tangent = [0.0; 4];
         if self.normal_maps.active && !tool {
-            let asset = self.library.normal_map(self.fs, material);
-            if !self
-                .normal_maps
-                .materials
-                .iter()
-                .any(|report| report.material == asset.report.material)
-            {
-                if self.normal_maps.materials.len() < crate::normal_maps::MAX_ASSETS {
-                    self.normal_maps.materials.push(asset.report.clone());
-                } else {
-                    self.normal_maps.materials_truncated = true;
-                }
-            }
-            let result = if asset.image.is_some() && missing_base {
-                Err("Normal preview needs an available base display texture to establish its UV dimensions".into())
-            } else if asset.image.is_some() {
-                crate::normal_maps::tangent(
-                    side,
-                    normal,
-                    points,
-                    dimensions,
-                    asset.report.transform,
-                )
-                .map(Some)
-            } else if let Some(error) = &asset.report.error {
-                Err(error.clone())
-            } else {
-                Ok(None)
-            };
+            let result = self.normal_asset(material).and_then(|asset| {
+                asset
+                    .map(|asset| {
+                        crate::normal_maps::tangent(
+                            side,
+                            normal,
+                            points,
+                            dimensions,
+                            asset.report.transform,
+                        )
+                    })
+                    .transpose()
+            });
             match result {
                 Ok(Some(value)) => {
                     tangent = value;
@@ -601,14 +588,8 @@ impl Builder<'_> {
                 Ok(None) => {}
                 Err(error) => {
                     self.normal_maps.rejected_faces += 1;
-                    if self.normal_maps.errors.len() < crate::normal_maps::MAX_ASSETS {
-                        self.normal_maps.errors.push(format!(
-                            "Face {} · {}: {error}",
-                            side.id, asset.report.material
-                        ));
-                    } else {
-                        self.normal_maps.errors_truncated = true;
-                    }
+                    self.normal_maps
+                        .error(format!("Face {} · {}: {error}", side.id, name));
                 }
             }
         }
@@ -662,6 +643,20 @@ impl Builder<'_> {
         lines.extend(displacement_lines(mesh, WIRE_EDGE));
     }
 
+    fn exclude_terrain_geometry(
+        &mut self,
+        face: FaceId,
+        material: &str,
+        triangles: usize,
+        reason: &str,
+    ) {
+        self.exclude_terrain(face, material, triangles, reason);
+        if self.normal_maps.active {
+            self.normal_maps
+                .reject_terrain(face, material, triangles, reason);
+        }
+    }
+
     fn exclude_terrain(&mut self, face: FaceId, material: &str, triangles: usize, reason: &str) {
         if !self.lighting.report.active {
             return;
@@ -678,6 +673,25 @@ impl Builder<'_> {
         );
     }
 
+    fn normal_asset(
+        &mut self,
+        material: MaterialId,
+    ) -> Result<Option<std::sync::Arc<crate::normal_maps::Asset>>, String> {
+        let asset = self.library.normal_map(self.fs, material);
+        self.normal_maps.material(&asset.report);
+        if let Some(error) = &asset.report.error {
+            return Err(error.clone());
+        }
+        if asset.image.is_none() {
+            return Ok(None);
+        }
+        let info = self.library.get(material);
+        if info.base.is_none() || info.missing {
+            return Err("Normal preview needs an available base display texture to establish its UV dimensions".into());
+        }
+        Ok(Some(asset))
+    }
+
     fn add_displacement(
         &mut self,
         material: MaterialId,
@@ -689,6 +703,65 @@ impl Builder<'_> {
     ) {
         let (face, side, owner_supported) = source;
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
+        let coordinates = mesh
+            .base_positions
+            .iter()
+            .copied()
+            .map(uv)
+            .collect::<Vec<_>>();
+        let info = self.library.get(material);
+        let tool = info.tool;
+        let dimensions = [info.width, info.height];
+        let drawn_triangles = if tool && !self.tool_textures {
+            0
+        } else {
+            triangles.len()
+        };
+        let mut normal_frames = None;
+        if self.normal_maps.active && !tool {
+            let result = self.normal_asset(material).and_then(|asset| {
+                asset
+                    .map(|asset| {
+                        if !owner_supported {
+                            return Err(
+                                "Terrain normal preview requires world or func_detail terrain"
+                                    .into(),
+                            );
+                        }
+                        let expanded = triangles.len() * 3;
+                        if self.normal_maps.terrain_vertices + expanded
+                            > crate::normal_maps::MAX_TERRAIN_VERTICES
+                        {
+                            return Err(
+                                "Terrain normal preview exceeds its shared expanded-vertex budget"
+                                    .into(),
+                            );
+                        }
+                        crate::normal_maps::terrain_frames(
+                            mesh,
+                            normals,
+                            &coordinates,
+                            side,
+                            dimensions,
+                            asset.report.transform,
+                        )
+                    })
+                    .transpose()
+            });
+            match result {
+                Ok(Some(value)) => {
+                    normal_frames = Some(value);
+                    self.normal_maps.terrain_vertices += triangles.len() * 3;
+                    self.normal_maps.terrain.admitted_surfaces += 1;
+                    self.normal_maps.terrain.admitted_triangles += drawn_triangles;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.normal_maps
+                        .reject_terrain(face, &side.material, drawn_triangles, &error);
+                }
+            }
+        }
         let mut lighting_receiver = 0;
         if self.lighting.report.active {
             let info = self.library.get(material);
@@ -706,7 +779,7 @@ impl Builder<'_> {
             } else {
                 info.terrain_lighting_error
                     .as_deref()
-                    .or_else(|| terrain::lighting_error(mesh, normals))
+                    .or_else(|| terrain::receiver_error(mesh, normals))
             };
             if let Some(reason) = reason.map(str::to_owned) {
                 self.exclude_terrain(face, &side.material, drawn_triangles, &reason);
@@ -718,24 +791,39 @@ impl Builder<'_> {
         }
         // Texture coordinates come from the undisplaced face, as in the engine,
         // so they're computed from the flat grid position.
-        let first = self.vertices.len() as u32;
-        for (i, &p) in mesh.positions.iter().enumerate() {
-            let alpha = mesh.alphas[i].clamp(0.0, 255.0) as u8;
-            self.push_vertex(Vertex {
-                position: p.as_vec3().to_array(),
-                normal: normals[i].map(|value| value as f32),
-                uv: uv(mesh.base_positions[i]),
-                color: [tint[0], tint[1], tint[2], alpha],
-                lightmap: lightmap_vertex(side, mesh.base_positions[i]),
-                smoothing: side.smoothing_groups.unwrap_or(0),
-                opacity: 1.0,
-                texture_alpha: 0,
-                tangent: [0.0; 4],
-                baked_irradiance: [0.0; 3],
-                lighting_receiver,
-            });
+        let vertex = |i: usize, tangent| Vertex {
+            position: mesh.positions[i].as_vec3().to_array(),
+            normal: normals[i].map(|value| value as f32),
+            uv: coordinates[i],
+            color: [
+                tint[0],
+                tint[1],
+                tint[2],
+                mesh.alphas[i].clamp(0.0, 255.0) as u8,
+            ],
+            lightmap: lightmap_vertex(side, mesh.base_positions[i]),
+            smoothing: side.smoothing_groups.unwrap_or(0),
+            opacity: 1.0,
+            texture_alpha: 0,
+            tangent,
+            baked_irradiance: [0.0; 3],
+            lighting_receiver,
+        };
+        if let Some(frames) = normal_frames {
+            for (triangle, frame) in triangles.iter().zip(frames) {
+                let first = self.vertices.len() as u32;
+                for &index in triangle {
+                    self.push_vertex(vertex(index, frame));
+                }
+                self.indices[material].extend(first..first + 3);
+            }
+        } else {
+            let first = self.vertices.len() as u32;
+            for index in 0..mesh.positions.len() {
+                self.push_vertex(vertex(index, [0.0; 4]));
+            }
+            self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
         }
-        self.indices[material].extend(triangles.iter().flatten().map(|&i| first + i as u32));
     }
 
     fn add_point_entity(&mut self, entity: &Entity, selected: bool, model_guide: bool) {

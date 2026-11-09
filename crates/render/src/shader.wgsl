@@ -191,8 +191,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if globals.surface_view.z != 0u && material.helper.z > 0.5 && abs(in.tangent.w) > 0.5 {
         let uv = in.uv * material.normal_transform.xy + material.normal_transform.zw;
         let normal = textureSampleGrad(normal_texture, texture_sampler, uv, uv_dx * material.normal_transform.xy, uv_dy * material.normal_transform.xy).xyz * 2.0 - 1.0;
-        let tangent = normalize(in.tangent.xyz);
-        let bitangent = cross(n, tangent) * in.tangent.w;
+        let tangent = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
+        let bitangent = cross(n, tangent) * sign(in.tangent.w);
         shading_normal = normalize(tangent * normal.x + bitangent * normal.y + n * normal.z);
     }
     var shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);

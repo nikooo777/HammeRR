@@ -11,6 +11,7 @@ use source_formats::vtf::{ImageFormat, RgbaImage, Vtf};
 pub const MAX_ASSETS: usize = 128;
 pub const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_AXIS: u32 = 1024;
+pub const MAX_TERRAIN_VERTICES: usize = 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 const MAX_TEXTURE_BYTES: usize = 16 * 1024 * 1024;
 const SSBUMP_FLAG: u32 = 0x0800_0000;
@@ -44,7 +45,7 @@ pub(crate) fn validate_static_texture(texture: &Vtf, maximum_axis: u32) -> Resul
     }
     Ok(())
 }
-pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons only; terrain, models, sprites, icons and helpers are excluded. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. One bump map; no proxies, fallback blocks, detail/second normals, animated frames or base display overrides. Base texture transform must be identity. Bump transform supports positive axis scale and translation with zero rotation. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
+pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain; models, sprites, icons and helpers are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. One bump map; no proxies, fallback blocks, detail/second normals, animated frames or base display overrides. Base texture transform must be identity. Bump transform supports positive axis scale and translation with zero rotation. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
 
 #[derive(Serialize)]
 pub struct Limits {
@@ -53,6 +54,7 @@ pub struct Limits {
     pub texture_bytes: usize,
     pub material_bytes: usize,
     pub axis: u32,
+    pub terrain_vertices: usize,
     pub policy: &'static str,
 }
 
@@ -63,6 +65,7 @@ pub fn limits() -> Limits {
         texture_bytes: MAX_TEXTURE_BYTES,
         material_bytes: MAX_MATERIAL_BYTES,
         axis: MAX_AXIS,
+        terrain_vertices: MAX_TERRAIN_VERTICES,
         policy: LIMITS,
     }
 }
@@ -298,18 +301,12 @@ pub fn tangent(
             "Normal preview requires a finite nonsingular authored face UV projection".into(),
         );
     }
-    for &point in points {
-        let uv =
-            map_core::texel_uv(side, point) / glam::DVec2::from_array(dimensions.map(f64::from));
-        let bumped = uv * glam::DVec2::new(f64::from(transform[0]), f64::from(transform[1]))
-            + glam::DVec2::new(f64::from(transform[2]), f64::from(transform[3]));
-        if !uv.is_finite()
-            || !bumped.is_finite()
-            || uv.abs().max_element().max(bumped.abs().max_element()) > 1_000_000.0
-        {
-            return Err("Normal-preview UV coordinates must fit finite ±1000000".into());
-        }
-    }
+    validate_uvs(
+        points.iter().map(|&point| {
+            map_core::texel_uv(side, point) / glam::DVec2::from_array(dimensions.map(f64::from))
+        }),
+        transform,
+    )?;
     let (tangent, _, _) = map_core::surface::texture_tangents(normal, s, orientation < 0.0)?;
     Ok([
         tangent.x as f32,
@@ -319,12 +316,98 @@ pub fn tangent(
     ])
 }
 
+fn validate_uvs(
+    coordinates: impl IntoIterator<Item = glam::DVec2>,
+    transform: [f32; 4],
+) -> Result<(), String> {
+    for uv in coordinates {
+        let bumped = uv * glam::DVec2::new(f64::from(transform[0]), f64::from(transform[1]))
+            + glam::DVec2::new(f64::from(transform[2]), f64::from(transform[3]));
+        if !uv.is_finite()
+            || !bumped.is_finite()
+            || uv.abs().max_element().max(bumped.abs().max_element()) > 1_000_000.0
+        {
+            return Err("Normal-preview UV coordinates must fit finite ±1000000".into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn terrain_frames(
+    mesh: &map_core::DisplacementMesh,
+    normals: &[[f64; 3]],
+    coordinates: &[[f32; 2]],
+    side: &Side,
+    dimensions: [u32; 2],
+    transform: [f32; 4],
+) -> Result<Vec<[f32; 4]>, String> {
+    if let Some(error) = crate::scene::terrain::receiver_error(mesh, normals) {
+        return Err(error.into());
+    }
+    if coordinates.len() != mesh.positions.len() {
+        return Err("Terrain normal preview needs complete texture coordinates".into());
+    }
+    let base_normal = map_core::Plane::from_points(side.plane.0)
+        .ok_or("Terrain normal preview needs a valid base plane")?
+        .normal;
+    tangent(
+        side,
+        base_normal,
+        &mesh.base_positions,
+        dimensions,
+        transform,
+    )?;
+    validate_uvs(
+        coordinates
+            .iter()
+            .map(|uv| glam::DVec2::from_array(uv.map(f64::from))),
+        transform,
+    )?;
+    let mut frames = Vec::new();
+    for triangle in mesh.triangles() {
+        let [a, b, c] = triangle.map(|index| mesh.positions[index].as_vec3().as_dvec3());
+        let [ua, ub, uc] =
+            triangle.map(|index| glam::DVec2::from_array(coordinates[index].map(f64::from)));
+        let du = ub - ua;
+        let dv = uc - ua;
+        let determinant = du.perp_dot(dv);
+        if !determinant.is_finite() || determinant == 0.0 {
+            return Err("Terrain normal preview requires nonsingular packed triangle UVs".into());
+        }
+        let tangent = ((b - a) * dv.y - (c - a) * du.y) / determinant;
+        let normal = DVec3::from_array(normals[triangle[0]]);
+        let orientation = normal.dot((b - a).cross(c - a)) / determinant;
+        if !orientation.is_finite() || orientation == 0.0 {
+            return Err("Terrain normal preview needs finite nonzero tangent frames".into());
+        }
+        let sign = if orientation < 0.0 { -1.0 } else { 1.0 };
+        for index in triangle {
+            map_core::surface::texture_tangents(
+                DVec3::from_array(normals[index]),
+                tangent,
+                sign < 0.0,
+            )?;
+        }
+        let direction = tangent
+            .try_normalize()
+            .ok_or("Terrain normal preview needs a finite tangent direction")?
+            .as_vec3();
+        frames.push([direction.x, direction.y, direction.z, sign]);
+    }
+    if frames.is_empty() {
+        return Err("Terrain normal preview needs drawable triangles".into());
+    }
+    Ok(frames)
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Report {
     pub requested: bool,
     pub active: bool,
     pub applied_faces: usize,
     pub rejected_faces: usize,
+    pub terrain: crate::lighting::TerrainReceivers,
+    pub terrain_vertices: usize,
     pub materials: Vec<AssetReport>,
     pub errors: Vec<String>,
     pub errors_truncated: bool,
@@ -332,6 +415,44 @@ pub struct Report {
 }
 
 impl Report {
+    pub(crate) fn material(&mut self, report: &AssetReport) {
+        if self
+            .materials
+            .iter()
+            .any(|known| known.material == report.material)
+        {
+            return;
+        }
+        if self.materials.len() < MAX_ASSETS {
+            self.materials.push(report.clone());
+        } else {
+            self.materials_truncated = true;
+        }
+    }
+
+    pub(crate) fn reject_terrain(
+        &mut self,
+        face: map_core::surface::FaceId,
+        material: &str,
+        triangles: usize,
+        reason: &str,
+    ) {
+        self.terrain.excluded_surfaces += 1;
+        self.terrain.excluded_triangles += triangles;
+        self.error(format!(
+            "Terrain side {} on brush {} · {}: {reason}",
+            face.side, face.solid, material
+        ));
+    }
+
+    pub(crate) fn error(&mut self, error: String) {
+        if self.errors.len() < MAX_ASSETS {
+            self.errors.push(error.chars().take(1024).collect());
+        } else {
+            self.errors_truncated = true;
+        }
+    }
+
     pub fn summary(&self) -> String {
         if !self.requested {
             return "Normal map preview is off for this view".into();
@@ -340,8 +461,10 @@ impl Report {
             return "Normal map preview requires Textured view; no normal assets were read".into();
         }
         let mut summary = format!(
-            "Normal maps · {} brush polygons · {} unavailable",
-            self.applied_faces, self.rejected_faces
+            "Normal maps · {} brush polygons · {} terrain surfaces · {} unavailable",
+            self.applied_faces,
+            self.terrain.admitted_surfaces,
+            self.rejected_faces + self.terrain.excluded_surfaces
         );
         for error in self.errors.iter().take(3) {
             summary.push_str(&format!("\n{error}"));

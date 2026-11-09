@@ -10,13 +10,76 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 90.52% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 90.65% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
 Scores reflect supported workflows and open gaps. Amber counts only the implemented part of partial groups; grey is unfinished scope.
 
-Plane clipping is **21/21 workflows complete (100%)**. Each completed workflow adds 1/21 of that group. The other partial-group scores remain estimates.
+Three groups use fixed workflow counts. Each complete workflow contributes
+1 / total workflows to its group. Open workflows contribute zero.
+Other partial-group scores remain estimates.
+
+| Group | Complete | Total | Implemented |
+| --- | ---: | ---: | ---: |
+| G07 · Plane clipping | 21 | 21 | 100% |
+| C05 · Displacements | 13 | 17 | 76.47% |
+| P02 · Source material fidelity | 6 | 16 | 37.5% |
+
+<details>
+<summary>C05 · Displacement workflows</summary>
+
+| ID | Workflow | State |
+| --- | --- | --- |
+| C05-01 | Compile world/detail power 2–4 terrain with its geometry, UVs and materials | Complete |
+| C05-02 | Bake LDR/HDR terrain lightmaps | Complete |
+| C05-03 | Compile terrain collision and surface properties | Complete |
+| C05-04 | Connect reciprocal full-edge neighbors | Complete |
+| C05-05 | Connect half-edge and mixed-power neighbors | Complete |
+| C05-06 | Connect displaced corners | Complete |
+| C05-07 | Preserve native LOD masks and snapped grid positions | Complete |
+| C05-08 | Remove triangles and compile native-patch holes | Complete |
+| C05-09 | Clip and carve terrain with retained fields and neighbor checks | Complete |
+| C05-10 | Share border shading across parent/child and mixed-density terrain | Complete |
+| C05-11 | Choose authored or native client normals for baked lighting | Complete |
+| C05-12 | Preview authored LDR/HDR lighting on plain two-base terrain | Complete |
+| C05-13 | Preview normal maps on single-base terrain | Complete |
+| C05-14 | Match native bumped terrain shader selection | Open |
+| C05-15 | Match native VRAD receiver and bump-basis conversion | Open |
+| C05-16 | Qualify broader native player-hull contact behavior | Open |
+| C05-17 | Qualify rendered terrain lighting agreement | Open |
+
+Workflows use the supported geometry, material and resource limits in
+[Terrain](terrain.md). Native displacement grids remain world-owned.
+
+</details>
+
+<details>
+<summary>P02 · Material preview workflows</summary>
+
+| ID | Workflow | State |
+| --- | --- | --- |
+| P02-01 | Display supported static base textures | Complete |
+| P02-02 | Display alpha-tested cutouts | Complete |
+| P02-03 | Display static translucent materials | Complete |
+| P02-04 | Display painted two-base terrain blends | Complete |
+| P02-05 | Preview tangent-space normal maps on flat brushes | Complete |
+| P02-06 | Preview tangent-space normal maps on single-base terrain | Complete |
+| P02-07 | Preview two-base terrain normal maps | Open |
+| P02-08 | Preview model normal maps | Open |
+| P02-09 | Preview specular material response | Open |
+| P02-10 | Preview environment reflections | Open |
+| P02-11 | Preview material emission | Open |
+| P02-12 | Preview animated and proxy-driven material effects | Open |
+| P02-13 | Preview refraction and native water shading | Open |
+| P02-14 | Preview detail texture layers | Open |
+| P02-15 | Preview SSBump and other special normal encodings | Open |
+| P02-16 | Preview extended material texture transforms | Open |
+
+Completed workflows retain the limits in [Materials](textures.md) and
+[Normal maps](normal-maps.md). They do not establish full native shader parity.
+
+</details>
 
 ## Editor
 

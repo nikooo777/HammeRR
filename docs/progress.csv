@@ -67,7 +67,7 @@ A01,Source model support and selection,65
 A02,Sound exploration,100
 A03,Particle exploration (++),100
 P01,Live lighting preview (++),55
-P02,Source material fidelity,25
+P02,Source material fidelity,37.5
 P03,2D sky rendering (++),100
 P04,3D skybox preview (++),25
 P05,Fog preview (++),100
@@ -89,7 +89,7 @@ C01,Visibility compilation,100
 C02,Lighting compilation,81
 C03,Production collision,75
 C04,Static props,65
-C05,Displacements,75
+C05,Displacements,76.470588
 C06,Water and related spatial data,60
 C07,Overlay compilation,65
 C08,Cubemaps and lighting origins,70

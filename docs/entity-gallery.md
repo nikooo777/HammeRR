@@ -33,7 +33,7 @@ models, FGD helper geometry, icons and property defaults as ordinary placement.
    Undo step and select its entities. **Cancel preview**, **Close** or Escape
    discards your preview. Changing settings requires **Preview selected** again.
 
-![A light icon, player model guide and static prop in a gallery preview](images/entity-gallery.png)
+![Lights, player model guides and props in a gallery preview](images/entity-gallery.png)
 
 ## Shared gallery previews
 

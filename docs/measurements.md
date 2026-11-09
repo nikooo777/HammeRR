@@ -47,7 +47,7 @@ The endpoint follows compatible moves, rotations and surface edits. It retains t
 The grid draws over geometry. Snapping uses the plane axes. **Half extent** sets the displayed area; picks can extend beyond it.
 **Reset plane** restores the disabled default. **Reload plane** replaces the form with current settings.
 
-![An oblique reference grid and a surface-attached ruler](images/spatial-guides.png)
+![An oblique reference grid and saved rulers beside a cottage](images/spatial-guides.png)
 
 ## Limits
 

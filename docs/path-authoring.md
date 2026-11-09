@@ -24,7 +24,7 @@ Class conversion requires neutral node behavior and no attached train.
 
 Use **Pick position…** to place a point on a visible surface. **Cancel position pick** keeps its preceding position.
 
-![Move handles on a linked train path](images/linked-path-handles.png)
+![Move handles on a linked path loop](images/linked-path-handles.png)
 
 ## Configure a train
 

@@ -57,7 +57,7 @@ See [Helpers and selection presentation](selection-presentation.md).
 2. Enable **Advanced properties** to read the helper summary, defaulted fields and unavailable-guide reasons.
 3. Edit the existing property fields, such as **Mins** and **Maxs** on `info_node_link_controller`, or **Path radius** on `path_track`.
 
-![Path cylinders, wire boxes and absolute-coordinate guides beside brush and model geometry](images/entity-property-guides.png)
+![Path cylinders, a wire box and a spotlight cone beside brush and model geometry](images/entity-property-guides.png)
 
 Wire boxes use offsets from the point origin or brush bounds center and remain
 world-aligned. Typed `origin`, `vecline` and `axis` guides use absolute world

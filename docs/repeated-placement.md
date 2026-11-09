@@ -83,7 +83,7 @@ behavior.
 10. Click **Preview scatter** and inspect the placements.
 11. Click **Apply placement** or **Cancel**.
 
-![Scaled barrels follow a sculpted terrain surface](images/surface-scatter.png)
+![Scaled crates follow sculpted hills](images/surface-scatter.png)
 
 Each copy repeats the entire captured source assembly. The seed and the same
 admitted sources, faces and settings reproduce the placements. Larger triangles

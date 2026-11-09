@@ -14,7 +14,7 @@ contact with the world.
 4. Click **Pick end**, then click the second surface.
 5. Review both positions and the displayed span, then click **Apply rope**.
 
-![A textured rope placed between two surfaces](images/rope-placement.png)
+![Ropes placed between lantern-lit posts](images/rope-placement.png)
 
 The operation creates a named `move_rope` and `keyframe_rope` with their
 **Next KeyFrame** link. One Undo removes the pair.

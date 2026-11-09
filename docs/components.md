@@ -74,7 +74,7 @@ The original corners remain fixed.
 6. Click **Preview ridge** and inspect the shape and brush counts.
 7. Click **Apply ridge**.
 
-![A flat top reshaped into two roof slopes](images/roof-ridge.png)
+![A flat brick top raised into two tiled roof slopes](images/roof-ridge.png)
 
 **Keep roof texture at corners** attaches the original texture to both slopes.
 **Keep neighboring textures at corners** independently attaches the extended

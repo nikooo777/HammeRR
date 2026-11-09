@@ -48,7 +48,7 @@ by Source's terrain format.
 3. Set the brush center, radius, strength and blend value.
 4. Click **Preview**, then **Apply**.
 
-![A painted gravel blend across sculpted terrain](images/terrain-blended.png)
+![A painted dirt path across sculpted hills](images/terrain-blended.png)
 
 Blend values run from 0 to 255. **Fill blend** changes the complete selected scope.
 **Invert blend** reverses its values.

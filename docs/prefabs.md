@@ -66,7 +66,7 @@ Use **Rename…** or **Delete prefab…** to manage the library.
 > [!WARNING]
 > **Delete prefab…** removes the VMF from the library and is not part of map Undo. Review the selected name before confirming. Placed copies stay in the map.
 
-![The same brush and model assembly at three scales](images/prefab-assemblies.png)
+![The same cottage prefab placed at three scales](images/prefab-assemblies.png)
 
 ## Limits
 

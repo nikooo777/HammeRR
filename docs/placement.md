@@ -18,7 +18,7 @@ Align a selection with a floor, ceiling or picked surface.
 Positive offsets leave space above the surface. Negative offsets embed the selection.
 **Cancel** or Escape discards the preview.
 
-![A barrel follows the normal of a sloping surface](images/slope-placement.png)
+![Barrels and a crate follow the normal of a sloping ramp](images/slope-placement.png)
 
 ## Snap a real corner
 

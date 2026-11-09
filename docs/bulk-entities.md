@@ -4,7 +4,7 @@
 
 Change captured sets of entities with one reviewed, undoable edit.
 
-![Six Source props replaced together while retaining their placement](images/bulk-entities.png)
+![Six barrels replaced by flower barrels while retaining their placement](images/bulk-entities.png)
 
 ## Change classes
 
@@ -25,7 +25,7 @@ class defaults.
 4. Choose **Skin** and bodygroups. Inspect every captured model in the viewport.
 5. Click **Use model** to apply the choice to all captured entities, or **Cancel**.
 
-![The captured barrels before the shared model choice](images/bulk-entities-before.png)
+![The captured wine barrels before the shared model choice](images/bulk-entities-before.png)
 
 Mixed source values remain unchanged until you choose a model. The preview
 preserves each entity's position, rotation, scale, tint and hidden state.

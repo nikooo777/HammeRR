@@ -58,12 +58,12 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
 | --- | --- |
-| ![A terrain opening above carved brick walls](docs/images/terrain-carved-hole.png) | ![Two painted curved-terrain halves moved apart](docs/images/terrain-surface-cut.png) |
+| ![A terrain opening above carved brick walls](docs/images/terrain-carved-hole.png) | ![A sculpted hill and brick wall clipped and pulled apart](docs/images/clip-planes.png) |
 | Subtract shapes from brushes and terrain. | Cut brushes, planar surfaces and folded terrain. |
 
 | [Component editing](docs/components.md) | [Arrays and surface scatter](docs/repeated-placement.md) |
 | --- | --- |
-| ![Free face cuts with independent texture placement](docs/images/free-face-cuts.png) | ![Scaled barrels follow a sculpted terrain surface](docs/images/surface-scatter.png) |
+| ![A roof ridge raised on a brick cottage with attached textures](docs/images/roof-ridge.png) | ![Scaled crates follow sculpted hills](docs/images/surface-scatter.png) |
 | Cut face patterns and reshape components with attached textures. | Repeat or scatter assemblies with checked pivots, scale and references. |
 
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
@@ -78,7 +78,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
-| ![Sculpted terrain with painted blends](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |
+| ![Sculpted hills with a painted dirt path](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |
 | Sculpt, paint, join terrain and remove selected triangles. | Build mixed-grid terrain with lighting, collision and native vector inspection. |
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
@@ -88,7 +88,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Models and bulk editing](docs/bulk-entities.md) | [Surface placement](docs/placement.md) |
 | --- | --- |
-| ![Six props replaced together](docs/images/bulk-entities.png) | ![A barrel aligned with a sloping surface](docs/images/slope-placement.png) |
+| ![Six barrels replaced by flower barrels together](docs/images/bulk-entities.png) | ![Barrels and a crate aligned with a wooden ramp](docs/images/slope-placement.png) |
 | Choose model sets, skins, bodygroups, scale, tint and opacity. | Place objects on floors, ceilings or picked surfaces. |
 
 | [Point-entity gallery](docs/entity-gallery.md) | [Selection modes](docs/selection.md#choose-the-object-selection-unit) |
@@ -98,7 +98,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Entity property guides](docs/entities.md#inspect-property-guides) | [Content refresh](docs/textures.md#reload-mounted-content-and-definitions) |
 | --- | --- |
-| ![Path cylinders, wire boxes and coordinate guides](docs/images/entity-property-guides.png) | ![Updated loose-file and VPK materials on the same panels](docs/images/asset-reload-after.png) |
+| ![Path cylinders, a wire box and a spotlight cone beside a cottage](docs/images/entity-property-guides.png) | ![Updated loose-file and VPK materials on the same panels](docs/images/asset-reload-after.png) |
 | Inspect bound properties and linked endpoints beside brush and model geometry. | Watch for changes and refresh mounts, definitions and assets. |
 
 | [Reference images](docs/reference-images.md) | [Magnetic snapping](docs/placement.md#magnetic-translation) |
@@ -108,7 +108,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
-| ![A compiled reflecting pool](docs/images/water-native.png) | ![A textured rope placed between two surfaces](docs/images/rope-placement.png) |
+| ![A compiled reflecting pool](docs/images/water-native.png) | ![Ropes hung between lantern-lit posts](docs/images/rope-placement.png) |
 | Build water and opaque slime pools with captured reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
 
 | [3D sky terrain](docs/sky.md#add-terrain-to-the-miniature) | [3D sky models and materials](docs/sky.md#add-fixed-models-to-the-miniature) |
@@ -118,7 +118,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Fog](docs/fog.md) | [Spatial guides](docs/measurements.md) |
 | --- | --- |
-| ![Distance fog in a metal hall](docs/images/fog-on.png) | ![An oblique reference plane and attached ruler](docs/images/spatial-guides.png) |
+| ![Distance fog in a metal hall](docs/images/fog-on.png) | ![An oblique reference grid and rulers beside a cottage](docs/images/spatial-guides.png) |
 | Preview world and sky fog with timed histories and one HDR scene exposure. | Attach rulers to surfaces and snap picks to 3D reference planes. |
 
 | [Color correction](docs/color-correction.md) | [Visibility profiles](docs/working-region.md#saved-rule-profiles) |
@@ -153,12 +153,12 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Prefab library](docs/prefabs.md) | [Coordinated views](docs/basics.md#coordinated-views) |
 | --- | --- |
-| ![A reusable brush and model assembly at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share the selected bridges](docs/images/coordinated-views.png) |
+| ![One cottage prefab placed at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share the selected bridges](docs/images/coordinated-views.png) |
 | Organize saved assemblies, replace their content and place scaled copies. | Edit through independent cameras with linked orthographic navigation. |
 
 | [Linked paths and trains](docs/path-authoring.md) | [Entity graphs](docs/entities.md#inspect-connected-logic) |
 | --- | --- |
-| ![Directed train path with a node move handle](docs/images/linked-path-handles.png) | ![Directed logic with prepared instance lights](docs/images/entity-graph-canvas.png) |
+| ![A directed path loop with a node move handle](docs/images/linked-path-handles.png) | ![Directed logic with prepared instance lights](docs/images/entity-graph-canvas.png) |
 | Edit path nodes, configure trains and duplicate linked assemblies. | Trace logic, arrange nodes and inspect instance sources. |
 
 Counter-Strike: Source and its assets are not included.

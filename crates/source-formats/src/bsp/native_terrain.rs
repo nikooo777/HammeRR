@@ -1,7 +1,10 @@
-//! Complete observed client arrays matched to an explicitly selected BSP channel.
-//! The caller binds the exact BSP bytes and native profile/process/readiness receipt.
+//! Complete terrain arrays matched to an explicitly selected BSP channel.
+//! Observed readbacks require caller-bound process and readiness receipts.
+//! Explicit-profile predictions remain separate from readbacks.
 
 use std::io;
+
+pub mod basis;
 
 use super::{
     Bsp, DisplacementInfo, Face, FaceGeometry, LUMP_COUNT, LightingKind, NativeDisplacementProfile,
@@ -96,6 +99,7 @@ pub struct NativeTerrainSource {
     info: DisplacementInfo,
     face_record: Face,
     base_quad: [[f32; 3]; 4],
+    native_base_quad: [[f32; 3]; 4],
     texinfo: TexInfo,
 }
 
@@ -130,6 +134,10 @@ impl NativeTerrainSource {
 
     pub const fn base_quad(self) -> [[f32; 3]; 4] {
         self.base_quad
+    }
+
+    pub const fn native_base_quad(self) -> [[f32; 3]; 4] {
+        self.native_base_quad
     }
 
     pub const fn texinfo(self) -> TexInfo {
@@ -322,6 +330,13 @@ impl NativeTerrainCarrier {
                 info,
                 face_record,
                 base_quad,
+                native_base_quad: data.native_base_quad(
+                    ordinal,
+                    base_quad,
+                    NativeDisplacementProfile::CssLinux64Build25338318 {
+                        rounding: NativeDisplacementRounding::NearestEven,
+                    },
+                )?,
                 texinfo,
             });
             position_candidates.push(candidates);

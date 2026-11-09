@@ -368,6 +368,32 @@ the reported values remain unchanged.
 
 The normal is cyan. Tangent S is red. Tangent T is green.
 
+### Compare an offline basis prediction
+
+Predict positions, normals and tangents from the exact retained BSP, then compare
+every sample with the independent observed catalog.
+
+1. Prepare an observation in **Build → Native terrain…**.
+2. Open the **Offline comparison** tab.
+3. Under **Selected predictive arithmetic**, choose **Position rounding** and
+   **Basis rounding**. Set **Flush subnormal results to zero (FTZ)** and
+   **Treat subnormal inputs as zero (DAZ)** explicitly.
+4. Click **Compare all**. Read the complete-catalog exact and mismatch counts,
+   per-field maximum errors and the result's CPU/FP profile.
+5. Expand **Displacements** and **Vertices**, then select a patch and vertex.
+   Under **Compared values**, choose **Field** to
+   inspect **Position**, **Normal**, **Tangent S** or **Tangent T**. Observed and
+   predicted values retain separate raw bits, with per-axis equality, absolute
+   error and ULP distance.
+6. Use **Cancel comparison** to stop computation or **Clear comparison** to
+   release the prediction. The observed catalog remains available in **Observation**.
+
+Prediction uses the worker's recorded CPU and RSQRTSS behavior. The selected
+arithmetic does not establish the observed game's generation-time FP state.
+Mismatches remain diagnostics; the inspector does not substitute predicted
+vectors into the observed catalog, HammeRR lighting or the map. **Frame** and
+vector guides continue to use observed values.
+
 > [!NOTE]
 > Native inspection requires the supported Linux64 CS:S build and Steam.
 > It reads the complete compiled LDR terrain catalog at load completion. It does

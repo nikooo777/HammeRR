@@ -601,6 +601,20 @@ impl DocumentAccess {
         super::compiled_terrain_snapshot::start(&self.session, actor, snapshot, operation)
     }
 
+    pub fn compare_compiled_terrain_basis(
+        &self,
+        actor: Actor,
+        token: u64,
+        options: crate::session::compiled_terrain_snapshot::ComparisonOptions,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Native terrain basis comparison"))
+            .transpose()?;
+        super::compiled_terrain_snapshot::compare(&self.session, actor, token, options, operation)
+    }
+
     pub fn start_player_support_observation(
         &self,
         actor: Actor,

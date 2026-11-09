@@ -17,6 +17,9 @@ use super::native_observation::{Frame, MAX_METADATA_BYTES};
 use super::{Actor, Session, baked_build, inspection_framing, native_observation, worker};
 use crate::runtime::{SharedSession, lock, native_activity};
 
+mod comparison;
+pub use comparison::{ComparisonCompleted, ComparisonOptions, ComparisonRequest, Rounding};
+
 pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
 pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
@@ -43,6 +46,7 @@ pub(super) struct State {
     status: &'static str,
     error: Option<String>,
     presentation_key: Option<(bool, Option<String>)>,
+    comparison: comparison::State,
 }
 
 struct Pending {
@@ -462,6 +466,7 @@ impl Session {
             "observation":ready.map(|ready|ready.observation()),"artifacts":ready.map(|ready|&ready.artifacts),
             "elapsed_ms":ready.map(|ready|ready.elapsed_ms),"cleanup_error":self.native_cleanup_result().err(),
             "error":state.error,"guide":self.terrain_guide_report(),"native_activity":native_activity,
+            "comparison":self.compiled_terrain_basis_comparison(),
             "build":build,"limits":{"page_rows":MAX_PAGE_ROWS,"page_bytes":MAX_PAGE_BYTES,
                 "source_bytes":MAX_SOURCE_BYTES,"retained_bytes":MAX_RETAINED_BYTES,"active_workers":1,"snapshots":1},
             "policy":POLICY})
@@ -518,6 +523,7 @@ impl Session {
             control: control.clone(),
         });
         state.ready = None;
+        state.comparison.retire();
         state.guide = None;
         state.visible = false;
         state.status = "preparing";
@@ -628,6 +634,9 @@ impl Session {
         token: u64,
     ) -> Result<Value, String> {
         self.check_terrain_snapshot_token(token)?;
+        if self.compiled_terrain_snapshot.comparison.running() {
+            return self.cancel_compiled_terrain_basis_comparison(actor, token);
+        }
         let pending = self
             .compiled_terrain_snapshot
             .pending
@@ -658,6 +667,7 @@ impl Session {
         }
         state.token = None;
         state.ready = None;
+        state.comparison.retire();
         state.guide = None;
         state.visible = false;
         state.status = "not_prepared";
@@ -731,6 +741,7 @@ impl Session {
                     "vertex":vertex,"row":vertex/displacement.grid_size(),"column":vertex%displacement.grid_size(),
                     "position":vector_report(sample.position_bits()),"normal":vector_report(sample.normal().bits()),
                     "tangent_s":vector_report(sample.tangent_s().bits()),"tangent_t":vector_report(sample.tangent_t().bits()),
+                    "comparison":self.terrain_basis_sample_comparison(ordinal,vertex),
                     "frame_available":current_error.is_none() && sample_position_available(sample) && display_error.is_none(),
                     "guide_available":current_error.is_none() && sample_position_available(sample) && display_error.is_none() && self.terrain_guide_region_visible(sample)}));
             }
@@ -762,7 +773,8 @@ impl Session {
                 rows.push(json!({"build_token":ready.build.token.to_string(),"profile":ready.profile,
                     "displacement":displacement.ordinal(),"face":displacement.face(),"power":displacement.power(),
                     "grid_size":displacement.grid_size(),"samples":displacement.samples().len(),
-                    "source_label":label,"source_contributors":count}));
+                    "source_label":label,"source_contributors":count,
+                    "comparison":self.terrain_basis_displacement_comparison(displacement.ordinal())}));
             }
         }
         current_error = ready.current(self).err().or(current_error);
@@ -778,7 +790,8 @@ impl Session {
             "profile":ready.profile,"channel":"ldr","displacement":query.displacement,
             "page":{"kind":if query.displacement.is_some(){"samples"}else{"displacements"},"offset":query.offset,"limit":query.limit,
                 "total":total,"returned":rows.len(),"next_offset":query.offset.checked_add(query.limit).filter(|offset|*offset<total),"rows":rows},
-            "provenance":provenance,"guide":self.terrain_guide_report(),"policy":POLICY}),
+            "provenance":provenance,"guide":self.terrain_guide_report(),
+            "comparison":self.compiled_terrain_basis_comparison(),"policy":POLICY}),
         )
     }
 

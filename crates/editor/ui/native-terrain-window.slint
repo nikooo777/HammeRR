@@ -1,5 +1,5 @@
-import { Button, ScrollView } from "widgets.slint";
-import { Theme, MutedText, SectionHeader, SelectableRow } from "kit.slint";
+import { Button, CheckBox, ComboBox, ScrollView } from "widgets.slint";
+import { Theme, MutedText, FieldRow, SectionHeader, SelectableRow, DockTab } from "kit.slint";
 
 export struct NativeTerrainRow {
     title: string,
@@ -46,6 +46,23 @@ export component NativeTerrainWindow inherits Window {
     in property <bool> can-toggle-guide;
     in property <bool> can-clear-guide;
     in property <bool> guide-visible;
+    in-out property <int> active-tab;
+    in-out property <int> position-rounding-index;
+    in-out property <int> basis-rounding-index;
+    in-out property <bool> flush-to-zero;
+    in-out property <bool> denormals-are-zero;
+    in-out property <int> comparison-field-index;
+    in property <string> comparison-status;
+    in property <string> comparison-summary;
+    in property <string> comparison-profile;
+    in property <string> comparison-error;
+    in property <string> comparison-fields;
+    in property <string> comparison-values;
+    in property <string> comparison-diagnostic;
+    in property <bool> comparison-busy;
+    in property <bool> can-compare;
+    in property <bool> can-cancel-comparison;
+    in property <bool> can-clear-comparison;
     callback prepare-snapshot();
     callback cancel-snapshot();
     callback clear-snapshot();
@@ -60,6 +77,11 @@ export component NativeTerrainWindow inherits Window {
     callback clear-guide();
     callback prepare-finished(string);
     callback close-dialog();
+    callback compare-basis();
+    callback cancel-comparison();
+    callback clear-comparison();
+    callback comparison-finished(string);
+    callback choose-comparison-field();
     forward-focus: keys;
 
     keys := FocusScope {
@@ -70,15 +92,23 @@ export component NativeTerrainWindow inherits Window {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
             Text { text: "Native terrain"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
-            MutedText { text: "Observe the compiled map's final native CPU positions, normals and tangents."; }
+            MutedText { text: "Inspect observed native CPU vectors and compare an offline prediction against the complete retained catalog."; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Prepare"; primary: true; enabled: root.can-prepare && !root.busy; clicked => { root.prepare-snapshot(); } }
+                height: 34px;
+                DockTab { text: "Observation"; active: root.active-tab == 0; clicked => { root.active-tab = 0; } }
+                DockTab { text: "Offline comparison"; active: root.active-tab == 1; clicked => { root.active-tab = 1; } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.active-tab == 0: HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Prepare"; primary: true; enabled: root.can-prepare && !root.busy && !root.comparison-busy; clicked => { root.prepare-snapshot(); } }
                 Button { text: "Cancel"; enabled: root.can-cancel; clicked => { root.cancel-snapshot(); } }
                 Button { text: "Clear"; enabled: root.can-clear; clicked => { root.clear-snapshot(); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            if root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
+            if root.active-tab == 0 && root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
+            if root.active-tab == 1 && root.comparison-status != "": Text { text: root.comparison-status; color: Theme.text; wrap: word-wrap; }
             if root.summary != "": MutedText { text: root.summary; }
             if root.availability != "": Text { text: root.availability; color: Theme.warning; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
@@ -90,71 +120,135 @@ export component NativeTerrainWindow inherits Window {
                     alignment: start;
                     padding-right: Theme.space-lg;
                     spacing: Theme.space-lg;
-                    SectionHeader { text: "Displacements"; detail: root.displacement-page; inset: false; collapsible: false; }
-                    ScrollView {
-                        content-width: self.width;
-                        horizontal-scrollbar-policy: always-off;
-                        height: root.displacements.length == 0 ? 32px : 145px;
-                        VerticalLayout {
-                            alignment: start;
-                            padding-right: Theme.space-lg;
-                            spacing: Theme.space-xs;
-                            for row[index] in root.displacements: SelectableRow {
-                                label: row.title;
-                                selected: root.selected-displacement == index;
-                                min-height: 52px;
-                                clicked => { root.choose-displacement(index); }
-                                VerticalLayout {
-                                    padding: Theme.space;
-                                    spacing: Theme.space-xs;
-                                    Text { text: row.title; color: Theme.text; overflow: elide; }
-                                    Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                    if root.active-tab == 1: VerticalLayout {
+                        spacing: Theme.space;
+                        arithmetic-header := SectionHeader { text: "Selected predictive arithmetic"; inset: false; expanded: root.comparison-summary == ""; }
+                        if arithmetic-header.expanded: VerticalLayout {
+                            spacing: Theme.space;
+                            FieldRow {
+                                label: "Position rounding"; label-width: 136px; inset: false;
+                                ComboBox {
+                                    model: ["Nearest even", "Toward negative", "Toward positive", "Toward zero"];
+                                    current-index <=> root.position-rounding-index;
+                                    enabled: !root.comparison-busy;
+                                    accessible-label: "Predictive position rounding";
                                 }
                             }
-                            if root.displacements.length == 0: MutedText { text: root.busy ? "Waiting for a complete observation." : "No retained displacement catalog."; }
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space;
-                        Button { text: "Previous displacements"; enabled: root.previous-displacements; clicked => { root.page-displacements(-1); } }
-                        Button { text: "Next displacements"; enabled: root.next-displacements; clicked => { root.page-displacements(1); } }
-                        Rectangle { horizontal-stretch: 1; }
-                    }
-                    SectionHeader { text: "Vertices"; detail: root.vertex-page; inset: false; collapsible: false; }
-                    ScrollView {
-                        content-width: self.width;
-                        horizontal-scrollbar-policy: always-off;
-                        height: root.vertices.length == 0 ? 32px : 175px;
-                        VerticalLayout {
-                            alignment: start;
-                            padding-right: Theme.space-lg;
-                            spacing: Theme.space-xs;
-                            for row[index] in root.vertices: SelectableRow {
-                                label: row.title;
-                                selected: root.selected-vertex == index;
-                                min-height: 70px;
-                                clicked => { root.choose-vertex(index); }
-                                VerticalLayout {
-                                    padding: Theme.space;
-                                    spacing: Theme.space-xs;
-                                    Text { text: row.title; color: Theme.text; overflow: elide; }
-                                    Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
-                                    Text { text: row.state; color: Theme.text-faint; overflow: elide; }
+                            FieldRow {
+                                label: "Basis rounding"; label-width: 136px; inset: false;
+                                ComboBox {
+                                    model: ["Nearest even", "Toward negative", "Toward positive", "Toward zero"];
+                                    current-index <=> root.basis-rounding-index;
+                                    enabled: !root.comparison-busy;
+                                    accessible-label: "Predictive basis rounding";
                                 }
                             }
-                            if root.vertices.length == 0: MutedText { text: "Choose a retained displacement to inspect its native grid."; }
+                            CheckBox { text: "Flush subnormal results to zero (FTZ)"; checked <=> root.flush-to-zero; enabled: !root.comparison-busy; }
+                            CheckBox { text: "Treat subnormal inputs as zero (DAZ)"; checked <=> root.denormals-are-zero; enabled: !root.comparison-busy; }
+                            MutedText { text: "Uses this worker's CPU and RSQRTSS behavior. The observed game's generation-time FP state is unknown."; font-size: Theme.font-small; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Compare all"; primary: true; enabled: root.can-compare && !root.comparison-busy; clicked => { root.compare-basis(); } }
+                            Button { text: "Cancel comparison"; enabled: root.can-cancel-comparison; clicked => { root.cancel-comparison(); } }
+                            Button { text: "Clear comparison"; enabled: root.can-clear-comparison; clicked => { root.clear-comparison(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        if root.comparison-summary != "": Text { text: root.comparison-summary; color: Theme.text; wrap: word-wrap; }
+                        if root.comparison-profile != "": VerticalLayout {
+                            spacing: Theme.space;
+                            profile-header := SectionHeader { text: "Result CPU / FP profile"; inset: false; expanded: false; }
+                            if profile-header.expanded: MutedText { text: root.comparison-profile; }
+                        }
+                        if root.comparison-error != "": Text { text: root.comparison-error; color: Theme.danger; wrap: word-wrap; }
+                    }
+                    displacements-header := SectionHeader { text: "Displacements"; detail: root.displacement-page; inset: false; expanded: root.active-tab == 0; }
+                    if displacements-header.expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        ScrollView {
+                            content-width: self.width;
+                            horizontal-scrollbar-policy: always-off;
+                            height: root.displacements.length == 0 ? 32px : 145px;
+                            VerticalLayout {
+                                alignment: start;
+                                padding-right: Theme.space-lg;
+                                spacing: Theme.space-xs;
+                                for row[index] in root.displacements: SelectableRow {
+                                    label: row.title;
+                                    selected: root.selected-displacement == index;
+                                    min-height: 52px;
+                                    clicked => { root.choose-displacement(index); }
+                                    VerticalLayout {
+                                        padding: Theme.space;
+                                        spacing: Theme.space-xs;
+                                        Text { text: row.title; color: Theme.text; overflow: elide; }
+                                        Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                    }
+                                }
+                                if root.displacements.length == 0: MutedText { text: root.busy ? "Waiting for a complete observation." : "No retained displacement catalog."; }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Previous displacements"; enabled: root.previous-displacements; clicked => { root.page-displacements(-1); } }
+                            Button { text: "Next displacements"; enabled: root.next-displacements; clicked => { root.page-displacements(1); } }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                     }
-                    HorizontalLayout {
+                    vertices-header := SectionHeader { text: "Vertices"; detail: root.vertex-page; inset: false; expanded: root.active-tab == 0; }
+                    if vertices-header.expanded: VerticalLayout {
                         spacing: Theme.space;
-                        Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
-                        Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
-                        Rectangle { horizontal-stretch: 1; }
+                        ScrollView {
+                            content-width: self.width;
+                            horizontal-scrollbar-policy: always-off;
+                            height: root.vertices.length == 0 ? 32px : 175px;
+                            VerticalLayout {
+                                alignment: start;
+                                padding-right: Theme.space-lg;
+                                spacing: Theme.space-xs;
+                                for row[index] in root.vertices: SelectableRow {
+                                    label: row.title;
+                                    selected: root.selected-vertex == index;
+                                    min-height: 70px;
+                                    clicked => { root.choose-vertex(index); }
+                                    VerticalLayout {
+                                        padding: Theme.space;
+                                        spacing: Theme.space-xs;
+                                        Text { text: row.title; color: Theme.text; overflow: elide; }
+                                        Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                        Text { text: row.state; color: Theme.text-faint; overflow: elide; }
+                                    }
+                                }
+                                if root.vertices.length == 0: MutedText { text: "Choose a retained displacement to inspect its native grid."; }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
+                            Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
                     }
-                    SectionHeader { text: "Observed values"; inset: false; collapsible: false; }
+                    SectionHeader { text: root.active-tab == 0 ? "Observed values" : "Compared values"; inset: false; collapsible: false; }
                     MutedText { text: root.selected-sample; }
-                    Text { text: root.raw-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
-                    MutedText { text: "Values retain their observed bits. Zero and nonfinite vectors have no guide segment."; font-size: Theme.font-small; }
+                    if root.active-tab == 0: Text { text: root.raw-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                    if root.active-tab == 0: MutedText { text: "Values retain their observed bits. Zero and nonfinite vectors have no guide segment."; font-size: Theme.font-small; }
+                    if root.active-tab == 1: VerticalLayout {
+                        spacing: Theme.space;
+                        MutedText { text: root.comparison-fields; }
+                        FieldRow {
+                            label: "Field"; label-width: 136px; inset: false;
+                            ComboBox {
+                                model: ["Position", "Normal", "Tangent S", "Tangent T"];
+                                current-index <=> root.comparison-field-index;
+                                accessible-label: "Compared vector field";
+                                selected => { root.choose-comparison-field(); }
+                            }
+                        }
+                        Text { text: root.comparison-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                        if root.comparison-diagnostic != "": Text { text: root.comparison-diagnostic; color: Theme.text; wrap: word-wrap; }
+                        MutedText { text: "Exact equality compares the retained bits. Frame and vector guides use the observed values."; font-size: Theme.font-small; }
+                    }
                     source-header := SectionHeader { text: "Source contributors"; detail: root.source-page; inset: false; expanded: false; }
                     if source-header.expanded: VerticalLayout {
                         spacing: Theme.space;

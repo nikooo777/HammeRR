@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use editor_core::session::compiled_terrain_snapshot::Query;
+use editor_core::session::compiled_terrain_snapshot::{ComparisonOptions, Query, Rounding};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -33,6 +33,7 @@ struct State {
     displacements: Vec<Value>,
     vertices: Vec<Value>,
     admitting: bool,
+    comparison_admitting: bool,
     message: Option<String>,
 }
 
@@ -52,6 +53,14 @@ enum Action {
     ShowGuide,
     ToggleGuide,
     ClearGuide,
+    CancelComparison,
+    ClearComparison,
+}
+
+#[derive(Clone, Copy)]
+enum Admission {
+    Observation,
+    Comparison,
 }
 
 #[derive(Clone, Copy)]
@@ -133,6 +142,118 @@ fn raw_vector(label: &str, value: &Value) -> String {
     )
 }
 
+fn rounding(index: i32) -> Result<Rounding, String> {
+    match index {
+        0 => Ok(Rounding::NearestEven),
+        1 => Ok(Rounding::TowardNegative),
+        2 => Ok(Rounding::TowardPositive),
+        3 => Ok(Rounding::TowardZero),
+        _ => Err("Choose a supported predictive rounding mode".into()),
+    }
+}
+
+fn rounding_label(value: &Value) -> &'static str {
+    match value.as_str() {
+        Some("nearest_even") => "nearest even",
+        Some("toward_negative") => "toward negative",
+        Some("toward_positive") => "toward positive",
+        Some("toward_zero") => "toward zero",
+        _ => "unavailable",
+    }
+}
+
+fn scalar(value: &Value) -> String {
+    match value {
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        _ => "unavailable".into(),
+    }
+}
+
+fn absolute_error(value: &Value) -> String {
+    let Some(value) = value.as_f64().filter(|value| value.is_finite()) else {
+        return "unavailable".into();
+    };
+    if value == 0.0 {
+        return "0".into();
+    }
+    let magnitude = value.abs();
+    if !(0.0001..1_000_000.0).contains(&magnitude) {
+        return format!("{value:.5e}");
+    }
+    let precision = (5.0 - magnitude.log10().floor()) as usize;
+    let text = format!("{value:.precision$}");
+    if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').into()
+    } else {
+        text
+    }
+}
+
+fn equality(value: &Value) -> &'static str {
+    match value.as_bool() {
+        Some(true) => "exact",
+        Some(false) => "mismatch",
+        None => "unavailable",
+    }
+}
+
+fn axes(value: &Value, formatter: impl Fn(&Value) -> String) -> String {
+    let Some(values) = value.as_array().filter(|values| values.len() == 3) else {
+        return "unavailable".into();
+    };
+    ["X", "Y", "Z"]
+        .into_iter()
+        .zip(values)
+        .map(|(axis, value)| format!("{axis}: {}", formatter(value)))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn comparison_status(report: &Value, admitting: bool) -> &'static str {
+    if admitting {
+        return "Starting offline comparison…";
+    }
+    match report["status"].as_str() {
+        Some("comparing") if report["cancel_requested"] == true => "Cancelling offline comparison…",
+        Some("comparing") => "Predicting and comparing the complete retained catalog…",
+        Some("ready") => "Complete-catalog comparison ready.",
+        Some("stale") => "Historical comparison; the map, build or runtime changed.",
+        Some("cancelled") => "Offline comparison cancelled.",
+        Some("failed") => "Offline comparison failed.",
+        Some("cleared") => "Offline comparison cleared.",
+        _ => "Prepare an observation, then compare its complete catalog.",
+    }
+}
+
+fn comparison_counts(summary: &Value) -> String {
+    if !summary["samples"].is_number() {
+        return String::new();
+    }
+    let mut lines = vec![format!(
+        "Complete catalog: {} samples · {} exact · {} mismatched",
+        scalar(&summary["samples"]),
+        scalar(&summary["equal_samples"]),
+        scalar(&summary["mismatched_samples"])
+    )];
+    for (key, label) in [
+        ("position", "Position"),
+        ("normal", "Normal"),
+        ("tangent_s", "Tangent S"),
+        ("tangent_t", "Tangent T"),
+    ] {
+        let field = &summary["fields"][key];
+        lines.push(format!(
+            "{label}: {} exact · {} mismatched · max abs {} · max ULP {}",
+            scalar(&field["equal_samples"]),
+            scalar(&field["mismatched_samples"]),
+            absolute_error(&field["max_absolute_error"]),
+            scalar(&field["max_ulp_distance"])
+        ));
+    }
+    lines.join("\n")
+}
+
 fn source_number(value: &Value, key: &str) -> String {
     value[key]
         .as_u64()
@@ -181,7 +302,10 @@ fn status_text(report: &Value, admitting: bool) -> &'static str {
     if admitting {
         return "Starting native observation…";
     }
-    if report["busy"] == true && report["status"] != "preparing" {
+    if report["busy"] == true
+        && report["status"] != "preparing"
+        && report["comparison"]["busy"] != true
+    {
         return "Finishing native cleanup…";
     }
     match report["status"].as_str() {
@@ -221,6 +345,9 @@ impl Controller {
                 self.window.set_can_show_guide(false);
                 self.window.set_can_toggle_guide(false);
                 self.window.set_can_clear_guide(false);
+                self.window.set_can_compare(false);
+                self.window.set_can_cancel_comparison(false);
+                self.window.set_can_clear_comparison(false);
                 None
             }
         }
@@ -246,6 +373,7 @@ impl Controller {
         self.window
             .set_selected_sample("Choose a native grid vertex.".into());
         self.window.set_raw_values("".into());
+        self.clear_comparison_sample();
         self.window
             .set_sources("No source contributor page.".into());
         self.window.set_previous_displacements(false);
@@ -256,6 +384,13 @@ impl Controller {
         self.window.set_next_sources(false);
         self.window.set_can_frame(false);
         self.window.set_can_show_guide(false);
+    }
+
+    fn clear_comparison_sample(&self) {
+        self.window
+            .set_comparison_fields("No retained comparison for this sample.".into());
+        self.window.set_comparison_values("".into());
+        self.window.set_comparison_diagnostic("".into());
     }
 
     fn present(&self, session: &Session) -> Result<(), String> {
@@ -344,6 +479,7 @@ impl Controller {
             .into(),
         );
         self.present_guide(&report);
+        self.present_comparison(&report["comparison"], &state);
         let Some(token) = state.token.filter(|_| report["displacements"].is_number()) else {
             self.clear_rows(&mut state);
             return Ok(());
@@ -417,8 +553,15 @@ impl Controller {
                 rows.iter()
                     .map(|row| NativeTerrainRow {
                         title: format!(
-                            "Vertex {} · row {}, column {}",
-                            row["vertex"], row["row"], row["column"]
+                            "Vertex {} · row {}, column {}{}",
+                            row["vertex"],
+                            row["row"],
+                            row["column"],
+                            if row["comparison"].is_object() {
+                                format!(" · {}", equality(&row["comparison"]["equal"]))
+                            } else {
+                                String::new()
+                            }
                         )
                         .into(),
                         detail: format!("P: {}", component_values(&row["position"])).into(),
@@ -483,15 +626,54 @@ impl Controller {
         self.window.set_guide_status(
             if requested {
                 format!(
-                    "Guide: displacement {} · vertex {} · {}. Available directions are normalized for display.",
+                    "Observed guide: displacement {} · vertex {} · {}. Available directions are normalized for display.",
                     guide["displacement"], guide["vertex"],
                     if guide["displayed"] == true { "shown" } else if visible { "suppressed" } else { "hidden" }
                 )
             } else {
-                "No vector guide. N is cyan, S is red and T is green.".into()
+                "No observed vector guide. N is cyan, S is red and T is green.".into()
             }
             .into(),
         );
+    }
+
+    fn present_comparison(&self, report: &Value, state: &State) {
+        let busy = state.comparison_admitting || report["busy"] == true;
+        self.window.set_comparison_busy(busy);
+        self.window
+            .set_can_compare(report["compare_available"] == true && !state.admitting && !busy);
+        self.window.set_can_cancel_comparison(
+            report["status"] == "comparing"
+                && report["cancel_requested"] != true
+                && state.token.is_some(),
+        );
+        self.window.set_can_clear_comparison(
+            state.token.is_some()
+                && !state.comparison_admitting
+                && !matches!(
+                    report["status"].as_str(),
+                    None | Some("not_compared" | "cleared")
+                ),
+        );
+        self.window
+            .set_comparison_status(comparison_status(report, state.comparison_admitting).into());
+        self.window
+            .set_comparison_summary(comparison_counts(&report["summary"]).into());
+        self.window
+            .set_comparison_error(report["error"].as_str().unwrap_or_default().into());
+        let profile = &report["profile"];
+        let cpu = &profile["cpu"];
+        self.window.set_comparison_profile(if profile.is_object() {
+            format!(
+                "Result arithmetic: position {} · basis {} · FTZ {} · DAZ {}\nCPU: {} · {} · signature {}\nRSQRTSS probe bits: {}",
+                rounding_label(&profile["position_rounding"]), rounding_label(&profile["rounding"]),
+                if profile["flush_to_zero"] == true { "on" } else { "off" },
+                if profile["denormals_are_zero"] == true { "on" } else { "off" },
+                cpu["brand"].as_str().unwrap_or("unavailable"), cpu["vendor"].as_str().unwrap_or("unavailable"),
+                scalar(&cpu["signature"]),
+                cpu["rsqrt_probe_bits"].as_array().map(|bits| bits.iter().map(scalar).collect::<Vec<_>>().join(" ")).unwrap_or_else(|| "unavailable".into())
+            )
+        } else { String::new() }.into());
     }
 
     fn present_sample(&self, state: &State) {
@@ -507,6 +689,7 @@ impl Controller {
             self.window
                 .set_selected_sample("Choose a native grid vertex.".into());
             self.window.set_raw_values("".into());
+            self.clear_comparison_sample();
             return;
         };
         self.window.set_can_frame(row["frame_available"] == true);
@@ -529,6 +712,54 @@ impl Controller {
             .join("\n\n")
             .into(),
         );
+        self.present_comparison_sample(row);
+    }
+
+    fn present_comparison_sample(&self, row: &Value) {
+        let comparison = &row["comparison"];
+        if !comparison.is_object() {
+            self.clear_comparison_sample();
+            return;
+        }
+        self.window.set_comparison_fields(
+            [
+                ("position", "P"),
+                ("normal", "N"),
+                ("tangent_s", "S"),
+                ("tangent_t", "T"),
+            ]
+            .into_iter()
+            .map(|(key, label)| {
+                format!("{label}: {}", equality(&comparison["fields"][key]["equal"]))
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into(),
+        );
+        let (key, label) = match self.window.get_comparison_field_index() {
+            0 => ("position", "P"),
+            1 => ("normal", "N"),
+            2 => ("tangent_s", "S"),
+            3 => ("tangent_t", "T"),
+            _ => {
+                self.clear_comparison_sample();
+                return;
+            }
+        };
+        let field = &comparison["fields"][key];
+        self.window.set_comparison_values(
+            format!(
+                "Observed\n{}\n\nPredicted\n{}",
+                raw_vector(label, &row[key]),
+                raw_vector(label, &comparison["predicted"][key])
+            )
+            .into(),
+        );
+        self.window.set_comparison_diagnostic(format!(
+            "Components: {}\nAbsolute error: {}\nULP distance: {}\nMaximum absolute error: {} · maximum ULP distance: {}",
+            axes(&field["component_equal"], |value| equality(value).into()), axes(&field["absolute_error"], absolute_error),
+            axes(&field["ulp_distance"], scalar), absolute_error(&field["max_absolute_error"]), scalar(&field["max_ulp_distance"])
+        ).into());
     }
 
     fn choose(&self, page: Page, index: i32) {
@@ -607,6 +838,12 @@ impl Controller {
             match action {
                 Action::Cancel => session.cancel_compiled_terrain_snapshot(Actor::User, token),
                 Action::Clear => session.clear_compiled_terrain_snapshot(Actor::User, token),
+                Action::CancelComparison => {
+                    session.cancel_compiled_terrain_basis_comparison(Actor::User, token)
+                }
+                Action::ClearComparison => {
+                    session.clear_compiled_terrain_basis_comparison(Actor::User, token)
+                }
                 Action::ToggleGuide => session.set_compiled_terrain_snapshot_visible(
                     Actor::User,
                     token,
@@ -640,7 +877,22 @@ impl Controller {
         self.refresh();
     }
 
-    fn prepare(&self) {
+    fn admit(&self, admission: Admission) {
+        let options = match (
+            rounding(self.window.get_position_rounding_index()),
+            rounding(self.window.get_basis_rounding_index()),
+        ) {
+            (Ok(position_rounding), Ok(rounding)) => ComparisonOptions {
+                position_rounding,
+                rounding,
+                flush_to_zero: self.window.get_flush_to_zero(),
+                denormals_are_zero: self.window.get_denormals_are_zero(),
+            },
+            (Err(error), _) | (_, Err(error)) => {
+                self.message(Some(error));
+                return;
+            }
+        };
         let access = match self.target.upgrade() {
             Ok(access) => access,
             Err(error) => {
@@ -648,33 +900,59 @@ impl Controller {
                 return;
             }
         };
-        let snapshot = {
+        let (snapshot, token) = {
             let mut state = self.state.borrow_mut();
-            if state.admitting || !self.window.get_can_prepare() {
+            if state.admitting || state.comparison_admitting {
                 return;
             }
-            state.admitting = true;
+            match admission {
+                Admission::Observation => {
+                    if !self.window.get_can_prepare() {
+                        return;
+                    }
+                    state.admitting = true;
+                }
+                Admission::Comparison => {
+                    if !self.window.get_can_compare() || state.token.is_none() {
+                        return;
+                    }
+                    state.comparison_admitting = true;
+                }
+            }
             state.message = None;
-            state.snapshot.clone()
+            (state.snapshot.clone(), state.token)
         };
         self.refresh();
         let window = self.window.as_weak();
         let spawned = std::thread::Builder::new()
             .name("native-terrain-admission".into())
             .spawn(move || {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    access.prepare_compiled_terrain_snapshot(Actor::User, snapshot)
-                }))
-                .unwrap_or_else(|_| Err("Native terrain observation admission panicked".into()));
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match admission {
+                        Admission::Observation => {
+                            access.prepare_compiled_terrain_snapshot(Actor::User, snapshot)
+                        }
+                        Admission::Comparison => access.compare_compiled_terrain_basis(
+                            Actor::User,
+                            token.ok_or("Prepare a native terrain observation first")?,
+                            options,
+                        ),
+                    }))
+                    .unwrap_or_else(|_| Err("Native terrain operation admission panicked".into()));
                 let error = result.err().unwrap_or_default();
-                let _ = window.upgrade_in_event_loop(move |window| {
-                    window.invoke_prepare_finished(error.into());
+                let _ = window.upgrade_in_event_loop(move |window| match admission {
+                    Admission::Observation => window.invoke_prepare_finished(error.into()),
+                    Admission::Comparison => window.invoke_comparison_finished(error.into()),
                 });
             });
         if let Err(error) = spawned {
-            self.state.borrow_mut().admitting = false;
+            {
+                let mut state = self.state.borrow_mut();
+                state.admitting = false;
+                state.comparison_admitting = false;
+            }
             self.message(Some(format!(
-                "Could not start native terrain observation: {error}"
+                "Could not start native terrain operation: {error}"
             )));
             self.refresh();
         }
@@ -694,7 +972,33 @@ impl Controller {
             let controller = Rc::downgrade(&controller);
             move || {
                 if let Some(controller) = controller.upgrade() {
-                    controller.prepare();
+                    controller.admit(Admission::Observation);
+                }
+            }
+        });
+        controller.window.on_compare_basis({
+            let weak = Rc::downgrade(&controller);
+            move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.admit(Admission::Comparison);
+                }
+            }
+        });
+        controller.window.on_comparison_finished({
+            let weak = Rc::downgrade(&controller);
+            move |error| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.state.borrow_mut().comparison_admitting = false;
+                    controller.message((!error.is_empty()).then(|| error.to_string()));
+                    controller.refresh();
+                }
+            }
+        });
+        controller.window.on_choose_comparison_field({
+            let weak = Rc::downgrade(&controller);
+            move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.present_sample(&controller.state.borrow());
                 }
             }
         });
@@ -715,6 +1019,8 @@ impl Controller {
             Action::ShowGuide,
             Action::ToggleGuide,
             Action::ClearGuide,
+            Action::CancelComparison,
+            Action::ClearComparison,
         ] {
             let weak = Rc::downgrade(&controller);
             let callback = move || {
@@ -729,6 +1035,8 @@ impl Controller {
                 Action::ShowGuide => controller.window.on_show_guide(callback),
                 Action::ToggleGuide => controller.window.on_toggle_guide(callback),
                 Action::ClearGuide => controller.window.on_clear_guide(callback),
+                Action::CancelComparison => controller.window.on_cancel_comparison(callback),
+                Action::ClearComparison => controller.window.on_clear_comparison(callback),
             }
         }
         controller.window.on_choose_displacement({

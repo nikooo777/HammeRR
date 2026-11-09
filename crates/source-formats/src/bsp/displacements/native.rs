@@ -697,6 +697,21 @@ impl DisplacementInfo {
 }
 
 impl Displacements {
+    pub fn native_base_quad(
+        &self,
+        index: usize,
+        quad: [[f32; 3]; 4],
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<[[f32; 3]; 4]> {
+        let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+        let info = *self
+            .infos
+            .get(index)
+            .ok_or_else(|| invalid("displacement index is invalid"))?;
+        let first = (Arithmetic { rounding }).stable_start_corner(info, quad)?;
+        Ok(std::array::from_fn(|offset| quad[(first + offset) % 4]))
+    }
+
     /// Reconstructs BSP-loaded positions with explicit native rounding, independent
     /// of the caller's floating-point state. Elevation and subdivision offsets are
     /// positive zero. Does not apply runtime LOD updates.
@@ -714,8 +729,7 @@ impl Displacements {
             .ok_or_else(|| invalid("displacement index is invalid"))?;
         let size = info.grid_size()?;
         let vertices = &self.vertices[range(info.vertex_start, size * size, self.vertices.len())?];
-        let first = arithmetic.stable_start_corner(info, quad)?;
-        let quad = std::array::from_fn(|offset| quad[(first + offset) % 4]);
+        let quad = self.native_base_quad(index, quad, profile)?;
         let grid = BilinearGrid::new(arithmetic, quad, info.power)?;
         let mut result = Vec::with_capacity(size * size);
         for row in 0..size {

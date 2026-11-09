@@ -1182,6 +1182,47 @@ This uses the same [native inspector](terrain.md#inspect-native-terrain-vectors)
 as the editor. It requires the supported Linux CS:S client and Steam. Historical
 data remains inspectable; stale snapshots cannot frame or display a guide.
 
+### Offline native terrain basis comparison
+
+After preparing an independent observed native terrain snapshot, call
+`compare_compiled_terrain_basis` with its current `token` and optional `options`:
+
+```json
+{
+  "token": "1",
+  "options": {
+    "position_rounding": "nearest_even",
+    "rounding": "nearest_even",
+    "flush_to_zero": false,
+    "denormals_are_zero": false
+  }
+}
+```
+
+Both rounding fields accept `nearest_even`, `toward_negative`, `toward_positive`
+and `toward_zero`. Defaults are nearest-even with FTZ and DAZ disabled. The
+worker binds the actual current CPU and RSQRTSS estimate probe. These are
+explicit predictive settings; they do not establish the observed client's
+historical MXCSR or arithmetic behavior.
+
+Poll `get_compiled_terrain_snapshot.comparison`. A complete result contains
+whole-catalog and per-field equality/error summaries. Existing
+`inspect_compiled_terrain_snapshot` pages add a displacement summary or
+`comparison.predicted` P/N/S/T and per-field exact-bit equality, component
+matches, absolute errors and ULP distances. Nonfinite numerical errors are
+`null`; signed-zero bit differences remain mismatches. Mismatches are retained
+results. The predictor consumes the exact retained compiled BSP, never observed
+vectors or preview normals.
+
+Use `set_compiled_terrain_snapshot` with `action:"cancel_comparison"` or
+`action:"clear_comparison"` and the source token to cancel or release only the
+comparison. Clear prevents late publication. The observed rows, guide and
+framing remain independent. Preparing or clearing the observed snapshot retires
+its comparison too. Historical comparisons stay readable; new comparisons need
+the current source/build/runtime. The existing terrain worker runs one operation
+at a time, and retains at most 64 MiB of comparison data in addition to the
+bounded observed snapshot. No game starts for offline comparison.
+
 ### Passive player support
 
 1. Save and compile a map containing a player spawn. Read

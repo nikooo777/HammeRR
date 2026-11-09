@@ -312,6 +312,7 @@ pub fn predict_native_terrain_basis_controlled(
         displacements.push(NativeTerrainDisplacement {
             source: patch.source,
             samples,
+            topology: None,
         });
     }
     let snapshot = NativeTerrainSnapshot {

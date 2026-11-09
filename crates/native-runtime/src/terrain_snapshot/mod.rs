@@ -9,11 +9,12 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use source_formats::bsp::LightingKind;
 use source_formats::bsp::native_terrain::{
-    NATIVE_TERRAIN_VERTEX_STRIDE, NativeTerrainCarrier, NativeTerrainReadback,
-    NativeTerrainSnapshot,
+    NATIVE_TERRAIN_MESH_GROUP_ELEMENTS as MAX_GROUP_ELEMENTS, NATIVE_TERRAIN_VERTEX_STRIDE,
+    NativeTerrainCarrier, NativeTerrainReadback, NativeTerrainSnapshot,
+    NativeTerrainTopologyReadback,
 };
+use source_formats::bsp::{LightingKind, MAX_DISPLACEMENTS};
 use source_formats::file_publication::FileIdentity;
 use source_formats::vpk::Vpk;
 
@@ -27,10 +28,11 @@ use crate::{
 pub(crate) mod process;
 mod readiness;
 
-pub(crate) const PROFILE: &str = "css_linux64_build25338318_observed_terrain_v1";
+pub(crate) const PROFILE: &str = "css_linux64_build25338318_observed_terrain_v2";
 const READBACK_FILE: &str = "terrain-readback.bin";
 const OBSERVATION_FILE: &str = "terrain-observation.json";
-const READBACK_MAGIC: &[u8; 8] = b"HMTRN001";
+const READBACK_MAGIC: &[u8; 8] = b"HMTRN002";
+const READBACK_RECORD_BYTES: usize = 98;
 const MAX_READBACK_BYTES: usize = 64 * 1024 * 1024;
 const MAX_OBSERVATION_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_ENTRIES: usize = 2_000_000;
@@ -49,6 +51,16 @@ const WORLD_SURFACES: u64 = 0xe8;
 const SURFACE_STRIDE: usize = 0x40;
 const SURFACE_DISPLACEMENT: u64 = 0x1c;
 const DISP_VERTICES: usize = 0x178;
+const DISP_INDEX_COUNT: usize = 0x28;
+const DISP_FIRST_MESH_INDEX: usize = 0x2c;
+const DISP_MESH_GROUP: usize = 0x30;
+const DISP_VERTEX_BASE: usize = 0x38;
+const DISP_INDICES: usize = 0x158;
+const DISP_INDEX_CAPACITY: usize = 0x160;
+const DISP_INDEX_LENGTH: usize = 0x168;
+const DISP_INDEX_MIRROR: usize = 0x170;
+const DISP_ACTIVE_VERTICES: usize = 0x198;
+const DISP_ALLOWED_VERTICES: usize = 0x1c0;
 const DISP_VERTEX_COUNT: usize = 0x188;
 const DISP_VERTEX_MIRROR: usize = 0x190;
 const DISP_PARENT: usize = 0x1f0;
@@ -58,6 +70,11 @@ const DISP_ORDINAL: usize = 0x302;
 const DISP_HANDLE: usize = 0x308;
 const POWER_VERTEX_COUNT: u64 = 0x48;
 const MAX_VERTICES: usize = 289;
+const MESH_GROUP_BYTES: usize = 0x78;
+const GROUP_MEMBERS: usize = 0x08;
+const GROUP_MEMBER_CAPACITY: usize = 0x10;
+const GROUP_MEMBER_LENGTH: usize = 0x18;
+const GROUP_MEMBER_MIRROR: usize = 0x20;
 const PREMAP: &str = "HAMMERR_TERRAIN_PREMAP";
 const POSTMAP: &str = "HAMMERR_TERRAIN_POSTMAP";
 const CONSOLE_FILE: &str = "hammerr-terrain.log";
@@ -940,6 +957,128 @@ enum Attempt {
     Captured(Captured),
 }
 
+struct TopologyBinding {
+    displacement: u64,
+    group: u64,
+    vertex_base: u32,
+    first_mesh_index: u32,
+    vertex_count: usize,
+    maximum_indices: usize,
+}
+
+fn maximum_indices(power: i32) -> io::Result<usize> {
+    if !(2..=4).contains(&power) {
+        return Err(invalid("Native terrain topology power is unsupported"));
+    }
+    Ok(6 * (1usize << (2 * power)))
+}
+
+fn mask_at(bytes: &[u8], offset: usize) -> io::Result<[u32; 10]> {
+    let mut mask = [0; 10];
+    for (word, value) in mask.iter_mut().enumerate() {
+        *value = u32_at(bytes, offset + word * size_of::<u32>())?;
+    }
+    Ok(mask)
+}
+
+fn inspect_groups(
+    process: &mut process::StoppedProcess<'_>,
+    displacement_base: u64,
+    bindings: &[TopologyBinding],
+    provenance: &mut Sha256,
+) -> io::Result<Value> {
+    let mut groups = BTreeSet::new();
+    let mut visited = vec![false; bindings.len()];
+    let mut group_vertices = 0usize;
+    let mut group_indices = 0usize;
+    let mut maximum_group_vertices = 0usize;
+    let mut maximum_group_indices = 0usize;
+    let mut member_bytes = 0usize;
+    for binding in bindings {
+        if !groups.insert(binding.group) {
+            continue;
+        }
+        process.require_range(binding.group, MESH_GROUP_BYTES, true)?;
+        let bytes = process.read_exact(binding.group, MESH_GROUP_BYTES)?;
+        let members = u64_at(&bytes, GROUP_MEMBERS)?;
+        let capacity = u32_at(&bytes, GROUP_MEMBER_CAPACITY)? as i32;
+        let length = u32_at(&bytes, GROUP_MEMBER_LENGTH)? as i32;
+        if length <= 0 || capacity < length || u64_at(&bytes, GROUP_MEMBER_MIRROR)? != members {
+            return Err(invalid(
+                "Native terrain mesh-group member storage is invalid",
+            ));
+        }
+        process.checked_array(
+            members,
+            usize::try_from(capacity).map_err(io::Error::other)?,
+            size_of::<u64>(),
+            MAX_DISPLACEMENTS,
+        )?;
+        let length = usize::try_from(length).map_err(io::Error::other)?;
+        let list = process.read_exact(members, length * size_of::<u64>())?;
+        member_bytes = member_bytes
+            .checked_add(list.len())
+            .ok_or_else(|| invalid("Native terrain mesh-group byte count overflows"))?;
+        provenance.update(b"group");
+        provenance.update(binding.group.to_le_bytes());
+        provenance.update(&bytes);
+        provenance.update(&list);
+        let mut vertex_prefix = 0usize;
+        let mut index_prefix = 0usize;
+        for position in 0..length {
+            let displacement = u64_at(&list, position * size_of::<u64>())?;
+            let offset = displacement
+                .checked_sub(displacement_base)
+                .ok_or_else(|| invalid("Native terrain mesh-group member precedes the catalog"))?;
+            if offset % readiness::DISPLACEMENT_STRIDE as u64 != 0 {
+                return Err(invalid(
+                    "Native terrain mesh-group member is not a catalog record",
+                ));
+            }
+            let ordinal = usize::try_from(offset / readiness::DISPLACEMENT_STRIDE as u64)
+                .map_err(io::Error::other)?;
+            let member = bindings.get(ordinal).ok_or_else(|| {
+                invalid("Native terrain mesh-group member is outside the complete catalog")
+            })?;
+            if visited[ordinal]
+                || member.displacement != displacement
+                || member.group != binding.group
+                || member.vertex_base as usize != vertex_prefix
+                || member.first_mesh_index as usize != index_prefix
+            {
+                return Err(invalid(
+                    "Native terrain mesh-group membership, order or prefixes differ",
+                ));
+            }
+            visited[ordinal] = true;
+            vertex_prefix = vertex_prefix
+                .checked_add(member.vertex_count)
+                .filter(|count| *count <= MAX_GROUP_ELEMENTS)
+                .ok_or_else(|| invalid("Native terrain mesh-group vertices exceed 8192"))?;
+            index_prefix = index_prefix
+                .checked_add(member.maximum_indices)
+                .filter(|count| *count <= MAX_GROUP_ELEMENTS)
+                .ok_or_else(|| invalid("Native terrain mesh-group indices exceed 8192"))?;
+        }
+        group_vertices = group_vertices
+            .checked_add(vertex_prefix)
+            .ok_or_else(|| invalid("Native terrain group vertex count overflows"))?;
+        group_indices = group_indices
+            .checked_add(index_prefix)
+            .ok_or_else(|| invalid("Native terrain group index count overflows"))?;
+        maximum_group_vertices = maximum_group_vertices.max(vertex_prefix);
+        maximum_group_indices = maximum_group_indices.max(index_prefix);
+    }
+    if visited.iter().any(|visited| !visited) {
+        return Err(invalid(
+            "Native terrain mesh groups do not cover the complete catalog",
+        ));
+    }
+    Ok(
+        json!({"count":groups.len(),"member_records":bindings.len(),"member_bytes":member_bytes,"vertices":group_vertices,"maximum_indices":group_indices,"largest_vertex_count":maximum_group_vertices,"largest_maximum_index_count":maximum_group_indices,"complete_membership_checked":true,"unique_members_checked":true,"native_order_and_prefixes_checked":true,"private_ranges_checked":true}),
+    )
+}
+
 fn extract(
     process: &mut process::StoppedProcess<'_>,
     world: readiness::ReadyWorld,
@@ -959,7 +1098,15 @@ fn extract(
         .try_reserve_exact(world.displacement_count)
         .map_err(io::Error::other)?;
     let mut vertex_count = 0usize;
-    let mut raw_bytes = 0usize;
+    let mut wire_bytes = READBACK_MAGIC.len() + size_of::<u32>();
+    let mut index_count = 0usize;
+    let mut index_capacity = 0usize;
+    let mut allocated_index_count = 0usize;
+    let mut bindings = Vec::new();
+    bindings
+        .try_reserve_exact(world.displacement_count)
+        .map_err(io::Error::other)?;
+    let mut provenance = Sha256::new();
     for source in carrier.displacements() {
         let displacement = address(
             world.displacement_base,
@@ -1006,10 +1153,76 @@ fn extract(
         }
         let length =
             process.checked_array(vertices, count, NATIVE_TERRAIN_VERTEX_STRIDE, MAX_VERTICES)?;
-        raw_bytes = raw_bytes
-            .checked_add(length)
+        let emitted = u32_at(&bytes, DISP_INDEX_COUNT)? as usize;
+        let index_base = u64_at(&bytes, DISP_INDICES)?;
+        let capacity = u32_at(&bytes, DISP_INDEX_CAPACITY)? as i32;
+        let allocated = u32_at(&bytes, DISP_INDEX_LENGTH)? as i32;
+        let vertex_base = u32_at(&bytes, DISP_VERTEX_BASE)?;
+        let maximum_indices = maximum_indices(power)?;
+        if !emitted.is_multiple_of(3)
+            || emitted > maximum_indices
+            || allocated != maximum_indices as i32
+            || capacity < allocated
+            || u64_at(&bytes, DISP_INDEX_MIRROR)? != index_base
+            || (vertex_base as usize)
+                .checked_add(count)
+                .is_none_or(|end| end > MAX_GROUP_ELEMENTS)
+        {
+            return Err(invalid(
+                "Native terrain topology count, base or backing metadata is invalid",
+            ));
+        }
+        process.checked_array(
+            index_base,
+            usize::try_from(capacity).map_err(io::Error::other)?,
+            size_of::<u16>(),
+            MAX_GROUP_ELEMENTS,
+        )?;
+        let index_bytes = emitted
+            .checked_mul(size_of::<u16>())
+            .ok_or_else(|| invalid("Native terrain index byte count overflows"))?;
+        wire_bytes = wire_bytes
+            .checked_add(READBACK_RECORD_BYTES)
+            .and_then(|bytes| bytes.checked_add(length))
+            .and_then(|bytes| bytes.checked_add(index_bytes))
             .filter(|bytes| *bytes <= MAX_READBACK_BYTES)
-            .ok_or_else(|| invalid("Native terrain raw snapshot exceeds 64 MiB"))?;
+            .ok_or_else(|| {
+                invalid("Native terrain topology/vector wire snapshot exceeds 64 MiB")
+            })?;
+        index_count = index_count
+            .checked_add(emitted)
+            .ok_or_else(|| invalid("Native terrain emitted index count overflows"))?;
+        index_capacity = index_capacity
+            .checked_add(capacity as usize)
+            .ok_or_else(|| invalid("Native terrain index capacity overflows"))?;
+        allocated_index_count = allocated_index_count
+            .checked_add(allocated as usize)
+            .ok_or_else(|| invalid("Native terrain allocated index count overflows"))?;
+        let index_data = if index_bytes == 0 {
+            Vec::new()
+        } else {
+            process.read_exact(index_base, index_bytes)?
+        };
+        let mut indices = Vec::new();
+        indices
+            .try_reserve_exact(emitted)
+            .map_err(io::Error::other)?;
+        for offset in (0..index_bytes).step_by(size_of::<u16>()) {
+            indices.push(u16_at(&index_data, offset)?);
+        }
+        let group = u64_at(&bytes, DISP_MESH_GROUP)?;
+        bindings.push(TopologyBinding {
+            displacement,
+            group,
+            vertex_base,
+            first_mesh_index: u32_at(&bytes, DISP_FIRST_MESH_INDEX)?,
+            vertex_count: count,
+            maximum_indices,
+        });
+        provenance.update(b"displacement");
+        provenance.update(displacement.to_le_bytes());
+        provenance.update(&bytes[DISP_INDEX_COUNT..DISP_VERTEX_BASE + size_of::<u32>()]);
+        provenance.update(&bytes[DISP_INDICES..DISP_INDEX_MIRROR + size_of::<u64>()]);
         vertex_count = vertex_count
             .checked_add(count)
             .ok_or_else(|| invalid("Native terrain vertex count overflow"))?;
@@ -1017,12 +1230,21 @@ fn extract(
             ordinal,
             power,
             vertices: process.read_exact(vertices, length)?,
+            topology: NativeTerrainTopologyReadback {
+                vertex_base,
+                active_vertices: mask_at(&bytes, DISP_ACTIVE_VERTICES)?,
+                allowed_vertices: mask_at(&bytes, DISP_ALLOWED_VERTICES)?,
+                indices,
+            },
         });
     }
+    let groups = inspect_groups(process, world.displacement_base, &bindings, &mut provenance)?;
+    let mut readiness = serde_json::to_value(world).map_err(io::Error::other)?;
+    readiness.as_object_mut().ok_or_else(|| invalid("Invalid native terrain readiness receipt"))?.insert("topology".into(), json!({"phase":"completed_load_stopped_cpu_arrays","index_space":"mesh_group_global_u16","records":readbacks.len(),"indices":index_count,"triangles":index_count/3,"allocated_indices":allocated_index_count,"index_capacity":index_capacity,"index_storage_bytes":index_capacity*size_of::<u16>(),"wire_bytes":wire_bytes,"wire_format":"HMTRN002","raw_masks_include_padding":true,"index_mirrors_checked":true,"index_capacity_ranges_checked":true,"vertex_base_ranges_checked":true,"groups":groups,"provenance_order":"catalog_headers_then_first_catalog_group_headers_and_native_member_order","provenance_sha256":format!("{:x}",provenance.finalize()),"gpu_or_frame_observation":false}));
     Ok(Captured {
         readbacks,
         process: serde_json::to_value(process.receipt()).map_err(io::Error::other)?,
-        readiness: serde_json::to_value(world).map_err(io::Error::other)?,
+        readiness,
         vertex_count,
     })
 }
@@ -1046,6 +1268,17 @@ fn record_capture(
         readiness: captured.readiness,
         resumed: true,
     };
+    if observation.readiness["topology"]["wire_bytes"].as_u64() != Some(bytes.len() as u64)
+        || serde_json::to_vec_pretty(&observation)
+            .map_err(io::Error::other)?
+            .len()
+            + 1
+            > MAX_OBSERVATION_BYTES
+    {
+        return Err(invalid(
+            "Native terrain observation metadata or wire byte budget differs",
+        ));
+    }
     util::atomic_write(&directory.join(READBACK_FILE), &bytes)?;
     util::json_write(&directory.join(OBSERVATION_FILE), &observation)
 }
@@ -1159,8 +1392,16 @@ fn encode_readbacks(readbacks: &[NativeTerrainReadback]) -> io::Result<Vec<u8>> 
         READBACK_MAGIC.len() + size_of::<u32>(),
         |length, readback| {
             length
-                .checked_add(10)
+                .checked_add(READBACK_RECORD_BYTES)
                 .and_then(|length| length.checked_add(readback.vertices.len()))
+                .and_then(|length| {
+                    readback
+                        .topology
+                        .indices
+                        .len()
+                        .checked_mul(size_of::<u16>())
+                        .and_then(|index_bytes| length.checked_add(index_bytes))
+                })
                 .filter(|length| *length <= MAX_READBACK_BYTES)
                 .ok_or_else(|| invalid("Native terrain readback exceeds 64 MiB"))
         },
@@ -1182,6 +1423,28 @@ fn encode_readbacks(readbacks: &[NativeTerrainReadback]) -> io::Result<Vec<u8>> 
                 .to_le_bytes(),
         );
         bytes.extend_from_slice(&readback.vertices);
+        bytes.extend_from_slice(&readback.topology.vertex_base.to_le_bytes());
+        for mask in [
+            readback.topology.active_vertices,
+            readback.topology.allowed_vertices,
+        ] {
+            for word in mask {
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        bytes.extend_from_slice(
+            &u32::try_from(readback.topology.indices.len())
+                .map_err(io::Error::other)?
+                .to_le_bytes(),
+        );
+        for index in &readback.topology.indices {
+            bytes.extend_from_slice(&index.to_le_bytes());
+        }
+    }
+    if bytes.len() != length {
+        return Err(invalid(
+            "Native terrain v2 wire byte count differs from its reservation",
+        ));
     }
     Ok(bytes)
 }
@@ -1219,6 +1482,27 @@ pub(crate) fn decode_output(
     {
         return Err(invalid("Native terrain raw output header is invalid"));
     }
+    let topology_receipt = &observation.readiness["topology"];
+    if topology_receipt["phase"].as_str() != Some("completed_load_stopped_cpu_arrays")
+        || topology_receipt["wire_format"].as_str() != Some("HMTRN002")
+        || topology_receipt["wire_bytes"].as_u64() != Some(bytes.len() as u64)
+        || topology_receipt["records"].as_u64() != Some(carrier.displacements().len() as u64)
+        || topology_receipt["raw_masks_include_padding"].as_bool() != Some(true)
+        || topology_receipt["index_mirrors_checked"].as_bool() != Some(true)
+        || topology_receipt["index_capacity_ranges_checked"].as_bool() != Some(true)
+        || topology_receipt["vertex_base_ranges_checked"].as_bool() != Some(true)
+        || topology_receipt["groups"]["complete_membership_checked"].as_bool() != Some(true)
+        || topology_receipt["groups"]["unique_members_checked"].as_bool() != Some(true)
+        || topology_receipt["groups"]["native_order_and_prefixes_checked"].as_bool() != Some(true)
+        || topology_receipt["gpu_or_frame_observation"].as_bool() != Some(false)
+        || topology_receipt["provenance_sha256"]
+            .as_str()
+            .is_none_or(|sha| sha.len() != 64 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err(invalid(
+            "Native terrain v2 CPU topology provenance is absent or invalid",
+        ));
+    }
     let mut offset = READBACK_MAGIC.len() + size_of::<u32>();
     let mut readbacks = Vec::new();
     readbacks
@@ -1251,15 +1535,62 @@ pub(crate) fn decode_output(
             .try_reserve_exact(length)
             .map_err(io::Error::other)?;
         vertices.extend_from_slice(record);
+        offset = end;
+        let vertex_base = u32_at(&bytes, offset)?;
+        let active_vertices = mask_at(&bytes, offset + size_of::<u32>())?;
+        let allowed_vertices = mask_at(&bytes, offset + 11 * size_of::<u32>())?;
+        let count = u32_at(&bytes, offset + 21 * size_of::<u32>())? as usize;
+        offset = offset
+            .checked_add(22 * size_of::<u32>())
+            .ok_or_else(|| invalid("Native terrain topology header offset overflows"))?;
+        let index_bytes = count
+            .checked_mul(size_of::<u16>())
+            .ok_or_else(|| invalid("Native terrain topology byte count overflows"))?;
+        let index_end = offset
+            .checked_add(index_bytes)
+            .ok_or_else(|| invalid("Native terrain topology output offset overflows"))?;
+        if !count.is_multiple_of(3)
+            || count > maximum_indices(power)?
+            || (vertex_base as usize)
+                .checked_add(source.vertex_count())
+                .is_none_or(|end| end > MAX_GROUP_ELEMENTS)
+            || bytes.get(offset..index_end).is_none()
+        {
+            return Err(invalid(
+                "Native terrain topology output count, base or length is invalid",
+            ));
+        }
+        let mut indices = Vec::new();
+        indices.try_reserve_exact(count).map_err(io::Error::other)?;
+        for position in (offset..index_end).step_by(size_of::<u16>()) {
+            indices.push(u16_at(&bytes, position)?);
+        }
         readbacks.push(NativeTerrainReadback {
             ordinal,
             power,
             vertices,
+            topology: NativeTerrainTopologyReadback {
+                vertex_base,
+                active_vertices,
+                allowed_vertices,
+                indices,
+            },
         });
-        offset = end;
+        offset = index_end;
     }
     if offset != bytes.len() {
         return Err(invalid("Native terrain raw output has trailing bytes"));
+    }
+    let index_count = readbacks
+        .iter()
+        .map(|readback| readback.topology.indices.len())
+        .sum::<usize>();
+    if topology_receipt["indices"].as_u64() != Some(index_count as u64)
+        || topology_receipt["triangles"].as_u64() != Some((index_count / 3) as u64)
+    {
+        return Err(invalid(
+            "Native terrain topology totals differ from the hash-bound wire arrays",
+        ));
     }
     drop(bytes);
     let snapshot = carrier.decode_controlled(&readbacks, check)?;

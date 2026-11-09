@@ -394,6 +394,33 @@ Mismatches remain diagnostics; the inspector does not substitute predicted
 vectors into the observed catalog, HammeRR lighting or the map. **Frame** and
 vector guides continue to use observed values.
 
+### Inspect CPU topology
+
+Read the actual native triangle indices and vertex masks from the same observed
+snapshot. Compare them with the independently compiled BSP.
+
+1. Prepare an observation in **Build → Native terrain…**.
+2. Open the **Topology** tab. Expand **Displacements** and select a patch.
+3. Read **CPU topology** for the vertex base, index and triangle counts, active
+   grid vertices and explicit compiled comparison results.
+4. Expand **Raw vertex masks** to inspect the observed active and allowed words
+   beside the compiled allowed words. The counts include all 320 stored bits;
+   the active grid-vertex count uses only valid sample slots.
+5. Select a row under **Triangles**. Use **Previous triangles** and **Next triangles**
+   to page the observed index list. **Selected triangle** shows global and local
+   indices, compiled local indices and the observed vertex positions.
+6. Click **Frame triangle** to locate it. Click **Show triangle guide** to outline
+   the actual triangle. Use **Hide guide** or **Clear guide** to remove the display.
+
+One vector or triangle guide can be displayed at a time. Historical topology
+remains readable; triangle framing and guide display require a current snapshot.
+Mask differences and ordered triangle mismatches remain visible.
+
+> [!NOTE]
+> These values describe observed CPU storage at the capture boundary. They do
+> not attest a GPU draw, a completed frame or later runtime LOD changes. A compiled
+> source contributor does not identify an authored triangle.
+
 > [!NOTE]
 > Native inspection requires the supported Linux64 CS:S build and Steam.
 > It reads the complete compiled LDR terrain catalog at load completion. It does

@@ -1182,6 +1182,35 @@ This uses the same [native inspector](terrain.md#inspect-native-terrain-vectors)
 as the editor. It requires the supported Linux CS:S client and Steam. Historical
 data remains inspectable; stale snapshots cannot frame or display a guide.
 
+### Observed native CPU terrain topology
+
+Prepare the native terrain snapshot normally, then call
+`inspect_compiled_terrain_topology` with its `token`, a native `displacement`
+ordinal and optional `offset`/`limit` (default 0/64, maximum 64 rows and 256 KiB).
+The result retains the actual vertex base, index/triangle counts, all ten raw
+active/allowed mask words and compiled allowed words. Comparison counts include
+all 320 mask bits, including padding, and exact ordered local triangle triples.
+Mismatches remain results. Missing observed topology is an explicit error.
+
+Each row reports `triangle`, raw mesh-global `global_indices`, derived
+`local_indices`, actual observed `positions` with raw bits, and the corresponding
+`comparison.expected_local_indices`/`equal`. These are native CPU identities,
+not authored triangle IDs. Historical rows remain readable.
+
+Call `frame_compiled_terrain_triangle` with `token`, `displacement`, `triangle`
+and `aspect` to frame the actual observed geometry. Call
+`set_compiled_terrain_triangle_guide` with the same identity to show its outline.
+This replaces the single sample-vector guide; choosing sample vectors replaces
+the triangle outline. Existing `set_compiled_terrain_snapshot` actions `show`,
+`hide` and `clear_guide` manage either guide kind. Read `guide.kind` to identify
+`sample_vectors` or `triangle_outline`.
+
+Framing and guide display require current source/build/runtime, finite observed
+positions and no displayed geometry draft. Mismatches never substitute predicted
+or compiled geometry. The installed build tessellates these CPU indices at load;
+this inspection does not establish a GPU draw, completed rendered frame or later
+camera-dependent LOD state.
+
 ### Offline native terrain basis comparison
 
 After preparing an independent observed native terrain snapshot, call

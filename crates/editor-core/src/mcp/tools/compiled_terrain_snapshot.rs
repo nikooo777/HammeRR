@@ -65,10 +65,36 @@ pub(in crate::mcp) struct FrameTerrainSample {
     aspect: f32,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct InspectTerrainTopology {
+    token: String,
+    displacement: u16,
+    offset: Option<usize>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct TerrainTriangle {
+    token: String,
+    displacement: u16,
+    triangle: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct FrameTerrainTriangle {
+    token: String,
+    displacement: u16,
+    triangle: usize,
+    aspect: f32,
+}
+
 #[tool_router(router = compiled_terrain_snapshot_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect preparation readiness, source snapshot, owned token, worker/cleanup state and the complete native terrain observation receipt. comparison reports the explicit-profile complete offline prediction status, CPU/FP receipt and per-field equality/error summaries without changing observed fields. Preparation observes final position/normal/tangent-S/tangent-T fields in one private supported Linux CS:S client. Existing rows can be historical and report current:false with a reason. Does not start a game or compute substitute vectors. UI: Native terrain….",
+        description = "Inspect preparation readiness, source snapshot, owned token, worker/cleanup state and the complete native terrain observation receipt. topology reports the captured CPU catalog summary and exact compiled comparison; it does not claim a GPU draw or completed frame. comparison reports the explicit-profile complete offline prediction status, CPU/FP receipt and per-field equality/error summaries without changing observed fields. Preparation observes final position/normal/tangent-S/tangent-T fields in one private supported Linux CS:S client. Existing rows can be historical and report current:false with a reason. Does not start a game or compute substitute vectors. UI: Native terrain….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_compiled_terrain_snapshot(&self) -> ToolResult {
@@ -127,7 +153,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage the matching native terrain snapshot token. cancel requests pending worker cancellation; clear also drops retained rows and guide and prevents late publication. Both accept the exact owned token after source staleness. cancel also cancels a running offline comparison. clear retires observed and predicted rows together. cancel_comparison cancels only the offline worker; clear_comparison drops only its result, cancels any pending comparison and prevents late publication while preserving observed rows/guide. hide retains the guide request and rows; show rechecks current build/runtime/source and viewport context. guide requires one displacement and native row-major vertex, replaces the single guide and shows it. clear_guide drops only the guide. Only guide accepts displacement/vertex. The guide is one point cross plus available N/S/T directions normalized to a fixed display length; reported native magnitudes/bits stay unchanged. Zero/nonfinite vectors have no substitute. Working region and active drafts can suppress presentation after complete observation. Stale/foreign tokens and invalid requests preserve state. UI: Native terrain… → Cancel / Clear / Show / Hide / Show vectors / Clear guide."
+        description = "Manage the matching native terrain snapshot token. cancel requests pending worker cancellation; clear also drops retained rows and guide and prevents late publication. Both accept the exact owned token after source staleness. cancel also cancels a running offline comparison. clear retires observed and predicted rows together. cancel_comparison cancels only the offline worker; clear_comparison drops only its result, cancels any pending comparison and prevents late publication while preserving observed rows/guide. hide retains the guide request and rows; show rechecks current build/runtime/source and viewport context. guide requires one displacement and native row-major vertex, replaces the single guide and shows it. clear_guide drops only the guide, including a triangle outline. show/hide work with either existing guide kind; inspect guide.kind. Only guide accepts displacement/vertex. The guide is one point cross plus available N/S/T directions normalized to a fixed display length; reported native magnitudes/bits stay unchanged. Zero/nonfinite vectors have no substitute. Working region and active drafts can suppress presentation after complete observation. Stale/foreign tokens and invalid requests preserve state. UI: Native terrain… → Cancel / Clear / Show / Hide / Show vectors / Clear guide."
     )]
     pub(in crate::mcp) fn set_compiled_terrain_snapshot(
         &self,
@@ -189,6 +215,61 @@ impl EditorServer {
                 args.displacement,
                 args.vertex,
                 args.aspect,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect actual observed native CPU displacement topology from the matching owned terrain snapshot. Requires token and native displacement ordinal; offset defaults0 and limit64, range1–64 and response<=256KiB. Reports vertex base, exact observed index/triangle counts, all ten raw active/allowed mask words and compiled allowed words, complete320-bit mask disagreement counts and exact ordered triangle comparison. Pages retain raw mesh-global u16 index triples, derived local vertex IDs, actual observed positions with bits and corresponding exact expected local triples. Missing observed topology is an explicit error. Historical rows remain inspectable; framing/guide availability is separately current-source/runtime/viewport guarded. Mismatches are data and do not substitute predicted/compiler geometry. This installed build tessellates CPU indices at load; no GPU draw, completed-frame or later camera-dependent LOD claim. UI: Native terrain… → Topology.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_compiled_terrain_topology(
+        &self,
+        Parameters(args): Parameters<InspectTerrainTopology>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().inspect_compiled_terrain_topology(
+                crate::session::compiled_terrain_snapshot::TopologyQuery {
+                    token: parse_terrain_snapshot_token(&args.token)?,
+                    displacement: args.displacement,
+                    offset: args.offset.unwrap_or(0),
+                    limit: args.limit.unwrap_or(64),
+                },
+            )
+        })
+    }
+
+    #[tool(
+        description = "Frame one actual observed native CPU displacement triangle through the shared Session camera operation. Requires current owned token, native displacement ordinal, triangle ordinal from inspect_compiled_terrain_topology and finite aspect0.01–100. Bounds use only observed positions selected by actual observed indices, even when exact compiled comparison reports a mismatch. Rejects historical source/build/runtime, displayed geometry drafts, active viewport gestures and nonfinite positions. Preserves authored map/history/selection. Does not establish GPU draw, completed frame or authored triangle correspondence. UI: Native terrain… → Topology → Frame triangle."
+    )]
+    pub(in crate::mcp) fn frame_compiled_terrain_triangle(
+        &self,
+        Parameters(args): Parameters<FrameTerrainTriangle>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().frame_compiled_terrain_triangle(
+                Actor::Agent,
+                parse_terrain_snapshot_token(&args.token)?,
+                args.displacement,
+                args.triangle,
+                args.aspect,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Replace the sole native terrain guide with one actual observed CPU triangle outline and show it. Requires current exact token, displacement ordinal and triangle ordinal from inspect_compiled_terrain_topology. Uses actual observed index order/positions without predicted or compiled substitutes when comparison differs. Existing set_compiled_terrain_snapshot show/hide/clear_guide controls manage either guide kind; selecting sample vectors replaces this outline. Source/runtime staleness, geometry drafts, active gestures, nonfinite positions and working-region exclusion refuse or suppress display. Historical rows remain readable. Does not change map/history/selection or imply GPU draw, completed frame or authored triangle identity. UI: Native terrain… → Topology → Show triangle guide."
+    )]
+    pub(in crate::mcp) fn set_compiled_terrain_triangle_guide(
+        &self,
+        Parameters(args): Parameters<TerrainTriangle>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().set_compiled_terrain_triangle_guide(
+                Actor::Agent,
+                parse_terrain_snapshot_token(&args.token)?,
+                args.displacement,
+                args.triangle,
             )
         })
     }

@@ -4,7 +4,9 @@ use std::{
     time::Duration,
 };
 
-use editor_core::session::compiled_terrain_snapshot::{ComparisonOptions, Query, Rounding};
+use editor_core::session::compiled_terrain_snapshot::{
+    ComparisonOptions, Query, Rounding, TopologyQuery,
+};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -24,14 +26,18 @@ struct State {
     snapshot: String,
     displacement: Option<u16>,
     vertex: Option<usize>,
+    triangle: Option<usize>,
     displacement_offset: usize,
     vertex_offset: usize,
     source_offset: usize,
+    triangle_offset: usize,
     next_displacements: Option<usize>,
     next_vertices: Option<usize>,
     next_sources: Option<usize>,
+    next_triangles: Option<usize>,
     displacements: Vec<Value>,
     vertices: Vec<Value>,
+    triangles: Vec<Value>,
     admitting: bool,
     comparison_admitting: bool,
     message: Option<String>,
@@ -55,6 +61,8 @@ enum Action {
     ClearGuide,
     CancelComparison,
     ClearComparison,
+    FrameTriangle,
+    ShowTriangleGuide,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +76,7 @@ enum Page {
     Displacements,
     Vertices,
     Sources,
+    Triangles,
 }
 
 fn number(value: &Value) -> Option<usize> {
@@ -168,6 +177,27 @@ fn scalar(value: &Value) -> String {
         Value::String(value) => value.clone(),
         _ => "unavailable".into(),
     }
+}
+
+fn list(value: &Value) -> String {
+    value
+        .as_array()
+        .map(|values| values.iter().map(scalar).collect::<Vec<_>>().join(", "))
+        .unwrap_or_else(|| "unavailable".into())
+}
+
+fn mask_words(value: &Value) -> String {
+    value
+        .as_array()
+        .filter(|words| words.len() == 10)
+        .map(|words| {
+            words
+                .chunks(5)
+                .map(|words| words.iter().map(scalar).collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|| "unavailable".into())
 }
 
 fn absolute_error(value: &Value) -> String {
@@ -348,6 +378,8 @@ impl Controller {
                 self.window.set_can_compare(false);
                 self.window.set_can_cancel_comparison(false);
                 self.window.set_can_clear_comparison(false);
+                self.window.set_can_frame_triangle(false);
+                self.window.set_can_show_triangle_guide(false);
                 None
             }
         }
@@ -384,6 +416,28 @@ impl Controller {
         self.window.set_next_sources(false);
         self.window.set_can_frame(false);
         self.window.set_can_show_guide(false);
+        self.clear_topology(state);
+    }
+
+    fn clear_topology(&self, state: &mut State) {
+        state.triangle = None;
+        state.triangle_offset = 0;
+        state.next_triangles = None;
+        state.triangles.clear();
+        self.window.set_triangles(ModelRc::default());
+        self.window.set_selected_triangle(-1);
+        self.window
+            .set_topology_status("Prepare an observation to inspect its CPU topology.".into());
+        self.window.set_topology_summary("".into());
+        self.window.set_topology_comparison("".into());
+        self.window.set_topology_masks("".into());
+        self.window.set_triangle_page("".into());
+        self.window
+            .set_triangle_values("Choose an observed CPU triangle.".into());
+        self.window.set_previous_triangles(false);
+        self.window.set_next_triangles(false);
+        self.window.set_can_frame_triangle(false);
+        self.window.set_can_show_triangle_guide(false);
     }
 
     fn clear_comparison_sample(&self) {
@@ -480,6 +534,14 @@ impl Controller {
         );
         self.present_guide(&report);
         self.present_comparison(&report["comparison"], &state);
+        let topology = &report["topology"];
+        self.window.set_topology_status(if topology["available"] == true {
+            format!(
+                "CPU catalog: {} triangles · {} indices · {} mismatched displacements\nCompiled comparison: {} · {}",
+                scalar(&topology["triangles"]), scalar(&topology["indices"]), scalar(&topology["mismatched_displacements"]),
+                equality(&topology["matches"]), if report["current"] == true { "current compiled map" } else { "historical compiled map" }
+            )
+        } else { "Prepare an observation to inspect its CPU topology.".into() }.into());
         let Some(token) = state.token.filter(|_| report["displacements"].is_number()) else {
             self.clear_rows(&mut state);
             return Ok(());
@@ -612,6 +674,9 @@ impl Controller {
         self.window.set_previous_sources(state.source_offset > 0);
         self.window.set_next_sources(state.next_sources.is_some());
         self.present_sample(&state);
+        if self.window.get_active_tab() == 2 {
+            self.present_topology(session, &mut state)?;
+        }
         Ok(())
     }
 
@@ -625,16 +690,136 @@ impl Controller {
             .set_can_toggle_guide(requested && (visible || guide["suppression_reason"].is_null()));
         self.window.set_guide_status(
             if requested {
-                format!(
+                if guide["kind"] == "triangle_outline" {
+                    format!(
+                        "Observed triangle outline: displacement {} · triangle {} · {}.",
+                        guide["displacement"], guide["triangle"],
+                        if guide["displayed"] == true { "shown" } else if visible { "suppressed" } else { "hidden" }
+                    )
+                } else { format!(
                     "Observed guide: displacement {} · vertex {} · {}. Available directions are normalized for display.",
                     guide["displacement"], guide["vertex"],
                     if guide["displayed"] == true { "shown" } else if visible { "suppressed" } else { "hidden" }
-                )
+                ) }
             } else {
-                "No observed vector guide. N is cyan, S is red and T is green.".into()
+                "No observed guide. One vector or triangle guide can be shown at a time.".into()
             }
             .into(),
         );
+    }
+
+    fn present_topology(&self, session: &Session, state: &mut State) -> Result<(), String> {
+        let (Some(token), Some(displacement)) = (state.token, state.displacement) else {
+            self.clear_topology(state);
+            return Ok(());
+        };
+        let report = session.inspect_compiled_terrain_topology(TopologyQuery {
+            token,
+            displacement,
+            offset: state.triangle_offset,
+            limit: PAGE_ROWS,
+        })?;
+        let topology = &report["topology"];
+        let comparison = &topology["comparison"];
+        self.window.set_topology_summary(format!(
+            "Vertex base: {} · vertices: {}\nObserved indices: {} · CPU triangles: {} · compiled triangles: {}\nActive grid vertices: {} · active raw bits: {} / 320\nAllowed raw bits: {} / 320 · compiled allowed raw bits: {} / 320",
+            scalar(&topology["vertex_base"]), scalar(&topology["vertices"]), scalar(&topology["index_count"]),
+            scalar(&topology["triangle_count"]), scalar(&topology["expected_triangle_count"]), scalar(&topology["active_vertex_count"]),
+            scalar(&topology["active_mask_set_bits_320"]), scalar(&topology["allowed_mask_set_bits_320"]), scalar(&topology["compiled_allowed_mask_set_bits_320"])
+        ).into());
+        self.window.set_topology_comparison(format!(
+            "Compiled comparison: {} · ordered triangle mismatches: {}\nMask bit mismatches: active / allowed {} · active / compiled {} · allowed / compiled {}\nTriangle order: {}",
+            equality(&comparison["matches"]), scalar(&comparison["ordered_triangle_mismatches"]),
+            scalar(&comparison["active_allowed_mismatched_bits"]), scalar(&comparison["active_compiled_mismatched_bits"]),
+            scalar(&comparison["allowed_compiled_mismatched_bits"]), scalar(&comparison["triangle_order"])
+        ).into());
+        self.window.set_topology_masks(
+            format!(
+                "Observed active\n{}\n\nObserved allowed\n{}\n\nCompiled allowed\n{}",
+                mask_words(&topology["active_words"]),
+                mask_words(&topology["allowed_words"]),
+                mask_words(&topology["compiled_allowed_words"])
+            )
+            .into(),
+        );
+        let rows = report["page"]["rows"]
+            .as_array()
+            .ok_or("Observed CPU triangle page is unavailable")?;
+        if state.triangles != *rows {
+            state.triangles.clone_from(rows);
+            self.window.set_triangles(ModelRc::new(VecModel::from(
+                rows.iter()
+                    .map(|row| NativeTerrainRow {
+                        title: format!(
+                            "Triangle {} · {}",
+                            scalar(&row["triangle"]),
+                            equality(&row["comparison"]["equal"])
+                        )
+                        .into(),
+                        detail: format!("Local indices: {}", list(&row["local_indices"])).into(),
+                        state: format!("Global indices: {}", list(&row["global_indices"])).into(),
+                    })
+                    .collect::<Vec<_>>(),
+            )));
+        }
+        if !state
+            .triangles
+            .iter()
+            .any(|row| number(&row["triangle"]) == state.triangle)
+        {
+            state.triangle = state
+                .triangles
+                .first()
+                .and_then(|row| number(&row["triangle"]));
+        }
+        state.next_triangles = number(&report["page"]["next_offset"]);
+        self.window
+            .set_triangle_page(page_text(&report["page"]).into());
+        self.window
+            .set_previous_triangles(state.triangle_offset > 0);
+        self.window
+            .set_next_triangles(state.next_triangles.is_some());
+        let selected = state
+            .triangles
+            .iter()
+            .position(|row| number(&row["triangle"]) == state.triangle);
+        self.window
+            .set_selected_triangle(selected.map_or(-1, |index| index as i32));
+        let Some(row) = selected.and_then(|index| state.triangles.get(index)) else {
+            self.window
+                .set_triangle_values("Choose an observed CPU triangle.".into());
+            self.window.set_can_frame_triangle(false);
+            self.window.set_can_show_triangle_guide(false);
+            return Ok(());
+        };
+        self.window
+            .set_can_frame_triangle(row["frame_available"] == true);
+        self.window
+            .set_can_show_triangle_guide(row["guide_available"] == true);
+        let positions = row["positions"]
+            .as_array()
+            .filter(|positions| positions.len() == 3)
+            .map(|positions| {
+                positions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, position)| {
+                        format!(
+                            "Vertex {}: {}",
+                            scalar(&row["local_indices"][index]),
+                            component_values(position)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_else(|| "Observed positions unavailable.".into());
+        self.window.set_triangle_values(format!(
+            "Displacement {displacement} · triangle {} · {}\nObserved local indices: {}\nObserved global indices: {}\nCompiled local indices: {}\n{positions}",
+            scalar(&row["triangle"]), equality(&row["comparison"]["equal"]), list(&row["local_indices"]),
+            list(&row["global_indices"]), list(&row["comparison"]["expected_local_indices"])
+        ).into());
+        Ok(())
     }
 
     fn present_comparison(&self, report: &Value, state: &State) {
@@ -778,6 +963,7 @@ impl Controller {
                     state.vertex = None;
                     state.vertex_offset = 0;
                     state.source_offset = 0;
+                    self.clear_topology(&mut state);
                 }
                 Page::Vertices => {
                     state.vertex = state
@@ -786,6 +972,12 @@ impl Controller {
                         .and_then(|row| number(&row["vertex"]));
                 }
                 Page::Sources => return,
+                Page::Triangles => {
+                    state.triangle = state
+                        .triangles
+                        .get(index)
+                        .and_then(|row| number(&row["triangle"]));
+                }
             }
             state.message = None;
         }
@@ -803,6 +995,7 @@ impl Controller {
                 ),
                 Page::Vertices => (state.vertex_offset, state.next_vertices, PAGE_ROWS),
                 Page::Sources => (state.source_offset, state.next_sources, SOURCE_ROWS),
+                Page::Triangles => (state.triangle_offset, state.next_triangles, PAGE_ROWS),
             };
             let offset = if direction > 0 {
                 let Some(next) = next else {
@@ -819,6 +1012,10 @@ impl Controller {
                     state.vertex = None;
                 }
                 Page::Sources => state.source_offset = offset,
+                Page::Triangles => {
+                    state.triangle_offset = offset;
+                    state.triangle = None;
+                }
             }
             state.message = None;
         }
@@ -826,9 +1023,14 @@ impl Controller {
     }
 
     fn action(&self, action: Action) {
-        let (token, ordinal, vertex) = {
+        let (token, ordinal, vertex, triangle) = {
             let state = self.state.borrow();
-            (state.token, state.displacement, state.vertex)
+            (
+                state.token,
+                state.displacement,
+                state.vertex,
+                state.triangle,
+            )
         };
         let Some(token) = token else {
             return;
@@ -844,6 +1046,19 @@ impl Controller {
                 Action::ClearComparison => {
                     session.clear_compiled_terrain_basis_comparison(Actor::User, token)
                 }
+                Action::FrameTriangle => session.frame_compiled_terrain_triangle(
+                    Actor::User,
+                    token,
+                    ordinal.ok_or("Choose a native displacement first")?,
+                    triangle.ok_or("Choose an observed CPU triangle first")?,
+                    self.aspect.get(),
+                ),
+                Action::ShowTriangleGuide => session.set_compiled_terrain_triangle_guide(
+                    Actor::User,
+                    token,
+                    ordinal.ok_or("Choose a native displacement first")?,
+                    triangle.ok_or("Choose an observed CPU triangle first")?,
+                ),
                 Action::ToggleGuide => session.set_compiled_terrain_snapshot_visible(
                     Actor::User,
                     token,
@@ -1021,6 +1236,8 @@ impl Controller {
             Action::ClearGuide,
             Action::CancelComparison,
             Action::ClearComparison,
+            Action::FrameTriangle,
+            Action::ShowTriangleGuide,
         ] {
             let weak = Rc::downgrade(&controller);
             let callback = move || {
@@ -1037,6 +1254,8 @@ impl Controller {
                 Action::ClearGuide => controller.window.on_clear_guide(callback),
                 Action::CancelComparison => controller.window.on_cancel_comparison(callback),
                 Action::ClearComparison => controller.window.on_clear_comparison(callback),
+                Action::FrameTriangle => controller.window.on_frame_triangle(callback),
+                Action::ShowTriangleGuide => controller.window.on_show_triangle_guide(callback),
             }
         }
         controller.window.on_choose_displacement({
@@ -1055,7 +1274,20 @@ impl Controller {
                 }
             }
         });
-        for page in [Page::Displacements, Page::Vertices, Page::Sources] {
+        controller.window.on_choose_triangle({
+            let weak = Rc::downgrade(&controller);
+            move |index| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.choose(Page::Triangles, index);
+                }
+            }
+        });
+        for page in [
+            Page::Displacements,
+            Page::Vertices,
+            Page::Sources,
+            Page::Triangles,
+        ] {
             let weak = Rc::downgrade(&controller);
             let callback = move |direction| {
                 if let Some(controller) = weak.upgrade() {
@@ -1066,6 +1298,7 @@ impl Controller {
                 Page::Displacements => controller.window.on_page_displacements(callback),
                 Page::Vertices => controller.window.on_page_vertices(callback),
                 Page::Sources => controller.window.on_page_sources(callback),
+                Page::Triangles => controller.window.on_page_triangles(callback),
             }
         }
         controller.window.on_close_dialog({

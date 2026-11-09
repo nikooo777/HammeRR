@@ -5,6 +5,12 @@
 use std::io;
 
 pub mod basis;
+mod topology;
+
+pub use topology::{
+    NATIVE_TERRAIN_MESH_GROUP_ELEMENTS, NativeTerrainTopology, NativeTerrainTopologyComparison,
+    NativeTerrainTopologyReadback,
+};
 
 use super::{
     Bsp, DisplacementInfo, Face, FaceGeometry, LUMP_COUNT, LightingKind, NativeDisplacementProfile,
@@ -149,11 +155,13 @@ pub struct NativeTerrainReadback {
     pub ordinal: u16,
     pub power: i32,
     pub vertices: Vec<u8>,
+    pub topology: NativeTerrainTopologyReadback,
 }
 
 pub struct NativeTerrainDisplacement {
     source: NativeTerrainSource,
     samples: Vec<NativeTerrainSample>,
+    topology: Option<NativeTerrainTopology>,
 }
 
 impl NativeTerrainDisplacement {
@@ -179,6 +187,10 @@ impl NativeTerrainDisplacement {
 
     pub fn samples(&self) -> &[NativeTerrainSample] {
         &self.samples
+    }
+
+    pub const fn topology(&self) -> Option<&NativeTerrainTopology> {
+        self.topology.as_ref()
     }
 }
 
@@ -232,7 +244,13 @@ impl NativeTerrainSnapshot {
             + self
                 .displacements
                 .iter()
-                .map(|disp| disp.samples.capacity() * size_of::<NativeTerrainSample>())
+                .map(|disp| {
+                    disp.samples.capacity() * size_of::<NativeTerrainSample>()
+                        + disp
+                            .topology
+                            .as_ref()
+                            .map_or(0, NativeTerrainTopology::heap_bytes)
+                })
                 .sum::<usize>()
     }
 }
@@ -444,6 +462,11 @@ impl NativeTerrainCarrier {
             displacements.push(NativeTerrainDisplacement {
                 source: *source,
                 samples,
+                topology: Some(NativeTerrainTopology::decode_controlled(
+                    source,
+                    &readback.topology,
+                    check,
+                )?),
             });
         }
         check()?;

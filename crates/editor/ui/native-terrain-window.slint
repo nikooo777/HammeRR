@@ -17,8 +17,20 @@ export component NativeTerrainWindow inherits Window {
     min-height: 560px;
     in property <[NativeTerrainRow]> displacements;
     in property <[NativeTerrainRow]> vertices;
+    in property <[NativeTerrainRow]> triangles;
     in property <int> selected-displacement: -1;
     in property <int> selected-vertex: -1;
+    in property <int> selected-triangle: -1;
+    in property <string> topology-status;
+    in property <string> topology-summary;
+    in property <string> topology-comparison;
+    in property <string> topology-masks;
+    in property <string> triangle-page;
+    in property <string> triangle-values;
+    in property <bool> previous-triangles;
+    in property <bool> next-triangles;
+    in property <bool> can-frame-triangle;
+    in property <bool> can-show-triangle-guide;
     in property <string> summary;
     in property <string> status;
     in property <string> availability;
@@ -82,6 +94,10 @@ export component NativeTerrainWindow inherits Window {
     callback clear-comparison();
     callback comparison-finished(string);
     callback choose-comparison-field();
+    callback choose-triangle(int);
+    callback page-triangles(int);
+    callback frame-triangle();
+    callback show-triangle-guide();
     forward-focus: keys;
 
     keys := FocusScope {
@@ -92,12 +108,13 @@ export component NativeTerrainWindow inherits Window {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
             Text { text: "Native terrain"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
-            MutedText { text: "Inspect observed native CPU vectors and compare an offline prediction against the complete retained catalog."; }
+            MutedText { text: "Inspect observed native CPU vectors and topology, and compare them with the retained compiled map."; }
             HorizontalLayout {
                 spacing: Theme.space;
                 height: 34px;
                 DockTab { text: "Observation"; active: root.active-tab == 0; clicked => { root.active-tab = 0; } }
                 DockTab { text: "Offline comparison"; active: root.active-tab == 1; clicked => { root.active-tab = 1; } }
+                DockTab { text: "Topology"; active: root.active-tab == 2; clicked => { root.active-tab = 2; } }
                 Rectangle { horizontal-stretch: 1; }
             }
             if root.active-tab == 0: HorizontalLayout {
@@ -109,6 +126,7 @@ export component NativeTerrainWindow inherits Window {
             }
             if root.active-tab == 0 && root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
             if root.active-tab == 1 && root.comparison-status != "": Text { text: root.comparison-status; color: Theme.text; wrap: word-wrap; }
+            if root.active-tab == 2 && root.topology-status != "": Text { text: root.topology-status; color: Theme.text; wrap: word-wrap; }
             if root.summary != "": MutedText { text: root.summary; }
             if root.availability != "": Text { text: root.availability; color: Theme.warning; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
@@ -195,22 +213,27 @@ export component NativeTerrainWindow inherits Window {
                             Rectangle { horizontal-stretch: 1; }
                         }
                     }
-                    vertices-header := SectionHeader { text: "Vertices"; detail: root.vertex-page; inset: false; expanded: root.active-tab == 0; }
-                    if vertices-header.expanded: VerticalLayout {
+                    if root.active-tab == 2: VerticalLayout {
                         spacing: Theme.space;
+                        SectionHeader { text: "CPU topology"; inset: false; collapsible: false; }
+                        if root.topology-summary != "": Text { text: root.topology-summary; color: Theme.text; wrap: word-wrap; }
+                        if root.topology-comparison != "": MutedText { text: root.topology-comparison; }
+                        masks-header := SectionHeader { text: "Raw vertex masks"; inset: false; expanded: false; }
+                        if masks-header.expanded: Text { text: root.topology-masks; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                        SectionHeader { text: "Triangles"; detail: root.triangle-page; inset: false; collapsible: false; }
                         ScrollView {
                             content-width: self.width;
                             horizontal-scrollbar-policy: always-off;
-                            height: root.vertices.length == 0 ? 32px : 175px;
+                            height: root.triangles.length == 0 ? 36px : 170px;
                             VerticalLayout {
                                 alignment: start;
                                 padding-right: Theme.space-lg;
                                 spacing: Theme.space-xs;
-                                for row[index] in root.vertices: SelectableRow {
+                                for row[index] in root.triangles: SelectableRow {
                                     label: row.title;
-                                    selected: root.selected-vertex == index;
+                                    selected: root.selected-triangle == index;
                                     min-height: 70px;
-                                    clicked => { root.choose-vertex(index); }
+                                    clicked => { root.choose-triangle(index); }
                                     VerticalLayout {
                                         padding: Theme.space;
                                         spacing: Theme.space-xs;
@@ -219,35 +242,75 @@ export component NativeTerrainWindow inherits Window {
                                         Text { text: row.state; color: Theme.text-faint; overflow: elide; }
                                     }
                                 }
-                                if root.vertices.length == 0: MutedText { text: "Choose a retained displacement to inspect its native grid."; }
+                                if root.triangles.length == 0: MutedText { text: "Choose a retained displacement to inspect its actual CPU triangles."; }
                             }
                         }
                         HorizontalLayout {
                             spacing: Theme.space;
-                            Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
-                            Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
+                            Button { text: "Previous triangles"; enabled: root.previous-triangles; clicked => { root.page-triangles(-1); } }
+                            Button { text: "Next triangles"; enabled: root.next-triangles; clicked => { root.page-triangles(1); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
+                        SectionHeader { text: "Selected triangle"; inset: false; collapsible: false; }
+                        Text { text: root.triangle-values; color: Theme.text; wrap: word-wrap; }
+                        MutedText { text: "These are observed CPU indices and masks. They do not attest a GPU draw or a completed frame."; font-size: Theme.font-small; }
                     }
-                    SectionHeader { text: root.active-tab == 0 ? "Observed values" : "Compared values"; inset: false; collapsible: false; }
-                    MutedText { text: root.selected-sample; }
-                    if root.active-tab == 0: Text { text: root.raw-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
-                    if root.active-tab == 0: MutedText { text: "Values retain their observed bits. Zero and nonfinite vectors have no guide segment."; font-size: Theme.font-small; }
-                    if root.active-tab == 1: VerticalLayout {
-                        spacing: Theme.space;
-                        MutedText { text: root.comparison-fields; }
-                        FieldRow {
-                            label: "Field"; label-width: 136px; inset: false;
-                            ComboBox {
-                                model: ["Position", "Normal", "Tangent S", "Tangent T"];
-                                current-index <=> root.comparison-field-index;
-                                accessible-label: "Compared vector field";
-                                selected => { root.choose-comparison-field(); }
+                    if root.active-tab != 2: VerticalLayout {
+                        spacing: Theme.space-lg;
+                        vertices-header := SectionHeader { text: "Vertices"; detail: root.vertex-page; inset: false; expanded: root.active-tab == 0; }
+                        if vertices-header.expanded: VerticalLayout {
+                            spacing: Theme.space;
+                            ScrollView {
+                                content-width: self.width;
+                                horizontal-scrollbar-policy: always-off;
+                                height: root.vertices.length == 0 ? 32px : 175px;
+                                VerticalLayout {
+                                    alignment: start;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-xs;
+                                    for row[index] in root.vertices: SelectableRow {
+                                        label: row.title;
+                                        selected: root.selected-vertex == index;
+                                        min-height: 70px;
+                                        clicked => { root.choose-vertex(index); }
+                                        VerticalLayout {
+                                            padding: Theme.space;
+                                            spacing: Theme.space-xs;
+                                            Text { text: row.title; color: Theme.text; overflow: elide; }
+                                            Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                            Text { text: row.state; color: Theme.text-faint; overflow: elide; }
+                                        }
+                                    }
+                                    if root.vertices.length == 0: MutedText { text: "Choose a retained displacement to inspect its native grid."; }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space;
+                                Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
+                                Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
+                                Rectangle { horizontal-stretch: 1; }
                             }
                         }
-                        Text { text: root.comparison-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
-                        if root.comparison-diagnostic != "": Text { text: root.comparison-diagnostic; color: Theme.text; wrap: word-wrap; }
-                        MutedText { text: "Exact equality compares the retained bits. Frame and vector guides use the observed values."; font-size: Theme.font-small; }
+                        SectionHeader { text: root.active-tab == 0 ? "Observed values" : "Compared values"; inset: false; collapsible: false; }
+                        MutedText { text: root.selected-sample; }
+                        if root.active-tab == 0: Text { text: root.raw-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                        if root.active-tab == 0: MutedText { text: "Values retain their observed bits. Zero and nonfinite vectors have no guide segment."; font-size: Theme.font-small; }
+                        if root.active-tab == 1: VerticalLayout {
+                            spacing: Theme.space;
+                            MutedText { text: root.comparison-fields; }
+                            FieldRow {
+                                label: "Field"; label-width: 136px; inset: false;
+                                ComboBox {
+                                    model: ["Position", "Normal", "Tangent S", "Tangent T"];
+                                    current-index <=> root.comparison-field-index;
+                                    accessible-label: "Compared vector field";
+                                    selected => { root.choose-comparison-field(); }
+                                }
+                            }
+                            Text { text: root.comparison-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                            if root.comparison-diagnostic != "": Text { text: root.comparison-diagnostic; color: Theme.text; wrap: word-wrap; }
+                            MutedText { text: "Exact equality compares the retained bits. Frame and vector guides use the observed values."; font-size: Theme.font-small; }
+                        }
                     }
                     source-header := SectionHeader { text: "Source contributors"; detail: root.source-page; inset: false; expanded: false; }
                     if source-header.expanded: VerticalLayout {
@@ -268,8 +331,10 @@ export component NativeTerrainWindow inherits Window {
             if root.guide-status != "": MutedText { text: root.guide-status; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame-sample(); } }
-                Button { text: "Show vector guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
+                if root.active-tab != 2: Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame-sample(); } }
+                if root.active-tab != 2: Button { text: "Show vector guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
+                if root.active-tab == 2: Button { text: "Frame triangle"; enabled: root.can-frame-triangle; clicked => { root.frame-triangle(); } }
+                if root.active-tab == 2: Button { text: "Show triangle guide"; enabled: root.can-show-triangle-guide; clicked => { root.show-triangle-guide(); } }
                 Button { text: root.guide-visible ? "Hide guide" : "Show guide"; enabled: root.can-toggle-guide; clicked => { root.toggle-guide(); } }
                 Button { text: "Clear guide"; enabled: root.can-clear-guide; clicked => { root.clear-guide(); } }
                 Rectangle { horizontal-stretch: 1; }

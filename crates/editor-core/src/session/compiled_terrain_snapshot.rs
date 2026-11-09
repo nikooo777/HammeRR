@@ -18,7 +18,9 @@ use super::{Actor, Session, baked_build, inspection_framing, native_observation,
 use crate::runtime::{SharedSession, lock, native_activity};
 
 mod comparison;
+mod topology;
 pub use comparison::{ComparisonCompleted, ComparisonOptions, ComparisonRequest, Rounding};
+pub use topology::TopologyQuery;
 
 pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
@@ -31,7 +33,7 @@ const MARKER_COLOR: [u8; 4] = [255, 220, 90, 255];
 const NORMAL_COLOR: [u8; 4] = [80, 220, 255, 255];
 const TANGENT_S_COLOR: [u8; 4] = [255, 120, 100, 255];
 const TANGENT_T_COLOR: [u8; 4] = [120, 255, 150, 255];
-const POLICY: &str = "Complete final terrain position/N/S/T fields observed in one private owned native client after verified mesh publication. Identity is the owned build, native profile, displacement ordinal and native row-major grid index. Contributor labels describe compiled provenance; they do not map samples to authored vertices. Historical rows retain captured bits. Frame and guide require the current build and runtime, no displayed draft and a finite observed position. The guide draws a point cross and normalizes available directions for fixed-length presentation only. Missing or degenerate vectors get no substitute. Display filters apply after complete observation. No native shader, VRAD, pixel or runtime LOD-frame agreement is claimed.";
+const POLICY: &str = "Complete final terrain position/N/S/T fields and actual CPU topology observed in one private owned native client after verified mesh publication. Identity is the owned build, native profile, displacement ordinal and native row-major grid index. Contributor labels describe compiled provenance; they do not map samples to authored vertices. Historical rows retain captured bits. Frame and guide require the current build and runtime, no displayed draft and a finite observed position. The sole guide draws either an observed CPU triangle outline or a sample point cross with available directions normalized for fixed-length presentation only. CPU topology does not establish GPU draw or completed-frame state. Missing or degenerate vectors get no substitute. Display filters apply after complete observation. No native shader, VRAD, pixel or runtime LOD-frame agreement is claimed.";
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -100,9 +102,36 @@ impl Ready {
 }
 
 #[derive(Clone, Copy)]
-struct Guide {
-    displacement: u16,
-    vertex: usize,
+enum Guide {
+    SampleVectors { displacement: u16, vertex: usize },
+    TriangleOutline { displacement: u16, triangle: usize },
+}
+
+impl Guide {
+    fn displacement(self) -> u16 {
+        match self {
+            Self::SampleVectors { displacement, .. }
+            | Self::TriangleOutline { displacement, .. } => displacement,
+        }
+    }
+    fn vertex(self) -> Option<usize> {
+        match self {
+            Self::SampleVectors { vertex, .. } => Some(vertex),
+            Self::TriangleOutline { .. } => None,
+        }
+    }
+    fn triangle(self) -> Option<usize> {
+        match self {
+            Self::TriangleOutline { triangle, .. } => Some(triangle),
+            Self::SampleVectors { .. } => None,
+        }
+    }
+    fn kind(self) -> &'static str {
+        match self {
+            Self::SampleVectors { .. } => "sample_vectors",
+            Self::TriangleOutline { .. } => "triangle_outline",
+        }
+    }
 }
 
 pub struct Request {
@@ -244,6 +273,14 @@ impl Request {
         }
         self.checkpoint(session)?;
         self.build.verify(&self.control, MAX_METADATA_BYTES)?;
+        if receipt
+            .snapshot
+            .displacements()
+            .iter()
+            .any(|displacement| displacement.topology().is_none())
+        {
+            return Err("Native terrain observation lacks mandatory actual CPU topology".into());
+        }
         let profile = receipt.observation.profile.clone();
         if profile.is_empty() || profile.len() > 512 {
             return Err("Native observation has no bounded profile identity".into());
@@ -385,20 +422,24 @@ impl Session {
         let ready = state.ready.as_ref()?;
         let guide = state.guide?;
         self.terrain_snapshot_display_error(ready)
-            .or_else(|| ready.sample(guide.displacement, guide.vertex).err())
-            .or_else(|| {
-                ready
-                    .sample(guide.displacement, guide.vertex)
-                    .ok()
-                    .and_then(|sample| {
-                        if !sample_position_available(sample) {
-                            Some("The sample has no finite observed position".into())
-                        } else if !self.terrain_guide_region_visible(sample) {
-                            Some("The native sample is outside the working region".into())
-                        } else {
-                            None
-                        }
-                    })
+            .or_else(|| match guide {
+                Guide::SampleVectors {
+                    displacement,
+                    vertex,
+                } => match ready.sample(displacement, vertex) {
+                    Err(error) => Some(error),
+                    Ok(sample) if !sample_position_available(sample) => {
+                        Some("The sample has no finite observed position".into())
+                    }
+                    Ok(sample) if !self.terrain_guide_region_visible(sample) => {
+                        Some("The native sample is outside the working region".into())
+                    }
+                    Ok(_) => None,
+                },
+                Guide::TriangleOutline {
+                    displacement,
+                    triangle,
+                } => self.terrain_triangle_guide_error(ready, displacement, triangle),
             })
     }
 
@@ -411,22 +452,28 @@ impl Session {
             .ready
             .as_ref()
             .zip(state.guide)
-            .and_then(|(ready, guide)| ready.sample(guide.displacement, guide.vertex).ok());
+            .and_then(|(ready, guide)| {
+                guide
+                    .vertex()
+                    .and_then(|vertex| ready.sample(guide.displacement(), vertex).ok())
+            });
         let face = state
             .ready
             .as_ref()
             .zip(state.guide)
             .and_then(|(ready, guide)| {
                 ready
-                    .displacement(guide.displacement)
+                    .displacement(guide.displacement())
                     .ok()
                     .map(NativeTerrainDisplacement::face)
             });
         json!({"requested":requested,"visible":state.visible,"displayed":displayed,
             "token":state.token.map(|token|token.to_string()),"build_token":state.ready.as_ref().map(|ready|ready.build.token.to_string()),
             "profile":state.ready.as_ref().map(|ready|&ready.profile),"face":face,
-            "displacement":state.guide.map(|guide|guide.displacement),"vertex":state.guide.map(|guide|guide.vertex),
-            "suppression_reason":error,"vector_length":VECTOR_LENGTH,"directions_normalized_for_guide":true,
+            "kind":state.guide.map(Guide::kind),"displacement":state.guide.map(Guide::displacement),"vertex":state.guide.and_then(Guide::vertex),
+            "triangle":state.guide.and_then(Guide::triangle),
+            "triangle_observation":state.ready.as_ref().zip(state.guide).and_then(|(ready,guide)|guide.triangle().and_then(|triangle|ready.observed_triangle(guide.displacement(),triangle).ok().map(|triangle|triangle.report()))),
+            "suppression_reason":error,"vector_length":VECTOR_LENGTH,"directions_normalized_for_guide":sample.is_some(),
             "position":sample.map(|sample|vector_report(sample.position_bits())),
             "vectors":sample.map(|sample|json!({
                 "normal":vector_report(sample.normal().bits()),"tangent_s":vector_report(sample.tangent_s().bits()),
@@ -462,6 +509,7 @@ impl Session {
             "build_token":ready.map(|ready|ready.build.token.to_string()),"profile":ready.map(|ready|&ready.profile),
             "displacements":ready.map(|ready|ready.snapshot.displacements().len()),
             "samples":ready.map(|ready|ready.snapshot.sample_count()),
+            "topology":ready.map(|ready|topology::catalog_report(ready)),
             "retained_bytes":ready.map(|ready|ready.retained_bytes),"channel":"ldr",
             "observation":ready.map(|ready|ready.observation()),"artifacts":ready.map(|ready|&ready.artifacts),
             "elapsed_ms":ready.map(|ready|ready.elapsed_ms),"cleanup_error":self.native_cleanup_result().err(),
@@ -774,6 +822,7 @@ impl Session {
                     "displacement":displacement.ordinal(),"face":displacement.face(),"power":displacement.power(),
                     "grid_size":displacement.grid_size(),"samples":displacement.samples().len(),
                     "source_label":label,"source_contributors":count,
+                    "topology":topology::topology_report(displacement)?,
                     "comparison":self.terrain_basis_displacement_comparison(displacement.ordinal())}));
             }
         }
@@ -902,7 +951,7 @@ impl Session {
         if !self.terrain_guide_region_visible(sample) {
             return Err("The native sample is outside the working region".into());
         }
-        self.compiled_terrain_snapshot.guide = Some(Guide {
+        self.compiled_terrain_snapshot.guide = Some(Guide::SampleVectors {
             displacement,
             vertex,
         });
@@ -1028,7 +1077,35 @@ impl Session {
         let Some((ready, guide)) = state.ready.as_ref().zip(state.guide) else {
             return;
         };
-        let Ok(sample) = ready.sample(guide.displacement, guide.vertex) else {
+        if let Guide::TriangleOutline {
+            displacement,
+            triangle,
+        } = guide
+        {
+            let Ok(observed) = ready.observed_triangle(displacement, triangle) else {
+                return;
+            };
+            let Ok(points) = observed.positions() else {
+                return;
+            };
+            for edge in 0..3 {
+                for position in [points[edge], points[(edge + 1) % 3]] {
+                    mesh.lines.push(render::scene::LineVertex {
+                        position: position.to_array(),
+                        color: MARKER_COLOR,
+                    });
+                }
+            }
+            return;
+        }
+        let Guide::SampleVectors {
+            displacement,
+            vertex,
+        } = guide
+        else {
+            return;
+        };
+        let Ok(sample) = ready.sample(displacement, vertex) else {
             return;
         };
         let point = Vec3::from_array(sample.position_bits().map(f32::from_bits));

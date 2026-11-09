@@ -401,38 +401,50 @@ vector guides continue to use observed values.
 > changing a consumed source or starting an edit preview can hide the guide.
 > Historical rows remain readable; framing requires a current snapshot.
 
-## Observe passive player support
+<a id="observe-passive-player-support"></a>
 
-Read a fresh idle player's native position, velocity, actual movement hull and
-ground owner while it stands, falls naturally or slides down a slope.
+## Observe player support
 
-1. Save and compile the map with a player spawn above the surface or opening.
+Read a fresh player's native movement, actual hull and ground owner. Choose idle,
+forward or crouch input. Add a diagnostic hull sweep when needed.
+
+1. Save and compile a map with a spawn for the required team.
 2. Open **Build → Player support…**.
-3. Choose **Team**, then set **Duration**, **Sample interval** and **Sample limit**.
-   Click **Start**.
-   Keep Steam open until the observation finishes.
-4. Select a row under **Samples**. Use **Previous** and **Next** to page the rows.
-5. Read **Selected sample** for native time, velocities, movement hull, collision
-   bounds and supporting surface. Click **Frame sample** to locate a current row.
-6. Click **Cancel** to stop an active observation, or **Clear** to release retained
-   rows. **Close** keeps the observation.
+3. Expand **Observation settings**. Choose **Team** and **Input**. Set
+   **Duration**, **Sample interval** and **Sample limit**.
+4. To add sweeps, select **Probe movement hull** and set **Probe distance**
+   from 1 to 128 world units. Each probe sweeps downward along world Z from the
+   observed origin.
+5. Click **Start**. Keep Steam open until the observation finishes. Rows are
+   accepted only after the private game acknowledges the selected input.
+6. Expand **Samples** and select a row. Use **Previous** and **Next** to change
+   the page. Inspect **Movement hull** for actual bounds, **Ducked** state and
+   the separate raw duck flag. Expand **Movement** or **Support** for more values.
+7. Read **Diagnostic sweep** for its status, fraction and solid flags. Expand
+   **Sweep details** for endpoints and any valid plane, surface property or hit owner.
+8. Click **Frame sample** to locate the row. Click **Show sample guide** for its
+   observed hull, trajectory and optional sweep. Use **Hide guide** or **Clear guide**
+   to remove the display.
+9. Click **Cancel** to stop an observation or **Clear** to release its rows and
+   guide. **Close** keeps the observation and guide.
 
-Duration and sample interval use native simulation time. Each row also reports
-its command tickbase. The private player joins the chosen team at startup. The
-engine chooses among matching spawns; the row reports its actual origin.
-The ground owner and on-ground flag are separate native values. CS:S can set
-the flag before the player lands. Rows without a ground owner retain only
-cached surface values, labelled
-**Cached surface (previous support)**.
-**Movement friction** is the player's cached movement factor, not the raw
-physics surface coefficient.
+Duration and sample interval use native simulation time. The engine chooses a
+matching team spawn. Each row reports the actual origin and acknowledged input.
+Pressed crouch and the completed **Ducked** pose can differ during a transition.
+The movement hull comes from the actual native movement getter.
+
+A ground owner and the raw on-ground flag are separate values. Without a ground
+owner, surface values are labelled **Cached surface (previous support)**.
+**Movement friction** is the player's cached factor, not a raw physics coefficient.
+**Sweep details** reports the hit surface's raw **Physics friction coefficient**.
 
 > [!NOTE]
-> Requires the supported Linux64 CS:S build and Steam. Each observation runs one
-> fresh private game against the exact compiled BSP without movement input.
-> These samples do not identify contact planes or triangles, qualify walking
-> across seams, or attest finished rendered frames. Historical rows remain
-> readable; **Frame sample** requires a current compiled map.
+> Requires the supported Linux64 CS:S build and Steam. Input goes to the fresh
+> private game. A diagnostic sweep does not prove actual contact or traversal.
+> Its endpoint is the hull reference position, not a contact point. Surface names
+> identify checked surface properties; collision surface strings remain unavailable.
+> Hit owners do not identify authored faces or terrain triangles. Historical rows
+> remain readable; framing and guides require a current compiled map.
 
 ## Remove terrain
 

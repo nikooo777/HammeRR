@@ -1223,12 +1223,12 @@ the current source/build/runtime. The existing terrain worker runs one operation
 at a time, and retains at most 64 MiB of comparison data in addition to the
 bounded observed snapshot. No game starts for offline comparison.
 
-### Passive player support
+### Player support and diagnostic hull sweeps
 
-1. Save and compile a map containing a player spawn. Read
+1. Save and compile a map containing a matching team spawn. Read
    `get_player_support_observation` and copy `snapshot`.
 2. Call `start_player_support_observation` with that snapshot and optional
-   `team`, `duration_ms`, `interval_ms` and `max_samples`.
+   `team`, `input`, `probe_distance`, `duration_ms`, `interval_ms` and `max_samples`.
 3. Poll `get_player_support_observation` until observation and cleanup finish.
 4. Call `inspect_player_support_observation` with its `token`, `offset` and
    `limit` to page retained native samples.
@@ -1236,27 +1236,51 @@ bounded observed snapshot. No game starts for offline comparison.
    `index`, and the viewport `aspect` to locate a current sample.
 
 `cancel_player_support_observation` and `clear_player_support_observation` use
-the observation token. The editor's [Player support](terrain.md#observe-passive-player-support)
-window uses the same operations.
+the observation token. Clear releases the rows and guide and prevents late
+publication; cleanup retains its native activity reservation until drained.
+The editor's [Player support](terrain.md#observe-passive-player-support) window
+uses the same operations.
 
-Defaults are team `3` (Counter-terrorists), 5,000 ms duration, 50 ms sample interval
-and 128 maximum samples. Team `2` selects Terrorists. The map needs a matching
-team spawn; the engine chooses among matching spawns and reports the actual origin.
+Defaults are team `3` (Counter-terrorists), input `idle`, 5,000 ms duration,
+50 ms sample interval and 128 maximum samples. Team `2` selects Terrorists.
+The engine chooses among matching team spawns and reports the actual origin.
 Duration accepts 100–30,000 ms, interval 15–1,000 ms and sample count 3–1,024.
 Duration must span at least two intervals. `ceil(duration_ms / interval_ms) + 1`
-must fit the sample limit. Both times use native simulation time. Inspection pages contain
-at most 64 rows and expose `next_offset`; no rows are silently truncated.
+must fit the sample limit. Both times use native simulation time. Inspection
+pages contain at most 64 rows and expose `next_offset`.
 
-Rows retain native time/ticks, origin, local/absolute/base velocity, actual
-movement hull, collision bounds, scale, duck state and serial-checked ground
-identity. The `flags` on-ground bit can be set before landing; it does not
-substitute for a resolved ground owner. Surface `friction` is the player's
-cached movement factor. Supporting surface names and material remain distinct
-from cached values without a current ground owner. The operation observes standing, natural falls and slope
-motion without movement input. It does not identify a contact plane or triangle,
-qualify walking across seams, or attest a finished rendered frame. Historical
-rows remain inspectable; framing requires a current compiled map. Requires the
-supported Linux CS:S client and Steam.
+Input accepts `idle`, `forward`, `crouch` and `forward_crouch`. Read the shared
+`inputs` choices from the getter. The native observer requires actual button
+acknowledgement before measurement. Rows retain requested input, expected and
+observed buttons, native time/ticks, origin, velocities, actual movement hull,
+collision bounds, scale, independent `m_bDucked` and raw flags, and serial-checked
+ground identity. Supporting surface properties remain distinct from cached
+airborne values. Declared input and sampled movement describe the observed route;
+the sampled trajectory does not prove unsampled continuous motion.
+
+Omit/null `probe_distance` to disable diagnostic sweeps, or specify 1–128 units.
+Each optional downward query uses the actual native movement hull, movement
+mask, collision group and filtering. Its result retains requested/native start
+and end, fractions, solid states, contents, available plane, checked hit identity
+and hitbox, and checked surface properties. Borrowed collision-surface names
+remain explicitly unavailable. `surface.friction` is the player's cached movement
+factor; `probe.surface.friction` is the hit surface's raw physics coefficient.
+A native returned endpoint is a hull-reference
+endpoint, **not an actual contact point**. A diagnostic sweep does not establish
+actual support/contact, future movement or an authored face/triangle identity.
+
+Use `set_player_support_sample_guide` with `action:"guide"`, `token` and `index`
+to show one selected observed hull, the bounded retained sampled-origin route
+and any diagnostic sweep. The endpoint marker and available fixed-length plane
+normal use the native returned hull-reference endpoint. `action:"show"`,
+`"hide"` or `"clear"` takes only `token`; Hide retains the sample request and
+Clear removes only the guide. The guide uses observed native data throughout.
+Framing and guide display require current sources/build/runtime and no displayed
+geometry draft. Historical rows stay readable and stale guides are suppressed.
+
+Requires the supported Linux CS:S client, Steam and adjacent native helper/library.
+No finished rendered-frame, authored contact triangle or moving-body friction
+contact qualification is claimed.
 
 ### Exact terrain positions
 

@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use editor_core::session::player_support_observation::{self as support, Options, Query};
+use editor_core::session::player_support_observation::{self as support, Input, Options, Query};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -43,6 +43,9 @@ enum Action {
     Cancel,
     Clear,
     Frame,
+    ShowGuide,
+    ToggleGuide,
+    ClearGuide,
 }
 
 fn number(value: &Value) -> Option<usize> {
@@ -55,10 +58,60 @@ fn token(value: &Value) -> Option<u64> {
 
 fn scalar(value: &Value) -> String {
     match value {
+        Value::Number(value) if value.is_f64() => {
+            let Some(value) = value.as_f64().filter(|value| value.is_finite()) else {
+                return "unavailable".into();
+            };
+            if value == 0.0 {
+                return "0".into();
+            }
+            let magnitude = value.abs();
+            if !(0.0001..1_000_000.0).contains(&magnitude) {
+                return format!("{value:.5e}");
+            }
+            let precision = (5.0 - magnitude.log10().floor()) as usize;
+            let text = format!("{value:.precision$}");
+            if text.contains('.') {
+                text.trim_end_matches('0').trim_end_matches('.').into()
+            } else {
+                text
+            }
+        }
         Value::Number(value) => value.to_string(),
         Value::String(value) => value.clone(),
         _ => "unavailable".into(),
     }
+}
+
+fn boolean(value: &Value) -> &'static str {
+    match value.as_bool() {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unavailable",
+    }
+}
+
+fn flag(value: &Value, mask: u64) -> &'static str {
+    match value.as_u64() {
+        Some(flags) if flags & mask != 0 => "set",
+        Some(_) => "unset",
+        None => "unavailable",
+    }
+}
+
+fn hexadecimal(value: &Value) -> String {
+    value
+        .as_u64()
+        .map(|value| format!("0x{value:08x}"))
+        .unwrap_or_else(|| "unavailable".into())
+}
+
+fn input_label(value: &Value) -> String {
+    value
+        .as_str()
+        .and_then(|value| value.parse::<Input>().ok())
+        .map(|input| input.label().to_owned())
+        .unwrap_or_else(|| "unavailable".into())
 }
 
 fn vector(value: &Value) -> String {
@@ -82,7 +135,7 @@ fn status_text(report: &Value, admitting: bool) -> &'static str {
         Some("observing") if report["cancel_requested"] == true => {
             "Cancelling observation; waiting for confirmed cleanup."
         }
-        Some("observing") => "Observing the private player's passive motion…",
+        Some("observing") => "Waiting for acknowledged input and native player samples…",
         Some("ready") => "Player observation ready.",
         Some("stale") => "Historical observation; the map, build or runtime changed.",
         Some("cancelled") => "Player observation cancelled.",
@@ -112,6 +165,9 @@ impl Controller {
                 self.window.set_can_cancel(false);
                 self.window.set_can_clear(false);
                 self.window.set_can_frame(false);
+                self.window.set_can_show_guide(false);
+                self.window.set_can_toggle_guide(false);
+                self.window.set_can_clear_guide(false);
                 None
             }
         }
@@ -194,6 +250,7 @@ impl Controller {
             )
             .into(),
         );
+        self.present_guide(&report["guide"]);
         let rows = if let Some(token) = state.token.filter(|_| report["samples"].is_number()) {
             let page = session.inspect_player_support_observation(Query {
                 token,
@@ -225,6 +282,9 @@ impl Controller {
             Vec::new()
         };
         if state.rows != rows {
+            if state.rows.is_empty() && !rows.is_empty() {
+                self.window.set_settings_expanded(false);
+            }
             self.window.set_samples(ModelRc::new(VecModel::from(
                 rows.iter()
                     .map(|row| PlayerSupportRow {
@@ -279,10 +339,26 @@ impl Controller {
             self.window.set_motion("".into());
             self.window.set_hull("".into());
             self.window.set_support("".into());
+            self.window.set_input_status("".into());
+            self.window.set_probe_status("".into());
+            self.window.set_probe_details("".into());
+            self.window.set_can_show_guide(false);
             return;
         };
         self.window
             .set_can_frame(state.current && row["frame_available"] == true);
+        self.window
+            .set_can_show_guide(state.current && row["guide_available"] == true);
+        self.window.set_input_status(
+            format!(
+                "Input: {} · acknowledged: {}\nButtons: {} · expected: {}",
+                input_label(&row["input"]),
+                boolean(&row["input_acknowledged"]),
+                hexadecimal(&row["buttons"]),
+                hexadecimal(&row["expected_buttons"])
+            )
+            .into(),
+        );
         self.window.set_sample_identity(
             format!(
                 "Sample {} · {}",
@@ -307,11 +383,11 @@ impl Controller {
         );
         self.window.set_hull(
             format!(
-                "Movement hull: {} to {}\nCollision bounds: {} to {}\nModel scale: {} · {} · health: {} · team: {}",
+                "Native bounds: {} to {}\nCollision bounds: {} to {}\nDucked: {} · raw duck flag: {}\nModel scale: {} · raw flags: {} · health: {} · team: {}",
                 vector(&row["hull_mins"]), vector(&row["hull_maxs"]),
                 vector(&row["collision_mins"]), vector(&row["collision_maxs"]),
-                scalar(&row["model_scale"]),
-                if row["ducked"] == true { "ducked" } else { "standing hull" },
+                boolean(&row["ducked"]), flag(&row["flags"], 2),
+                scalar(&row["model_scale"]), hexadecimal(&row["flags"]),
                 scalar(&row["health"]), scalar(&row["team"])
             )
             .into(),
@@ -344,14 +420,105 @@ impl Controller {
         } else {
             "No retained surface data.".into()
         };
-        let ground_flag = match row["flags"].as_u64() {
-            Some(flags) if flags & 1 != 0 => "set",
-            Some(_) => "unset",
-            None => "unavailable",
-        };
+        let ground_flag = flag(&row["flags"], 1);
         self.window.set_support(
             format!("{ground_text}\nOn-ground flag: {ground_flag}\n{surface_text}").into(),
         );
+        self.present_probe(&row["probe"]);
+    }
+
+    fn present_guide(&self, guide: &Value) {
+        let requested = guide["requested"] == true;
+        let visible = guide["visible"] == true;
+        self.window.set_guide_visible(visible);
+        self.window.set_can_clear_guide(requested);
+        self.window
+            .set_can_toggle_guide(requested && (visible || guide["suppression_reason"].is_null()));
+        self.window.set_guide_status(
+            if requested {
+                format!(
+                    "Observed hull and trajectory · sample {} · {}{}",
+                    number(&guide["index"])
+                        .map_or_else(|| "unavailable".into(), |index| (index + 1).to_string()),
+                    if guide["displayed"] == true {
+                        "shown"
+                    } else if visible {
+                        "suppressed"
+                    } else {
+                        "hidden"
+                    },
+                    guide["suppression_reason"]
+                        .as_str()
+                        .map(|reason| format!("\n{reason}"))
+                        .unwrap_or_default()
+                )
+            } else {
+                "No sample guide. Guides show observed hulls, trajectory and any diagnostic sweep."
+                    .into()
+            }
+            .into(),
+        );
+    }
+
+    fn present_probe(&self, probe: &Value) {
+        if !probe.is_object() {
+            self.window.set_probe_status("".into());
+            self.window.set_probe_details("".into());
+            return;
+        }
+        let status = match probe["status"].as_str() {
+            Some("miss") => "No hit",
+            Some("impact") => "Impact",
+            Some("start_solid") => "Starts solid",
+            Some("all_solid") => "All solid",
+            _ => "Unavailable",
+        };
+        self.window.set_probe_status(format!(
+            "{status} · fraction: {}\nStart solid: {} · all solid: {} · left-solid fraction: {}",
+            scalar(&probe["fraction"]), boolean(&probe["start_solid"]),
+            boolean(&probe["all_solid"]), scalar(&probe["fraction_left_solid"])
+        ).into());
+        let plane = &probe["plane"];
+        let plane = if plane["available"] == true {
+            format!(
+                "Plane normal: {} · distance: {}",
+                vector(&plane["normal"]),
+                scalar(&plane["distance"])
+            )
+        } else {
+            "No valid impact plane.".into()
+        };
+        let entity = &probe["hit_entity"];
+        let hit = if entity.is_object() {
+            format!(
+                "Hit owner: {} · entity {} · serial {}\nHit box: {} · hit group: {} · physics bone: {}",
+                entity["classname"].as_str().unwrap_or("unavailable"),
+                scalar(&entity["index"]),
+                scalar(&entity["serial"]),
+                scalar(&probe["hitbox"]),
+                scalar(&probe["hit_group"]),
+                scalar(&probe["physics_bone"])
+            )
+        } else {
+            "No retained hit owner.".into()
+        };
+        let surface = &probe["surface"];
+        let surface = if surface.is_object() {
+            format!(
+                "Surface property: {} · index {} · material {}\nPhysics friction coefficient: {}",
+                surface["name"].as_str().unwrap_or("unavailable"),
+                scalar(&surface["index"]),
+                scalar(&surface["material"]),
+                scalar(&surface["friction"])
+            )
+        } else {
+            "No measured surface property.".into()
+        };
+        self.window.set_probe_details(format!(
+            "Start: {}\nRequested end: {}\nNative start: {}\nHull reference endpoint: {}\nDistance: {} · mask: {} · collision group: {}\n{plane}\n{hit}\n{surface}\nCollision surface name unavailable.",
+            vector(&probe["start"]), vector(&probe["requested_end"]), vector(&probe["native_start"]), vector(&probe["native_end"]),
+            scalar(&probe["distance"]), hexadecimal(&probe["mask"]), scalar(&probe["collision_group"])
+        ).into());
     }
 
     fn action(&self, action: Action) {
@@ -365,6 +532,17 @@ impl Controller {
             match action {
                 Action::Cancel => session.cancel_player_support_observation(Actor::User, token),
                 Action::Clear => session.clear_player_support_observation(Actor::User, token),
+                Action::ShowGuide => session.set_player_support_sample_guide(
+                    Actor::User,
+                    token,
+                    selected.ok_or("Choose a retained sample first")?,
+                ),
+                Action::ToggleGuide => session.set_player_support_sample_guide_visible(
+                    Actor::User,
+                    token,
+                    !self.window.get_guide_visible(),
+                ),
+                Action::ClearGuide => session.clear_player_support_sample_guide(Actor::User, token),
                 Action::Frame => session.frame_player_support_sample(
                     Actor::User,
                     token,
@@ -378,6 +556,13 @@ impl Controller {
     }
 
     fn start(&self) {
+        let input = usize::try_from(self.window.get_input_index())
+            .ok()
+            .and_then(|index| Input::ALL.get(index).copied());
+        let Some(input) = input else {
+            self.message(Some("Choose a supported player input".into()));
+            return;
+        };
         let access = match self.target.upgrade() {
             Ok(access) => access,
             Err(error) => {
@@ -403,6 +588,11 @@ impl Controller {
             } else {
                 2
             },
+            input,
+            probe_distance: self
+                .window
+                .get_probe_enabled()
+                .then_some(self.window.get_probe_distance() as u16),
         };
         self.refresh();
         let window = self.window.as_weak();
@@ -436,6 +626,30 @@ impl Controller {
             timer: slint::Timer::default(),
         });
         let defaults = Options::default();
+        controller.window.set_inputs(ModelRc::new(VecModel::from(
+            Input::ALL
+                .iter()
+                .map(|input| input.label().into())
+                .collect::<Vec<_>>(),
+        )));
+        controller.window.set_input_index(
+            Input::ALL
+                .iter()
+                .position(|input| *input == defaults.input)
+                .map_or(0, |index| index as i32),
+        );
+        controller
+            .window
+            .set_probe_enabled(defaults.probe_distance.is_some());
+        controller
+            .window
+            .set_probe_distance(i32::from(defaults.probe_distance.unwrap_or(2)));
+        controller
+            .window
+            .set_minimum_probe_distance(i32::from(support::MIN_PLAYER_SUPPORT_PROBE_DISTANCE));
+        controller
+            .window
+            .set_maximum_probe_distance(i32::from(support::MAX_PLAYER_SUPPORT_PROBE_DISTANCE));
         controller
             .window
             .set_duration_ms(defaults.duration_ms as i32);
@@ -484,7 +698,14 @@ impl Controller {
                 }
             }
         });
-        for action in [Action::Cancel, Action::Clear, Action::Frame] {
+        for action in [
+            Action::Cancel,
+            Action::Clear,
+            Action::Frame,
+            Action::ShowGuide,
+            Action::ToggleGuide,
+            Action::ClearGuide,
+        ] {
             let weak = Rc::downgrade(&controller);
             let callback = move || {
                 if let Some(controller) = weak.upgrade() {
@@ -495,6 +716,9 @@ impl Controller {
                 Action::Cancel => controller.window.on_cancel_observation(callback),
                 Action::Clear => controller.window.on_clear_observation(callback),
                 Action::Frame => controller.window.on_frame_sample(callback),
+                Action::ShowGuide => controller.window.on_show_guide(callback),
+                Action::ToggleGuide => controller.window.on_toggle_guide(callback),
+                Action::ClearGuide => controller.window.on_clear_guide(callback),
             }
         }
         controller.window.on_choose_sample({

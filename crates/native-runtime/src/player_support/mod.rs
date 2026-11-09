@@ -17,13 +17,13 @@ use crate::{
 mod memory;
 mod plugin;
 
-pub(crate) const PROFILE: &str = "css_linux64_build25338318_passive_player_support_v1";
+pub(crate) const PROFILE: &str = "css_linux64_build25338318_player_support_v2";
 pub(crate) const SERVER_SHA: &str =
     "7887c8cc24a3dec6b8739bfebcad48c00b95423ebcbfc647f49fef1ab904dbe2";
 pub(crate) const VPHYSICS_SHA: &str =
     "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const OUTPUT: &str = "player-support-publication.json";
-const MAX_OUTPUT: usize = 2 * 1024 * 1024;
+const MAX_OUTPUT: usize = crate::MAX_PLAYER_SUPPORT_RESULT_BYTES;
 
 fn check_callback_failure(directory: &Path) -> io::Result<()> {
     match util::read(&directory.join("player-support-fatal.txt"), 4096) {
@@ -330,7 +330,7 @@ pub(crate) fn execute(
         bsp_sha256: profile.bsp_sha256.clone(),
         map_name: profile.map_name.clone(),
         process,
-        readiness: json!({"setup":format!("jointeam {}; joinclass 1",profile.settings.team),"setup_api":"IServerPluginCallbacks003::ClientActive -> next GameFrame / VEngineServer023::ClientCommand","setup_retired_before_measurement":true,"phase":"public_gameframe_before_next_server_simulation","exact_bsp":true}),
+        readiness: json!({"setup":format!("jointeam {}; joinclass 1",profile.settings.team),"setup_api":"IServerPluginCallbacks003::ClientActive -> next GameFrame / VEngineServer023::ClientCommand","setup_retired_before_measurement":true,"input":profile.settings.input,"expected_buttons":profile.settings.input.expected_buttons(),"input_acknowledged_before_measurement":true,"probe_distance":profile.settings.probe_distance,"phase":"public_gameframe_before_next_server_simulation","exact_bsp":true}),
         observer: publication.observer.clone(),
         resumed: true,
     };
@@ -355,7 +355,53 @@ fn validate_publication(
             "Player support publication identity, completion or count differs",
         ));
     }
-    crate::validate_player_support_samples(&publication.samples, &profile.settings)
+    crate::validate_player_support_samples(&publication.samples, &profile.settings)?;
+    let first = publication
+        .samples
+        .first()
+        .ok_or_else(|| invalid("Player support publication has no first row"))?;
+    let acknowledgement = &publication.observer["input_acknowledgement"];
+    if acknowledgement["input"].as_str() != Some(profile.settings.input.as_str())
+        || acknowledgement["expected_buttons"].as_i64()
+            != Some(i64::from(profile.settings.input.expected_buttons()))
+        || acknowledgement["observed_buttons"].as_i64()
+            != Some(i64::from(profile.settings.input.expected_buttons()))
+        || acknowledgement["acknowledged_before_measurement"].as_bool() != Some(true)
+        || acknowledgement["spawn_generation"].as_u64() != Some(first.spawn_generation)
+        || acknowledgement["player"]["address"].as_u64() != Some(first.player.address)
+        || acknowledgement["player"]["reference_handle"].as_u64()
+            != Some(u64::from(first.player.reference_handle))
+        || acknowledgement["callback_sequence"]
+            .as_u64()
+            .is_none_or(|sequence| {
+                sequence == 0 || sequence >= first.prior_simulating_callback_sequence
+            })
+        || acknowledgement["server_tick"]
+            .as_i64()
+            .is_none_or(|tick| tick >= i64::from(first.prior_server_tick))
+        || acknowledgement["server_time"]
+            .as_f64()
+            .is_none_or(|time| !time.is_finite() || time >= f64::from(first.prior_server_time))
+        || publication.observer["no_commands_during_measurement"].as_bool() != Some(true)
+    {
+        return Err(invalid(
+            "Player support input acknowledgement is absent, stale or not prior to measurement",
+        ));
+    }
+    if profile.settings.input != crate::PlayerSupportInput::Idle {
+        let input_setup = &publication.observer["input_setup"];
+        if input_setup["queue_count"].as_u64() != Some(1)
+            || input_setup["returned"].as_bool() != Some(true)
+            || input_setup["queued_before_measurement"].as_bool() != Some(true)
+            || input_setup["return_is_input_acknowledgement"].as_bool() != Some(false)
+            || input_setup["generation_at_queue"].as_u64() != Some(first.spawn_generation)
+        {
+            return Err(invalid(
+                "Player support controlled input has no single completed startup queue receipt",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn decode_output(

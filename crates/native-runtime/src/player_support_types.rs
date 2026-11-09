@@ -15,11 +15,78 @@ pub const DEFAULT_PLAYER_SUPPORT_DURATION_MS: u64 = 5000;
 pub const DEFAULT_PLAYER_SUPPORT_INTERVAL_MS: u64 = 50;
 pub const DEFAULT_PLAYER_SUPPORT_MAX_SAMPLES: usize = 128;
 pub const DEFAULT_PLAYER_SUPPORT_TEAM: u8 = 3;
+pub const MAX_PLAYER_SUPPORT_RESULT_BYTES: usize = 4 * 1024 * 1024;
+pub const MIN_PLAYER_SUPPORT_PROBE_DISTANCE: u16 = 1;
+pub const MAX_PLAYER_SUPPORT_PROBE_DISTANCE: u16 = 128;
+pub(crate) const PLAYER_SUPPORT_MOVEMENT_MASK: u32 = 0x0201400b;
+pub(crate) const PLAYER_SUPPORT_COLLISION_GROUP: i32 = 8;
+pub const MAX_PLAYER_SUPPORT_PROBE_COORDINATE: f32 = 1_048_576.0;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerSupportInput {
+    #[default]
+    Idle,
+    Forward,
+    Crouch,
+    ForwardCrouch,
+}
+
+impl PlayerSupportInput {
+    pub const ALL: [Self; 4] = [Self::Idle, Self::Forward, Self::Crouch, Self::ForwardCrouch];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Forward => "forward",
+            Self::Crouch => "crouch",
+            Self::ForwardCrouch => "forward_crouch",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Idle",
+            Self::Forward => "Forward",
+            Self::Crouch => "Crouch",
+            Self::ForwardCrouch => "Forward + Crouch",
+        }
+    }
+
+    pub const fn expected_buttons(self) -> i32 {
+        match self {
+            Self::Idle => 0,
+            Self::Forward => 8,
+            Self::Crouch => 4,
+            Self::ForwardCrouch => 12,
+        }
+    }
+}
+
+impl std::str::FromStr for PlayerSupportInput {
+    type Err = io::Error;
+
+    fn from_str(value: &str) -> io::Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|input| input.as_str() == value)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Player support input must be idle, forward, crouch or forward_crouch",
+                )
+            })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerSupportSettings {
     pub team: u8,
+    #[serde(default)]
+    pub input: PlayerSupportInput,
+    #[serde(default)]
+    pub probe_distance: Option<u16>,
     pub duration_ms: u64,
     pub interval_ms: u64,
     pub max_samples: usize,
@@ -29,6 +96,8 @@ impl Default for PlayerSupportSettings {
     fn default() -> Self {
         Self {
             team: DEFAULT_PLAYER_SUPPORT_TEAM,
+            input: PlayerSupportInput::Idle,
+            probe_distance: None,
             duration_ms: DEFAULT_PLAYER_SUPPORT_DURATION_MS,
             interval_ms: DEFAULT_PLAYER_SUPPORT_INTERVAL_MS,
             max_samples: DEFAULT_PLAYER_SUPPORT_MAX_SAMPLES,
@@ -39,6 +108,10 @@ impl Default for PlayerSupportSettings {
 impl PlayerSupportSettings {
     pub fn validate(&self) -> io::Result<()> {
         if !matches!(self.team, 2 | 3)
+            || self.probe_distance.is_some_and(|distance| {
+                !(MIN_PLAYER_SUPPORT_PROBE_DISTANCE..=MAX_PLAYER_SUPPORT_PROBE_DISTANCE)
+                    .contains(&distance)
+            })
             || !(MIN_PLAYER_SUPPORT_DURATION_MS..=MAX_PLAYER_SUPPORT_DURATION_MS)
                 .contains(&self.duration_ms)
             || !(MIN_PLAYER_SUPPORT_INTERVAL_MS..=MAX_PLAYER_SUPPORT_INTERVAL_MS)
@@ -50,7 +123,7 @@ impl PlayerSupportSettings {
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Player support observation requires 100–30000ms duration, 15–1000ms intervals, and capacity for every requested sample (3–1024 rows)",
+                "Player support observation requires team 2 or 3, an optional 1–128 unit probe, 100–30000ms duration, 15–1000ms intervals, and capacity for every requested sample (3–1024 rows)",
             ));
         }
         Ok(())
@@ -93,6 +166,69 @@ pub struct PlayerSupportSurface {
     pub material: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerSupportProbeStatus {
+    Miss,
+    Impact,
+    StartSolid,
+    AllSolid,
+}
+
+impl PlayerSupportProbeStatus {
+    pub(crate) fn from_native(fraction: f32, start_solid: bool, all_solid: bool) -> Self {
+        if all_solid {
+            Self::AllSolid
+        } else if start_solid {
+            Self::StartSolid
+        } else if fraction < 1.0 {
+            Self::Impact
+        } else {
+            Self::Miss
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerSupportProbePlane {
+    pub available: bool,
+    pub normal: [f32; 3],
+    pub distance: f32,
+    pub plane_type: u8,
+    pub sign_bits: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerSupportProbe {
+    pub distance: u16,
+    pub start: [f32; 3],
+    pub requested_end: [f32; 3],
+    pub mask: u32,
+    pub collision_group: i32,
+    pub native_start: [f32; 3],
+    pub native_end: [f32; 3],
+    pub fraction: f32,
+    pub fraction_left_solid: f32,
+    pub all_solid: bool,
+    pub start_solid: bool,
+    pub status: PlayerSupportProbeStatus,
+    pub plane: PlayerSupportProbePlane,
+    pub contents: i32,
+    pub displacement_flags: u16,
+    pub hit_group: i32,
+    pub physics_bone: i16,
+    pub hitbox: i32,
+    pub hit_entity_address: u64,
+    pub hit_entity: Option<PlayerSupportEntity>,
+    pub surface_name_address: u64,
+    pub collision_surface_name_available: bool,
+    pub surface_properties: i16,
+    pub surface_flags: u16,
+    pub surface: Option<PlayerSupportSurface>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerSupportSample {
@@ -129,10 +265,14 @@ pub struct PlayerSupportSample {
     pub surface_is_cached: bool,
     pub flags: u32,
     pub buttons: i32,
+    pub input: PlayerSupportInput,
+    pub expected_buttons: i32,
+    pub input_acknowledged: bool,
     pub health: i32,
     pub team: i32,
     pub move_type: u8,
     pub ducked: bool,
+    pub probe: Option<PlayerSupportProbe>,
     pub player: PlayerSupportEntity,
 }
 
@@ -151,6 +291,95 @@ pub struct PlayerSupportObservationReceipt {
     pub resumed: bool,
 }
 
+pub(crate) fn validate_probe(
+    probe: &PlayerSupportProbe,
+    distance: u16,
+    origin: [f32; 3],
+) -> io::Result<()> {
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Player support diagnostic sweep violates the native query contract",
+        )
+    };
+    let status =
+        PlayerSupportProbeStatus::from_native(probe.fraction, probe.start_solid, probe.all_solid);
+    if probe.distance != distance
+        || !(MIN_PLAYER_SUPPORT_PROBE_DISTANCE..=MAX_PLAYER_SUPPORT_PROBE_DISTANCE)
+            .contains(&distance)
+        || probe.start.map(f32::to_bits) != origin.map(f32::to_bits)
+        || probe.requested_end[0].to_bits() != origin[0].to_bits()
+        || probe.requested_end[1].to_bits() != origin[1].to_bits()
+        || probe.requested_end[2] >= origin[2]
+        || probe.mask != PLAYER_SUPPORT_MOVEMENT_MASK
+        || probe.collision_group != PLAYER_SUPPORT_COLLISION_GROUP
+        || !probe.fraction.is_finite()
+        || !(0.0..=1.0).contains(&probe.fraction)
+        || !probe.fraction_left_solid.is_finite()
+        || !(0.0..=1.0).contains(&probe.fraction_left_solid)
+        || probe.status != status
+        || probe.plane.available != (status == PlayerSupportProbeStatus::Impact)
+        || !probe.plane.distance.is_finite()
+        || probe.surface.is_some() != (status == PlayerSupportProbeStatus::Impact)
+        || probe.hit_entity.is_some() != (probe.hit_entity_address != 0)
+        || (status == PlayerSupportProbeStatus::Impact && probe.hit_entity.is_none())
+        || probe.collision_surface_name_available
+    {
+        return Err(invalid());
+    }
+    for vector in [
+        probe.start,
+        probe.requested_end,
+        probe.native_start,
+        probe.native_end,
+        probe.plane.normal,
+    ] {
+        if vector.into_iter().any(|value| !value.is_finite()) {
+            return Err(invalid());
+        }
+    }
+    if [probe.start, probe.requested_end]
+        .into_iter()
+        .flatten()
+        .any(|value| value.abs() > MAX_PLAYER_SUPPORT_PROBE_COORDINATE)
+    {
+        return Err(invalid());
+    }
+    let exact_end = f64::from(origin[2]) - f64::from(distance);
+    if exact_end <= f64::from(probe.requested_end[2].next_down())
+        || exact_end >= f64::from(probe.requested_end[2].next_up())
+    {
+        return Err(invalid());
+    }
+    if let Some(hit) = &probe.hit_entity
+        && (hit.address != probe.hit_entity_address
+            || hit.index >= 8192
+            || hit.reference_handle == u32::MAX
+            || hit.reference_handle != ((hit.serial << 16) | hit.index)
+            || hit.classname.is_empty()
+            || hit.classname.len() > 127
+            || hit.classname.as_bytes().contains(&0))
+    {
+        return Err(invalid());
+    }
+    if let Some(surface) = &probe.surface
+        && (!valid_surface(surface) || surface.index != i32::from(probe.surface_properties))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn valid_surface(surface: &PlayerSupportSurface) -> bool {
+    (0..128).contains(&surface.index)
+        && surface.data_address != 0
+        && !surface.name.is_empty()
+        && surface.name.len() <= 255
+        && !surface.name.as_bytes().contains(&0)
+        && surface.friction.is_finite()
+        && surface.friction >= 0.0
+}
+
 pub fn validate_player_support_samples(
     samples: &[PlayerSupportSample],
     settings: &PlayerSupportSettings,
@@ -159,7 +388,7 @@ pub fn validate_player_support_samples(
     let invalid = || {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            "Player support rows violate the completed passive sample contract",
+            "Player support rows violate the completed sample contract",
         )
     };
     if samples.len() < 3 || samples.len() > settings.max_samples {
@@ -201,8 +430,10 @@ pub fn validate_player_support_samples(
             || row.team != i32::from(settings.team)
             || row.move_type != 2
             || row.flags & 0x40 != 0
-            || row.buttons != 0
-            || row.ducked != (row.flags & 2 != 0)
+            || row.input != settings.input
+            || row.expected_buttons != settings.input.expected_buttons()
+            || row.buttons != row.expected_buttons
+            || !row.input_acknowledged
             || !row.model_scale.is_finite()
             || row.model_scale <= 0.0
             || row.model_scale > 1024.0
@@ -254,15 +485,15 @@ pub fn validate_player_support_samples(
                 }
             }
         }
+        match (&row.probe, settings.probe_distance) {
+            (Some(probe), Some(distance)) => validate_probe(probe, distance, row.origin)?,
+            (None, None) => {}
+            _ => return Err(invalid()),
+        }
         if let Some(surface) = &row.surface {
-            if !(0..128).contains(&surface.index)
+            if !valid_surface(surface)
                 || surface.index != row.cached_surface_index
-                || surface.data_address == 0
                 || surface.data_address != row.cached_surface_data_address
-                || surface.name.is_empty()
-                || surface.name.len() > 255
-                || surface.name.as_bytes().contains(&0)
-                || !surface.friction.is_finite()
                 || !(0.0..=1.0).contains(&surface.friction)
             {
                 return Err(invalid());

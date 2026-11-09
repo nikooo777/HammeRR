@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use editor_core::session::compiled_terrain_snapshot::RenderGuard as TerrainSnapshotRenderGuard;
 use editor_core::session::instance_contents::RenderGuard as InstanceContentsRenderGuard;
+use editor_core::session::player_support_observation::RenderGuard as PlayerSupportRenderGuard;
 use editor_core::session::view_layout::{MAX_CANVAS_PIXELS, MAX_PANES};
 use editor_core::shortcuts::Command;
 use glam::Vec3;
@@ -123,6 +124,7 @@ pub struct Viewport {
     scene: Option<GpuScene>,
     instance_contents_guard: Option<InstanceContentsRenderGuard>,
     terrain_snapshot_guard: Option<TerrainSnapshotRenderGuard>,
+    player_support_guard: Option<PlayerSupportRenderGuard>,
     pub camera: Camera,
     pub options: ViewOptions,
     panes: [PaneState; MAX_PANES],
@@ -142,6 +144,7 @@ impl Viewport {
             scene: None,
             instance_contents_guard: None,
             terrain_snapshot_guard: None,
+            player_support_guard: None,
             camera,
             options: ViewOptions::default(),
             panes: std::array::from_fn(|_| PaneState::default()),
@@ -162,6 +165,7 @@ impl Viewport {
         library: &MaterialLibrary,
         instance_contents_guard: InstanceContentsRenderGuard,
         terrain_snapshot_guard: Option<TerrainSnapshotRenderGuard>,
+        player_support_guard: Option<PlayerSupportRenderGuard>,
     ) -> Result<(), String> {
         for pane in &mut self.panes {
             pane.baked_surfaces_error = None;
@@ -177,6 +181,7 @@ impl Viewport {
             Err(error) => {
                 self.instance_contents_guard = None;
                 self.terrain_snapshot_guard = None;
+                self.player_support_guard = None;
                 self.scene_error = Some(error.clone());
                 self.redraw();
                 return Err(error);
@@ -185,6 +190,7 @@ impl Viewport {
         self.scene = Some(scene);
         self.instance_contents_guard = Some(instance_contents_guard);
         self.terrain_snapshot_guard = terrain_snapshot_guard;
+        self.player_support_guard = player_support_guard;
         self.scene_error = None;
         self.redraw();
         Ok(())
@@ -519,6 +525,10 @@ impl Viewport {
         session.verify_instance_contents_render(guard)?;
         session.verify_compiled_terrain_snapshot_render(
             self.terrain_snapshot_guard.as_ref(),
+            self.options,
+        )?;
+        session.verify_player_support_observation_render(
+            self.player_support_guard.as_ref(),
             self.options,
         )
     }

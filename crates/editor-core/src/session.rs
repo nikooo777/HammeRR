@@ -3076,6 +3076,7 @@ impl Session {
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
         self.preflight_compiled_terrain_snapshot();
+        self.preflight_player_support_observation();
         self.preflight_baked_surfaces();
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
@@ -3241,6 +3242,7 @@ impl Session {
         self.append_compiled_visibility_guide(&mut mesh);
         self.append_compiled_details(&mut mesh);
         self.append_compiled_terrain_snapshot_guide(&mut mesh, view);
+        self.append_player_support_observation_guide(&mut mesh, view);
         if baked_surfaces
             && self
                 .append_baked_surfaces(&mut mesh, view.authored_models)

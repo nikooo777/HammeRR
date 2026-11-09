@@ -5,13 +5,14 @@ use std::sync::{
 };
 
 use compiler::Control;
-use glam::Vec3;
 use native_runtime::{CaptureObserver, CleanupDisposition, PlayerSupportSample};
 use serde_json::{Value, json};
 
 pub use native_runtime::{
-    MAX_PLAYER_SUPPORT_DURATION_MS, MAX_PLAYER_SUPPORT_INTERVAL_MS, MAX_PLAYER_SUPPORT_SAMPLES,
-    MIN_PLAYER_SUPPORT_DURATION_MS, MIN_PLAYER_SUPPORT_INTERVAL_MS, MIN_PLAYER_SUPPORT_SAMPLES,
+    MAX_PLAYER_SUPPORT_DURATION_MS, MAX_PLAYER_SUPPORT_INTERVAL_MS,
+    MAX_PLAYER_SUPPORT_PROBE_DISTANCE, MAX_PLAYER_SUPPORT_RESULT_BYTES, MAX_PLAYER_SUPPORT_SAMPLES,
+    MIN_PLAYER_SUPPORT_DURATION_MS, MIN_PLAYER_SUPPORT_INTERVAL_MS,
+    MIN_PLAYER_SUPPORT_PROBE_DISTANCE, MIN_PLAYER_SUPPORT_SAMPLES, PlayerSupportInput as Input,
     PlayerSupportSettings as Options,
 };
 
@@ -19,11 +20,14 @@ use super::native_observation::{Frame, MAX_METADATA_BYTES};
 use super::{Actor, Session, baked_build, inspection_framing, native_observation, worker};
 use crate::runtime::{SharedSession, lock, native_activity};
 
+mod guide;
+pub use guide::RenderGuard;
+
 pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
-pub const MAX_RETAINED_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_RETAINED_BYTES: usize = MAX_PLAYER_SUPPORT_RESULT_BYTES;
 const MAX_OBSERVATION_BYTES: usize = 128 * 1024;
-const POLICY: &str = "Passive snapshots of one freshly spawned idle player in the exact retained compiled BSP, observed in a private owned Linux CS:S client with -insecure and sv_lan 1. Samples retain actual native player identity, origin, velocities, collision bounds, movement hull, simulation time, ground owner and checked supporting surface identity. Airborne surface fields are cached previous state and do not establish present support. Only the native observer's completed publication contract can produce rows. Natural standing, falling and sliding describe the observed route only; no input, swept trace, contact plane/triangle identity, authored face correspondence, seam crossing or VPhysics friction-contact qualification is claimed. Historical samples remain inspectable; framing requires the current build/runtime and no displayed geometry draft.";
+const POLICY: &str = "Snapshots of one freshly spawned player in the exact retained compiled BSP, observed in a private owned Linux CS:S client with -insecure and sv_lan 1. Requested idle/forward/crouch combinations require native button acknowledgement before measurement. Samples retain actual native identity, origin, velocities, collision bounds, movement hull selected independently by m_bDucked, simulation time, ground owner and checked supporting surface identity. Raw flags remain independent. Airborne surface fields are cached previous state and do not establish present support. Optional native movement-hull sweeps are diagnostic queries in the sampled state; their returned hull-reference endpoints/planes are not actual contact points or future player motion. No authored face/triangle correspondence or VPhysics friction-contact qualification is claimed. Historical samples remain inspectable; framing and guides require the current build/runtime and no displayed geometry draft.";
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -31,9 +35,10 @@ pub(super) struct State {
     pub(super) worker: worker::Slot,
     token: Option<u64>,
     pending: Option<Pending>,
-    ready: Option<Ready>,
+    ready: Option<Arc<Ready>>,
     status: &'static str,
     error: Option<String>,
+    guide: guide::State,
 }
 
 struct Pending {
@@ -258,6 +263,25 @@ impl Request {
                                     .map_or(0, |surface| surface.name.capacity()),
                             )
                         })
+                        .and_then(|bytes| {
+                            sample.probe.as_ref().map_or(Some(bytes), |probe| {
+                                bytes
+                                    .checked_add(
+                                        probe
+                                            .hit_entity
+                                            .as_ref()
+                                            .map_or(0, |entity| entity.classname.capacity()),
+                                    )
+                                    .and_then(|bytes| {
+                                        bytes.checked_add(
+                                            probe
+                                                .surface
+                                                .as_ref()
+                                                .map_or(0, |surface| surface.name.capacity()),
+                                        )
+                                    })
+                            })
+                        })
                 })
             })
             .ok_or("Player support sample storage exceeds its byte budget")?;
@@ -348,13 +372,16 @@ impl Session {
             "build_token":ready.map(|ready|ready.build.token.to_string()),"profile":ready.map(|ready|&ready.profile),
             "samples":ready.map(|ready|ready.samples.len()),
             "settings":ready.map(|ready|ready.options).or_else(||state.pending.as_ref().map(|pending|pending.options)),
-            "observation":ready.map(Ready::observation),"artifacts":ready.map(|ready|&ready.artifacts),
+            "observation":ready.map(|ready|ready.observation()),"artifacts":ready.map(|ready|&ready.artifacts),
             "elapsed_ms":ready.map(|ready|ready.elapsed_ms),"retained_bytes":ready.map(|ready|ready.retained_bytes),
-            "error":state.error,"cleanup_error":self.native_cleanup_result().err(),"native_activity":native_activity,"build":build,
+            "error":state.error,"guide":self.player_support_sample_guide(),
+            "inputs":Input::ALL.map(|input|json!({"id":input.as_str(),"label":input.label()})),
+            "cleanup_error":self.native_cleanup_result().err(),"native_activity":native_activity,"build":build,
             "limits":{"page_rows":MAX_PAGE_ROWS,"page_bytes":MAX_PAGE_BYTES,"retained_bytes":MAX_RETAINED_BYTES,
                 "duration_ms":[MIN_PLAYER_SUPPORT_DURATION_MS,MAX_PLAYER_SUPPORT_DURATION_MS],
                 "interval_ms":[MIN_PLAYER_SUPPORT_INTERVAL_MS,MAX_PLAYER_SUPPORT_INTERVAL_MS],
-                "max_samples":[MIN_PLAYER_SUPPORT_SAMPLES,MAX_PLAYER_SUPPORT_SAMPLES],"active_workers":1,"observations":1},
+                "max_samples":[MIN_PLAYER_SUPPORT_SAMPLES,MAX_PLAYER_SUPPORT_SAMPLES],
+                "probe_distance":[MIN_PLAYER_SUPPORT_PROBE_DISTANCE,MAX_PLAYER_SUPPORT_PROBE_DISTANCE],"active_workers":1,"observations":1},
             "policy":POLICY})
     }
 
@@ -408,7 +435,8 @@ impl Session {
         state.ready = None;
         state.status = "observing";
         state.error = None;
-        self.log(actor, "Started passive native player support observation");
+        self.retire_player_support_sample_guide();
+        self.log(actor, "Started native player support observation");
         Ok(Request {
             token,
             identity,
@@ -459,7 +487,7 @@ impl Session {
         state.pending = None;
         match result {
             Ok(ready) => {
-                state.ready = Some(ready);
+                state.ready = Some(Arc::new(ready));
                 state.status = "ready";
                 state.error = None;
             }
@@ -474,6 +502,7 @@ impl Session {
             }
         }
         let status = state.status;
+        self.invalidate_player_support_observation_render();
         self.log(actor, format!("Player support observation {status}"));
         drop(request);
         Ok(self.player_support_observation())
@@ -497,6 +526,7 @@ impl Session {
             state.ready = None;
             state.status = "failed";
             state.error = Some(baked_build::bounded_message(&error));
+            self.invalidate_player_support_observation_render();
             self.log(actor, "Player support observation failed to start");
         }
         Err(error)
@@ -540,6 +570,7 @@ impl Session {
         state.ready = None;
         state.status = "idle";
         state.error = None;
+        self.retire_player_support_sample_guide();
     }
 
     pub fn inspect_player_support_observation(&self, query: Query) -> Result<Value, String> {
@@ -560,10 +591,15 @@ impl Session {
         for sample in ready.samples.iter().skip(query.offset).take(query.limit) {
             let mut row = serde_json::to_value(sample).map_err(|error| error.to_string())?;
             row["frame_available"] = json!(frame_error.is_none());
+            row["guide_available"] = json!(
+                frame_error.is_none()
+                    && self.player_support_sample_guide_geometry_available(ready, sample.ordinal)
+            );
             rows.push(row);
         }
         let report = json!({"token":query.token.to_string(),"build_token":ready.build.token.to_string(),"profile":ready.profile,
             "current":current_error.is_none(),"current_error":current_error,"frame_error":frame_error,
+            "guide":self.player_support_sample_guide(),
             "page":{"offset":query.offset,"limit":query.limit,"total":ready.samples.len(),"returned":rows.len(),
                 "next_offset":query.offset.checked_add(query.limit).filter(|offset|*offset<ready.samples.len()),"rows":rows},
             "policy":POLICY});
@@ -593,13 +629,7 @@ impl Session {
             return Err(error);
         }
         let sample = ready.sample(index)?;
-        let origin = Vec3::from_array(sample.origin);
-        let mins = origin + Vec3::from_array(sample.hull_mins);
-        let maxs = origin + Vec3::from_array(sample.hull_maxs);
-        if !origin.is_finite() || !mins.is_finite() || !maxs.is_finite() || !mins.cmple(maxs).all()
-        {
-            return Err("Player sample has no finite ordered native movement hull".into());
-        }
+        let [mins, maxs] = guide::hull_bounds(sample)?;
         let camera = self.inspection_frame_camera(mins, maxs, aspect, "Native player sample")?;
         ready.current(self)?;
         let report = json!({"token":token.to_string(),"build_token":ready.build.token.to_string(),

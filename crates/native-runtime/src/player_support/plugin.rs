@@ -9,12 +9,57 @@ use serde_json::{Value, json};
 
 use super::memory::Memory;
 use super::{MAX_OUTPUT, OUTPUT, PROFILE, PluginRequest, Publication, SERVER_SHA, VPHYSICS_SHA};
+use crate::player_support_types::{PLAYER_SUPPORT_COLLISION_GROUP, PLAYER_SUPPORT_MOVEMENT_MASK};
 use crate::terrain_snapshot::EngineImage;
 use crate::util::{self, invalid};
-use crate::{PlayerSupportEntity, PlayerSupportSample, PlayerSupportSurface};
+use crate::{
+    PlayerSupportEntity, PlayerSupportInput, PlayerSupportProbe, PlayerSupportProbePlane,
+    PlayerSupportProbeStatus, PlayerSupportSample, PlayerSupportSurface,
+};
 
 type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> *mut c_void;
 type Object = *mut c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeVector {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl NativeVector {
+    fn array(self) -> [f32; 3] {
+        [self.x, self.y, self.z]
+    }
+}
+
+impl From<[f32; 3]> for NativeVector {
+    fn from([x, y, z]: [f32; 3]) -> Self {
+        Self { x, y, z }
+    }
+}
+
+#[repr(C, align(8))]
+struct NativeTrace([u8; 104]);
+
+impl NativeTrace {
+    fn u16(&self, offset: usize) -> u16 {
+        u16::from_le_bytes([self.0[offset], self.0[offset + 1]])
+    }
+    fn u32(&self, offset: usize) -> u32 {
+        u32::from_le_bytes(std::array::from_fn(|axis| self.0[offset + axis]))
+    }
+    fn u64(&self, offset: usize) -> u64 {
+        u64::from_le_bytes(std::array::from_fn(|axis| self.0[offset + axis]))
+    }
+    fn f32(&self, offset: usize) -> f32 {
+        f32::from_bits(self.u32(offset))
+    }
+    fn vector(&self, offset: usize) -> [f32; 3] {
+        std::array::from_fn(|axis| self.f32(offset + axis * 4))
+    }
+}
 
 #[repr(C)]
 struct Plugin {
@@ -127,12 +172,18 @@ struct SetupCall {
     function: usize,
     engine: u64,
     edict: u64,
-    team: i32,
+    kind: SetupKind,
     generation: u64,
     player_handle: u32,
     world_handle: u32,
     client_object: u64,
     user_id: i32,
+}
+
+#[derive(Clone, Copy)]
+enum SetupKind {
+    Team(i32),
+    Input(PlayerSupportInput),
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -172,6 +223,8 @@ struct State {
     event_manager: u64,
     physics_interface: u64,
     surface_props: u64,
+    movement: u64,
+    trace_interface: u64,
     _physics_library: libloading::Library,
     modules: Value,
     callback: u64,
@@ -180,6 +233,10 @@ struct State {
     map_initialized: bool,
     setup_retired: bool,
     setup_attempted: bool,
+    input_attempted: bool,
+    input_retired: bool,
+    input_receipt: Value,
+    input_acknowledgement: Value,
     pending_client: Option<u64>,
     setup_receipt: Value,
     native_client: Option<ClientRow>,
@@ -285,6 +342,8 @@ impl State {
         let engine_interface = factory_object(engine_factory, c"VEngineServer023")?;
         let entity_interface = factory_object(game_factory, c"ServerGameEnts001")?;
         let event_manager = factory_object(engine_factory, c"GAMEEVENTSMANAGER002")?;
+        let movement = factory_object(game_factory, c"GameMovement001")?;
+        let trace_interface = factory_object(engine_factory, c"EngineTraceServer003")?;
         let physics_library: libloading::Library = unsafe {
             libloading::os::unix::Library::open(
                 Some(request.root.join("bin/linux64/vphysics.so")),
@@ -298,6 +357,7 @@ impl State {
         let physics_interface = factory_object(*physics_factory, c"VPhysics031")?;
         let surface_props = factory_object(*physics_factory, c"VPhysicsSurfaceProps001")?;
         let sample_capacity = request.profile.settings.max_samples;
+        let input_retired = request.profile.settings.input == PlayerSupportInput::Idle;
         let value = Self {
             directory,
             request,
@@ -310,6 +370,8 @@ impl State {
             event_manager,
             physics_interface,
             surface_props,
+            movement,
+            trace_interface,
             _physics_library: physics_library,
             modules: json!(modules),
             callback: 0,
@@ -318,6 +380,10 @@ impl State {
             map_initialized: false,
             setup_retired: false,
             setup_attempted: false,
+            input_attempted: false,
+            input_retired,
+            input_receipt: Value::Null,
+            input_acknowledgement: Value::Null,
             pending_client: None,
             setup_receipt: Value::Null,
             native_client: None,
@@ -341,12 +407,16 @@ impl State {
         if value.engine_interface != value.engine + 0xa012b0
             || value.entity_interface != value.server + 0xc92e90
             || value.event_manager != value.engine + 0xc563a0
+            || value.movement != value.server + 0xdcfe40
+            || value.trace_interface != value.engine + 0xc54de0
         {
             return Err(invalid("Observer public interface singleton differs"));
         }
         value.object(value.entity_interface, value.server + 0xb54ef8)?;
         value.object(value.event_manager, value.engine + 0x8e2608)?;
         value.object(value.physics_interface, value.vphysics + 0x193c98)?;
+        value.object(value.movement, value.server + 0xc23ec8)?;
+        value.object(value.trace_interface, value.engine + 0x8e23a0)?;
         Ok(value)
     }
 
@@ -368,6 +438,11 @@ impl State {
     }
 
     fn prepare_gameframe_setup(&mut self) -> io::Result<Option<SetupCall>> {
+        if !self.closed && self.input_attempted && !self.input_retired {
+            return Err(invalid(
+                "Observer GameFrame reentered while controlled input was in flight",
+            ));
+        }
         if self.closed || self.setup_retired {
             return Ok(None);
         }
@@ -410,7 +485,7 @@ impl State {
             function,
             engine: self.engine_interface,
             edict,
-            team: i32::from(self.request.profile.settings.team),
+            kind: SetupKind::Team(i32::from(self.request.profile.settings.team)),
             generation: self.generation,
             player_handle: player.reference_handle,
             world_handle: world.reference_handle,
@@ -427,11 +502,23 @@ impl State {
     }
 
     fn finish_client_setup(&mut self, call: SetupCall) -> io::Result<()> {
-        if !self.setup_attempted
-            || self.setup_retired
+        let eligible = match call.kind {
+            SetupKind::Team(_) => {
+                self.setup_attempted
+                    && !self.setup_retired
+                    && self.pending_client == Some(call.edict)
+            }
+            SetupKind::Input(_) => {
+                self.setup_retired
+                    && self.input_attempted
+                    && !self.input_retired
+                    && self.pending_client.is_none()
+            }
+        };
+        if !eligible
             || self.closed
             || self.generation != call.generation
-            || self.pending_client != Some(call.edict)
+            || self.first_time.is_some()
             || FAILED.load(Ordering::Acquire)
         {
             return Err(invalid(
@@ -480,11 +567,59 @@ impl State {
                 "Observer ClientActive player/world binding changed during queueing",
             ));
         }
-        self.setup_receipt = json!({"callback":"GameFrame","trigger":"ClientActive","method":"VEngineServer023::ClientCommand","slot":38,"slot_byte_offset":0x130,"function":call.function,"edict":call.edict,"player":current_player,"world":current_world,"commands":format!("jointeam {}; joinclass 1",call.team),"native_client":sole.native,"queue_count":1,"callback_thread":CALLBACK_THREAD.load(Ordering::Acquire),"generation_at_queue":call.generation,"queued_before_measurement":true,"returned":true});
-        self.setup_retired = true;
-        self.pending_client = None;
+        let commands = match call.kind {
+            SetupKind::Team(team) => format!("jointeam {team}; joinclass 1"),
+            SetupKind::Input(input) => input_commands(input).to_string_lossy().into_owned(),
+        };
+        let receipt = json!({"callback":"GameFrame","method":"VEngineServer023::ClientCommand","slot":38,"slot_byte_offset":0x130,"function":call.function,"edict":call.edict,"player":current_player,"world":current_world,"commands":commands,"native_client":sole.native,"queue_count":1,"callback_thread":CALLBACK_THREAD.load(Ordering::Acquire),"generation_at_queue":call.generation,"queued_before_measurement":true,"returned":true,"return_is_input_acknowledgement":false});
+        match call.kind {
+            SetupKind::Team(_) => {
+                self.setup_receipt = receipt;
+                self.setup_retired = true;
+                self.pending_client = None;
+            }
+            SetupKind::Input(_) => {
+                self.input_receipt = receipt;
+                self.input_retired = true;
+            }
+        }
         self.previous = None;
         Ok(())
+    }
+
+    fn prepare_input_setup(&mut self, player: &PlayerSupportEntity) -> io::Result<SetupCall> {
+        if !self.setup_retired
+            || self.input_retired
+            || self.input_attempted
+            || self.first_time.is_some()
+            || self.closed
+            || FAILED.load(Ordering::Acquire)
+        {
+            return Err(invalid(
+                "Observer input queue was outside its one completed startup state",
+            ));
+        }
+        let world = self
+            .world
+            .as_ref()
+            .ok_or_else(|| invalid("Observer input setup has no world identity"))?;
+        let native_client = self
+            .native_client
+            .ok_or_else(|| invalid("Observer input setup has no native client"))?;
+        let call = SetupCall {
+            function: self.function(self.engine_interface, 0x130, self.engine + 0x49cad0)?,
+            engine: self.engine_interface,
+            edict: self.player_edict,
+            kind: SetupKind::Input(self.request.profile.settings.input),
+            generation: self.generation,
+            player_handle: player.reference_handle,
+            world_handle: world.reference_handle,
+            client_object: native_client.object,
+            user_id: native_client.user_id,
+        };
+        self.input_attempted = true;
+        self.previous = None;
+        Ok(call)
     }
 
     fn refuse(&mut self, error: io::Error) {
@@ -752,13 +887,13 @@ impl State {
             map_name: self.request.profile.map_name.clone(),
             bsp_sha256: self.request.profile.bsp_sha256.clone(),
             samples: std::mem::take(&mut self.samples),
-            observer: json!({"api":"ISERVERPLUGINCALLBACKS003","phase":"pre_server_gameframe_after_completed_step","modules":self.modules,"plugin_registration":registration,"callback_sequence":self.callback,"callback_thread":self.thread,"spawn_generation":self.generation,"listeners_registered":self.listeners_registered,"sampling_closed":true,"no_commands_during_measurement":true,"setup_retired":self.setup_retired,"setup":self.setup_receipt,"native_client":self.native_client,"client_catalog":self.client_catalog,"world":self.world,"player":self.player,"publication_pid":std::process::id()}),
+            observer: json!({"api":"ISERVERPLUGINCALLBACKS003","phase":"pre_server_gameframe_after_completed_step","modules":self.modules,"plugin_registration":registration,"callback_sequence":self.callback,"callback_thread":self.thread,"spawn_generation":self.generation,"listeners_registered":self.listeners_registered,"sampling_closed":true,"no_commands_during_measurement":true,"setup_retired":self.setup_retired,"setup":self.setup_receipt,"input":self.request.profile.settings.input,"input_setup":self.input_receipt,"input_acknowledgement":self.input_acknowledgement,"movement":{"object":self.movement,"vtable":self.server+0xc23ec8,"mins_slot":27,"maxs_slot":28,"selector":"m_Local.m_bDucked","probe_route":"GameMovement001::TracePlayerBBox","probe_distance":self.request.profile.settings.probe_distance,"collision_surface_name":"unavailable_borrowed_lifetime"},"native_client":self.native_client,"client_catalog":self.client_catalog,"world":self.world,"player":self.player,"publication_pid":std::process::id()}),
             error,
             sampling_closed: true,
         };
         let bytes = serde_json::to_vec(&publication).map_err(io::Error::other)?;
         if bytes.len() > MAX_OUTPUT {
-            return Err(invalid("Observer publication exceeds two MiB"));
+            return Err(invalid("Observer publication exceeds four MiB"));
         }
         util::atomic_write(&self.directory.join(OUTPUT), &bytes)
     }
@@ -787,6 +922,32 @@ impl State {
             address: object,
             classname,
         })
+    }
+
+    fn resolve_handle(&self, handle: u32) -> io::Result<Option<PlayerSupportEntity>> {
+        if handle == 0 {
+            return Ok(None);
+        }
+        let base = self.memory.u64(self.server + 0xc83cf0)?;
+        if base != self.server + 0xd09e60 {
+            return Err(invalid("Observer native handle table identity differs"));
+        }
+        if handle == u32::MAX {
+            if self.memory.u32(base + 8191 * 32 + 0x10)? == 0xffff {
+                return Err(invalid("Observer invalid handle does not resolve null"));
+            }
+            return Ok(None);
+        }
+        let index = handle & 0xffff;
+        if index >= 8192 {
+            return Err(invalid("Observer handle index exceeds native table"));
+        }
+        let object = self.memory.u64(base + u64::from(index) * 32 + 8)?;
+        let entity = self.entity(object, index)?;
+        if entity.reference_handle != handle {
+            return Err(invalid("Observer native handle serial differs"));
+        }
+        Ok(Some(entity))
     }
     fn edict(&self, index: i32) -> io::Result<(u64, u64)> {
         let get: unsafe extern "C" fn(Object, i32) -> Object = unsafe {
@@ -886,6 +1047,21 @@ impl State {
         if data == 0 {
             return Ok((index, data, None));
         }
+        let mut surface = self.surface_record(index, Some(data))?;
+        let friction = self.memory.f32(player + 0x1290)?;
+        let material = self.memory.u8(player + 0x1294)?;
+        if material != surface.material || !(0.0..=1.0).contains(&friction) {
+            return Err(invalid("Observer cached surface material/friction differs"));
+        }
+        surface.friction = friction;
+        Ok((index, data, Some(surface)))
+    }
+
+    fn surface_record(
+        &self,
+        index: i32,
+        cached_data: Option<u64>,
+    ) -> io::Result<PlayerSupportSurface> {
         let helper = self.memory.u64(self.server + 0xd59440)?;
         if helper != self.server + 0xd59460 {
             return Err(invalid("Observer movement helper singleton differs"));
@@ -909,8 +1085,10 @@ impl State {
             ));
         }
         let records = self.memory.u64(self.surface_props + 0x180)?;
-        let expected = records + index as u64 * 0x78 + 0x14;
-        if data != expected {
+        let data = records
+            .checked_add(index as u64 * 0x78 + 0x14)
+            .ok_or_else(|| invalid("Observer surface record address overflows"))?;
+        if cached_data.is_some_and(|cached| cached != data) {
             return Err(invalid("Observer cached surface data identity differs"));
         }
         self.memory.range(data, 0x64)?;
@@ -928,55 +1106,264 @@ impl State {
         if name.is_empty() {
             return Err(invalid("Observer support surface name is empty"));
         }
-        let friction = self.memory.f32(player + 0x1290)?;
-        let material = self.memory.u8(player + 0x1294)?;
-        if material != self.memory.u8(data + 0x48)? || !(0.0..=1.0).contains(&friction) {
-            return Err(invalid("Observer cached surface material/friction differs"));
-        }
-        Ok((
-            index,
-            data,
-            Some(PlayerSupportSurface {
+        let get_physics: unsafe extern "C" fn(Object, i32, *mut f32, *mut f32, *mut f32, *mut f32) = unsafe {
+            std::mem::transmute(self.function(self.surface_props, 0x28, self.vphysics + 0x34200)?)
+        };
+        let mut friction = f32::NAN;
+        unsafe {
+            get_physics(
+                self.surface_props as Object,
                 index,
-                name,
-                data_address: data,
-                friction,
-                material,
-            }),
-        ))
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut friction,
+                std::ptr::null_mut(),
+            )
+        };
+        let material = self.memory.u8(data + 0x48)?;
+        if !friction.is_finite() || friction < 0.0 {
+            return Err(invalid(
+                "Observer native surface friction is not finite and nonnegative",
+            ));
+        }
+        Ok(PlayerSupportSurface {
+            index,
+            name,
+            data_address: data,
+            friction,
+            material,
+        })
     }
-    fn hull(&self, player: u64, flags: u32) -> io::Result<(f32, [f32; 3], [f32; 3])> {
+
+    fn movement_ready(&self, player: &PlayerSupportEntity, probe: bool) -> io::Result<bool> {
+        if self.movement != self.server + 0xdcfe40 {
+            return Err(invalid("Observer movement singleton differs"));
+        }
+        self.object(self.movement, self.server + 0xc23ec8)?;
+        self.function(self.movement, 0xd8, self.server + 0x5a1650)?;
+        self.function(self.movement, 0xe0, self.server + 0x5a1750)?;
+        if self.memory.u64(self.movement + 8)? != player.address {
+            return Ok(false);
+        }
+        if probe {
+            self.function(self.movement, 0x48, self.server + 0x5a63c0)?;
+            self.function(self.movement, 0x58, self.server + 0x812210)?;
+            self.object(self.trace_interface, self.engine + 0x8e23a0)?;
+            self.function(self.trace_interface, 0x20, self.engine + 0x50b210)?;
+            if self.memory.u64(self.server + 0xce3c00)? != self.movement
+                || self.memory.u64(self.server + 0xce5f78)? != self.server + 0xe0e380
+                || self.memory.u64(self.server + 0xd53300)? != self.trace_interface
+            {
+                return Err(invalid("Observer movement/trace static binding differs"));
+            }
+            let move_data = self.memory.u64(self.movement + 0x10)?;
+            if move_data != self.server + 0xe0e380 {
+                return Ok(false);
+            }
+            let handle = self.memory.u32(move_data + 4)?;
+            if handle != player.reference_handle {
+                return Ok(false);
+            }
+            let resolved = self
+                .resolve_handle(handle)?
+                .ok_or_else(|| invalid("Observer movement skip handle resolves null"))?;
+            if resolved.address != player.address {
+                return Err(invalid(
+                    "Observer movement skip handle resolves another entity",
+                ));
+            }
+        }
+        Ok(true)
+    }
+
+    fn hull(&self, player: &PlayerSupportEntity) -> io::Result<(f32, bool, [f32; 3], [f32; 3])> {
+        if !self.movement_ready(player, false)? {
+            return Err(invalid(
+                "Observer movement hull has no current player context",
+            ));
+        }
         let rules = self.memory.u64(self.server + 0xd54730)?;
         self.object(rules, self.server + 0xc24758)?;
         self.function(rules, 0x100, self.server + 0x816520)?;
         let table = self.server + 0xdd3420;
         self.memory.range(table, 9 * 12)?;
-        let observer = self.memory.u8(player + 0xdfc)? & 8 != 0;
-        let offset = if observer {
-            0x48
-        } else if flags & 2 != 0 {
-            0x24
-        } else {
-            0x0c
-        };
-        let scale = self.memory.f32(player + 0x4d0)?;
+        let observer = self.memory.u8(player.address + 0xdfc)?;
+        let ducked = self.memory.u8(player.address + 0xa7c)?;
+        if ducked > 1 {
+            return Err(invalid("Observer movement duck Boolean is invalid"));
+        }
+        let scale = self.memory.f32(player.address + 0x4d0)?;
         if scale <= 0.0 || scale > 1024.0 {
             return Err(invalid(
                 "Observer player scale is outside its finite positive profile",
             ));
         }
-        let mut mins = self.memory.vector(table + offset)?;
-        let mut maxs = self.memory.vector(table + offset + 12)?;
-        for axis in 0..3 {
-            mins[axis] *= scale;
-            maxs[axis] *= scale;
+        let mins_fn: unsafe extern "C" fn(Object) -> NativeVector = unsafe {
+            std::mem::transmute(self.function(self.movement, 0xd8, self.server + 0x5a1650)?)
+        };
+        let maxs_fn: unsafe extern "C" fn(Object) -> NativeVector = unsafe {
+            std::mem::transmute(self.function(self.movement, 0xe0, self.server + 0x5a1750)?)
+        };
+        let mins = unsafe { mins_fn(self.movement as Object) }.array();
+        let maxs = unsafe { maxs_fn(self.movement as Object) }.array();
+        if !self.movement_ready(player, false)?
+            || self.memory.u64(self.server + 0xd54730)? != rules
+            || self.memory.u8(player.address + 0xdfc)? != observer
+            || self.memory.u8(player.address + 0xa7c)? != ducked
+            || self.memory.f32(player.address + 0x4d0)?.to_bits() != scale.to_bits()
+        {
+            return Err(invalid(
+                "Observer movement hull context/selectors changed during getters",
+            ));
         }
         ordered(mins, maxs)?;
-        Ok((scale, mins, maxs))
+        Ok((scale, ducked != 0, mins, maxs))
     }
-    fn frame(&mut self, simulating: bool) -> io::Result<()> {
+
+    fn probe(
+        &self,
+        player: &PlayerSupportEntity,
+        origin: [f32; 3],
+        distance: u16,
+    ) -> io::Result<PlayerSupportProbe> {
+        if !self.movement_ready(player, true)? {
+            return Err(invalid(
+                "Observer diagnostic sweep has no completed movement context",
+            ));
+        }
+        let before_hull = self.hull(player)?;
+        let mask_fn: unsafe extern "C" fn(Object, bool) -> u32 = unsafe {
+            std::mem::transmute(self.function(self.movement, 0x58, self.server + 0x812210)?)
+        };
+        let mask = unsafe { mask_fn(self.movement as Object, false) };
+        if mask != PLAYER_SUPPORT_MOVEMENT_MASK {
+            return Err(invalid("Observer ordinary player movement mask differs"));
+        }
+        let requested_end = [origin[0], origin[1], origin[2] - f32::from(distance)];
+        if [origin, requested_end].into_iter().flatten().any(|value| {
+            !value.is_finite() || value.abs() > crate::MAX_PLAYER_SUPPORT_PROBE_COORDINATE
+        }) || requested_end[2] >= origin[2]
+        {
+            return Err(invalid(
+                "Observer diagnostic sweep requires finite downward endpoints within ±1048576 world units",
+            ));
+        }
+        let start = NativeVector::from(origin);
+        let end = NativeVector::from(requested_end);
+        let mut trace = NativeTrace([0; 104]);
+        let trace_fn: unsafe extern "C" fn(
+            Object,
+            *const NativeVector,
+            *const NativeVector,
+            u32,
+            i32,
+            *mut NativeTrace,
+        ) = unsafe {
+            std::mem::transmute(self.function(self.movement, 0x48, self.server + 0x5a63c0)?)
+        };
+        unsafe {
+            trace_fn(
+                self.movement as Object,
+                &start,
+                &end,
+                mask,
+                PLAYER_SUPPORT_COLLISION_GROUP,
+                &mut trace,
+            )
+        };
+        if !self.movement_ready(player, true)?
+            || self.hull(player)? != before_hull
+            || self
+                .memory
+                .vector(player.address + 0x3b4)?
+                .map(f32::to_bits)
+                != origin.map(f32::to_bits)
+            || self.entity(player.address, player.index)?.reference_handle
+                != player.reference_handle
+        {
+            return Err(invalid(
+                "Observer diagnostic sweep changed its player/movement binding",
+            ));
+        }
+        let all_solid = trace.0[0x36];
+        let start_solid = trace.0[0x37];
+        if all_solid > 1 || start_solid > 1 {
+            return Err(invalid(
+                "Observer diagnostic sweep solid Boolean is invalid",
+            ));
+        }
+        let fraction = trace.f32(0x2c);
+        let status =
+            PlayerSupportProbeStatus::from_native(fraction, start_solid != 0, all_solid != 0);
+        let hit_entity_address = trace.u64(0x58);
+        let hit_entity = if hit_entity_address == 0 {
+            None
+        } else {
+            let handle = self.memory.u32(hit_entity_address + 0x474)?;
+            let entity = self
+                .resolve_handle(handle)?
+                .ok_or_else(|| invalid("Observer sweep hit has a null reference handle"))?;
+            let (_, roundtrip) = self.edict(entity.index as i32)?;
+            if entity.address != hit_entity_address || roundtrip != entity.address {
+                return Err(invalid("Observer sweep hit entity/edict identity differs"));
+            }
+            Some(entity)
+        };
+        let surface_properties = trace.u16(0x48) as i16;
+        let surface = if status == PlayerSupportProbeStatus::Impact {
+            Some(self.surface_record(i32::from(surface_properties), None)?)
+        } else {
+            None
+        };
+        let probe = PlayerSupportProbe {
+            distance,
+            start: origin,
+            requested_end,
+            mask,
+            collision_group: PLAYER_SUPPORT_COLLISION_GROUP,
+            native_start: trace.vector(0),
+            native_end: trace.vector(0x0c),
+            fraction,
+            fraction_left_solid: trace.f32(0x38),
+            all_solid: all_solid != 0,
+            start_solid: start_solid != 0,
+            status,
+            plane: PlayerSupportProbePlane {
+                available: status == PlayerSupportProbeStatus::Impact,
+                normal: trace.vector(0x18),
+                distance: trace.f32(0x24),
+                plane_type: trace.0[0x28],
+                sign_bits: trace.0[0x29],
+            },
+            contents: trace.u32(0x30) as i32,
+            displacement_flags: trace.u16(0x34),
+            hit_group: trace.u32(0x50) as i32,
+            physics_bone: trace.u16(0x54) as i16,
+            hitbox: trace.u32(0x60) as i32,
+            hit_entity_address,
+            hit_entity,
+            surface_name_address: trace.u64(0x40),
+            collision_surface_name_available: false,
+            surface_properties,
+            surface_flags: trace.u16(0x4a),
+            surface,
+        };
+        crate::player_support_types::validate_probe(&probe, distance, origin)?;
+        if let Some(hit) = &probe.hit_entity {
+            let current = self.entity(hit.address, hit.index)?;
+            if current.reference_handle != hit.reference_handle {
+                return Err(invalid(
+                    "Observer sweep hit entity retired before publication",
+                ));
+            }
+        }
+        self.physics_idle()?;
+        Ok(probe)
+    }
+
+    fn frame(&mut self, simulating: bool) -> io::Result<Option<SetupCall>> {
         if self.closed {
-            return Ok(());
+            return Ok(None);
         }
         if FAILED.load(Ordering::Acquire) {
             return Err(invalid("Observer callback failure latch is set"));
@@ -990,13 +1377,13 @@ impl State {
         }
         if !simulating || !self.activated || !self.map_initialized {
             self.previous = None;
-            return Ok(());
+            return Ok(None);
         }
         self.memory.refresh()?;
         self.plugins_only()?;
         if !self.setup_retired {
             self.previous = None;
-            return Ok(());
+            return Ok(None);
         }
         let globals = self.memory.u64(self.server + 0xd53080)?;
         let tick = self.memory.i32(globals + 0x18)?;
@@ -1023,19 +1410,30 @@ impl State {
             || self.memory.u8(player.address + 0x190)? != 0
         {
             if self.first_time.is_some() {
-                return Err(invalid("Observed player left living idle WALK state"));
+                return Err(invalid("Observed player left living WALK state"));
             }
             self.previous = None;
-            return Ok(());
+            return Ok(None);
         }
-        if buttons != 0 {
-            return Err(invalid("Observer received active player buttons"));
+        let expected_buttons = if self.input_retired {
+            self.request.profile.settings.input.expected_buttons()
+        } else {
+            0
+        };
+        if buttons != expected_buttons {
+            if self.first_time.is_some() || !self.input_retired {
+                return Err(invalid(format!(
+                    "Observer native player buttons differ: observed={buttons:#x}, expected={expected_buttons:#x}"
+                )));
+            }
+            self.previous = None;
+            return Ok(None);
         }
         if self.memory.u8(player.address + 0xdfc)? & 8 != 0 {
             return Err(invalid("Observer player is an observer"));
         }
         if self.generation == 0 {
-            return Ok(());
+            return Ok(None);
         }
         if let Some(identity) = &self.player {
             if identity.address != player.address
@@ -1073,10 +1471,10 @@ impl State {
             generation: self.generation,
         });
         let Some(previous) = previous else {
-            return Ok(());
+            return Ok(None);
         };
         if previous.generation != self.generation {
-            return Ok(());
+            return Ok(None);
         }
         if tick <= previous.tick || time <= previous.time {
             return Err(invalid(
@@ -1101,6 +1499,26 @@ impl State {
             ));
         }
         self.physics_idle()?;
+        if !self.movement_ready(
+            &player,
+            self.request.profile.settings.probe_distance.is_some(),
+        )? {
+            if self.first_time.is_some() {
+                return Err(invalid(
+                    "Observer completed movement context changed during measurement",
+                ));
+            }
+            self.previous = None;
+            return Ok(None);
+        }
+        if !self.input_retired {
+            return self.prepare_input_setup(&player).map(Some);
+        }
+        if self.input_acknowledgement.is_null() {
+            self.input_acknowledgement = json!({"input":self.request.profile.settings.input,"expected_buttons":expected_buttons,"observed_buttons":buttons,"callback_sequence":self.callback,"server_tick":tick,"server_time":time,"spawn_generation":self.generation,"player":player,"acknowledged_before_measurement":true});
+            self.previous = None;
+            return Ok(None);
+        }
         let first = *self.first_time.get_or_insert(time);
         if self
             .sampled_generation
@@ -1130,37 +1548,15 @@ impl State {
         if self.last_time.is_some_and(|last| {
             (time - last) * 1000.0 < (self.request.profile.settings.interval_ms as f32)
         }) {
-            return Ok(());
+            return Ok(None);
+        }
+        if self.samples.len() == self.request.profile.settings.max_samples {
+            return Err(invalid(
+                "Observer exhausted sample capacity before requested duration",
+            ));
         }
         let ground_handle = self.memory.u32(player.address + 0x330)?;
-        let ground = if ground_handle == 0 {
-            None
-        } else if ground_handle == u32::MAX {
-            let base = self.memory.u64(self.server + 0xc83cf0)?;
-            if base != self.server + 0xd09e60 || self.memory.u32(base + 8191 * 32 + 0x10)? == 0xffff
-            {
-                return Err(invalid(
-                    "Observer invalid ground handle does not resolve null",
-                ));
-            }
-            None
-        } else {
-            let index = ground_handle & 0xffff;
-            if index >= 8192 {
-                return Err(invalid("Observer ground handle index exceeds native table"));
-            }
-            let base = self.memory.u64(self.server + 0xc83cf0)?;
-            if base != self.server + 0xd09e60 {
-                return Err(invalid("Observer ground table identity differs"));
-            }
-            let row = base + u64::from(index) * 32;
-            let object = self.memory.u64(row + 8)?;
-            let identity = self.entity(object, index)?;
-            if identity.reference_handle != ground_handle {
-                return Err(invalid("Observer ground handle serial differs"));
-            }
-            Some(identity)
-        };
+        let ground = self.resolve_handle(ground_handle)?;
         if let Some(ground) = &ground {
             let world = self
                 .world
@@ -1180,7 +1576,7 @@ impl State {
                 "Observer current ground has no bound support surface",
             ));
         }
-        let (model_scale, hull_mins, hull_maxs) = self.hull(player.address, flags)?;
+        let (model_scale, ducked, hull_mins, hull_maxs) = self.hull(&player)?;
         let collision_mins = self.memory.vector(player.address + 0x290)?;
         let collision_maxs = self.memory.vector(player.address + 0x29c)?;
         ordered(collision_mins, collision_maxs)?;
@@ -1188,6 +1584,13 @@ impl State {
         let velocity = self.memory.vector(player.address + 0x3c0)?;
         let absolute_velocity = self.memory.vector(player.address + 0x34c)?;
         let base_velocity = self.memory.vector(player.address + 0x340)?;
+        let probe = self
+            .request
+            .profile
+            .settings
+            .probe_distance
+            .map(|distance| self.probe(&player, origin, distance))
+            .transpose()?;
         self.physics_idle()?;
         let row = PlayerSupportSample {
             phase: "pre_server_gameframe_after_completed_step".into(),
@@ -1230,16 +1633,21 @@ impl State {
             cached_surface_data_address,
             flags,
             buttons,
+            input: self.request.profile.settings.input,
+            expected_buttons,
+            input_acknowledged: !self.input_acknowledgement.is_null(),
             health,
             team,
             move_type,
-            ducked: flags & 2 != 0,
+            ducked,
+            probe,
             player,
         };
         let (current_edict, current_player) = self.edict(row.player.index as i32)?;
         let (current_world_edict, current_world) = self.edict(0)?;
         let current_player_identity = self.entity(current_player, row.player.index)?;
         let current_world_identity = self.entity(current_world, 0)?;
+        let current_hull = self.hull(&row.player)?;
         if current_edict != self.player_edict
             || current_player_identity.reference_handle != row.player.reference_handle
             || current_player != row.player.address
@@ -1249,14 +1657,16 @@ impl State {
                     || world.reference_handle != current_world_identity.reference_handle
             })
             || self.memory.u64(self.server + 0xd53080)? != globals
+            || !self.movement_ready(&row.player, row.probe.is_some())?
+            || self.memory.u8(row.player.address + 0xa7c)? != u8::from(row.ducked)
+            || self.memory.i32(row.player.address + 0xd88)? != row.buttons
+            || current_hull.0.to_bits() != row.model_scale.to_bits()
+            || current_hull.1 != row.ducked
+            || current_hull.2.map(f32::to_bits) != row.hull_mins.map(f32::to_bits)
+            || current_hull.3.map(f32::to_bits) != row.hull_maxs.map(f32::to_bits)
         {
             return Err(invalid(
                 "Observer player/world/clock identity changed before row commit",
-            ));
-        }
-        if self.samples.len() == self.request.profile.settings.max_samples {
-            return Err(invalid(
-                "Observer exhausted sample capacity before requested duration",
             ));
         }
         self.client_catalog = self.sole_active_client(self.player_edict)?.catalog;
@@ -1269,7 +1679,7 @@ impl State {
         if (time - first) * 1000.0 >= self.request.profile.settings.duration_ms as f32 {
             self.publish(None)?;
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -1282,6 +1692,15 @@ fn ordered(mins: [f32; 3], maxs: [f32; 3]) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn input_commands(input: PlayerSupportInput) -> &'static CStr {
+    match input {
+        PlayerSupportInput::Idle => c"",
+        PlayerSupportInput::Forward => c"+forward",
+        PlayerSupportInput::Crouch => c"+duck",
+        PlayerSupportInput::ForwardCrouch => c"+forward; +duck",
+    }
 }
 
 unsafe extern "C" fn load(_this: *mut Plugin, engine: Factory, game: Factory) -> bool {
@@ -1340,7 +1759,7 @@ unsafe extern "C" fn unpause(_this: *mut Plugin) {
     invalidate("Observer plugin unpaused");
 }
 unsafe extern "C" fn description(_this: *mut Plugin) -> *const c_char {
-    c"HammeRR passive player support observer".as_ptr()
+    c"HammeRR player support observer".as_ptr()
 }
 unsafe extern "C" fn level_init(_this: *mut Plugin, name: *const c_char) {
     if let Some(mut guard) = lock_state()
@@ -1383,14 +1802,14 @@ unsafe extern "C" fn game_frame(_this: *mut Plugin, simulating: bool) {
                 mark_failed("Observer GameFrame state is unavailable");
                 return;
             };
-            match state.prepare_gameframe_setup() {
+            let prepared = match state.prepare_gameframe_setup() {
+                Ok(Some(call)) => Ok(Some(call)),
+                Ok(None) => state.frame(simulating),
+                Err(error) => Err(error),
+            };
+            match prepared {
                 Ok(Some(call)) => call,
-                Ok(None) => {
-                    if let Err(error) = state.frame(simulating) {
-                        state.refuse(error);
-                    }
-                    return;
-                }
+                Ok(None) => return,
                 Err(error) => {
                     state.refuse(error);
                     return;
@@ -1400,12 +1819,19 @@ unsafe extern "C" fn game_frame(_this: *mut Plugin, simulating: bool) {
         let command: unsafe extern "C" fn(Object, Object, *const c_char, ...) =
             unsafe { std::mem::transmute(call.function) };
         unsafe {
-            command(
-                call.engine as Object,
-                call.edict as Object,
-                c"jointeam %i; joinclass 1".as_ptr(),
-                call.team,
-            );
+            match call.kind {
+                SetupKind::Team(team) => command(
+                    call.engine as Object,
+                    call.edict as Object,
+                    c"jointeam %i; joinclass 1".as_ptr(),
+                    team,
+                ),
+                SetupKind::Input(input) => command(
+                    call.engine as Object,
+                    call.edict as Object,
+                    input_commands(input).as_ptr(),
+                ),
+            }
         }
         let Some(mut guard) = lock_state() else {
             return;
@@ -1468,7 +1894,8 @@ unsafe extern "C" fn event(_this: *mut Listener, _event: Object) {
     {
         state.generation = state.generation.saturating_add(1);
         state.previous = None;
-        if state.first_time.is_some()
+        state.input_acknowledgement = Value::Null;
+        if (state.first_time.is_some() || state.input_attempted)
             && let Err(error) = state.publish(Some(
                 "Observed player spawn/death/team/round generation changed".into(),
             ))

@@ -503,6 +503,7 @@ fn prepare_scene_refresh(
     session.preflight_compiled_details();
     session.preflight_baked_surfaces();
     session.preflight_compiled_terrain_snapshot();
+    session.preflight_player_support_observation();
     session.preflight_compiled_prop_leaf_bounds();
     let view = session.view();
     let next = session.render_scene_key(view);
@@ -3529,6 +3530,8 @@ fn create_document_window(
                         app.set_instance_contents(session.view().instance_contents);
                         let view = session.view();
                         let terrain_guard = session.compiled_terrain_snapshot_render_guard(view);
+                        let player_support_guard =
+                            session.player_support_observation_render_guard(view);
                         let mesh = session.build_scene();
                         app.set_normal_map_status(mesh.normal_maps.summary().into());
                         app.set_lighting_status(mesh.lighting.report.summary().into());
@@ -3558,12 +3561,18 @@ fn create_document_window(
                         let uploaded = terrain_guard.and_then(|guard| {
                             session
                                 .verify_compiled_terrain_snapshot_render(guard.as_ref(), view)?;
+                            let player_support_guard = player_support_guard?;
+                            session.verify_player_support_observation_render(
+                                player_support_guard.as_ref(),
+                                view,
+                            )?;
                             ui.viewport.set_scene(
                                 &ui.ctx,
                                 &mesh,
                                 session.materials(),
                                 instance_contents_guard,
                                 guard,
+                                player_support_guard,
                             )
                         });
                         if let Err(error) = uploaded {

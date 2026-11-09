@@ -465,6 +465,23 @@ owner, surface values are labelled **Cached surface (previous support)**.
 **Movement friction** is the player's cached factor, not a raw physics coefficient.
 **Sweep details** reports the hit surface's raw **Physics friction coefficient**.
 
+### Inspect linear mover support
+
+Record a supported platform's actual state when it is the player's native ground
+owner. The observer finds matching movers automatically; no new setting is needed.
+
+1. Save and compile a map with an unparented `func_movelinear` platform.
+2. Run a player-support observation. Select a row and expand **Support**.
+3. Check **Ground kind**. For a declared mover, read **Compiled declaration**
+   and the **Native model index (independent)**.
+4. Expand **Support pose and velocity** for actual local and absolute positions,
+   angles and velocities. Expand **Raw support state** for move/solid fields,
+   parent handle and runtime OBB. The sample guide shows the player's hull and route.
+
+World rows have no mover pose or velocity fields. Rows without a ground owner
+have no current mover telemetry; their surface values remain explicitly cached.
+A mover classname does not prove motion. Use the sampled pose and velocity values.
+
 > [!NOTE]
 > Requires the supported Linux64 CS:S build and Steam. Input goes to the fresh
 > private game. A diagnostic sweep does not prove actual contact or traversal.
@@ -472,6 +489,9 @@ owner, surface values are labelled **Cached surface (previous support)**.
 > identify checked surface properties; collision surface strings remain unavailable.
 > Hit owners do not identify authored faces or terrain triangles. Historical rows
 > remain readable; framing and guides require a current compiled map.
+> Mover support is limited to exact BSP-declared, unparented `func_movelinear`
+> entities. The entity/model-name association does not measure a collision-body
+> identity or prove continuous carrying, contact geometry or collision fidelity.
 
 ## Remove terrain
 

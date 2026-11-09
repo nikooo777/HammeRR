@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::{CStr, c_char, c_void};
 use std::io;
 use std::path::PathBuf;
@@ -19,6 +20,8 @@ use crate::{
 
 type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> *mut c_void;
 type Object = *mut c_void;
+
+mod ground;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -248,6 +251,7 @@ struct State {
     world: Option<PlayerSupportEntity>,
     player_edict: u64,
     world_edict: u64,
+    retained_supports: BTreeMap<u32, ground::RetainedGround>,
     first_time: Option<f32>,
     last_time: Option<f32>,
     last_tickbase: Option<i32>,
@@ -314,10 +318,7 @@ fn factory_object(factory: Factory, name: &CStr) -> io::Result<u64> {
 
 impl State {
     fn new(directory: PathBuf, engine_factory: Factory, game_factory: Factory) -> io::Result<Self> {
-        let request: PluginRequest = util::json_read(
-            &directory.join("player-support-observer-request.json"),
-            64 * 1024,
-        )?;
+        let request = PluginRequest::read(&directory.join("player-support-observer-request.json"))?;
         request.profile.validate()?;
         let mut biases = Vec::new();
         let mut modules = Vec::new();
@@ -395,6 +396,7 @@ impl State {
             world: None,
             player_edict: 0,
             world_edict: 0,
+            retained_supports: BTreeMap::new(),
             first_time: None,
             last_time: None,
             last_tickbase: None,
@@ -881,8 +883,10 @@ impl State {
         } else {
             Value::Null
         };
+        let compiled_supports =
+            super::compiled_supports::metadata(&self.request.compiled_supports)?;
         self.closed = true;
-        let publication = Publication {
+        let mut publication = Publication {
             profile: PROFILE.into(),
             map_name: self.request.profile.map_name.clone(),
             bsp_sha256: self.request.profile.bsp_sha256.clone(),
@@ -891,6 +895,15 @@ impl State {
             error,
             sampling_closed: true,
         };
+        let observer = publication
+            .observer
+            .as_object_mut()
+            .ok_or_else(|| invalid("Observer publication metadata is not an object"))?;
+        observer.insert("compiled_supports".into(), compiled_supports);
+        observer.insert(
+            "retained_moving_supports".into(),
+            json!(self.retained_supports.len()),
+        );
         let bytes = serde_json::to_vec(&publication).map_err(io::Error::other)?;
         if bytes.len() > MAX_OUTPUT {
             return Err(invalid("Observer publication exceeds four MiB"));
@@ -1555,20 +1568,9 @@ impl State {
                 "Observer exhausted sample capacity before requested duration",
             ));
         }
-        let ground_handle = self.memory.u32(player.address + 0x330)?;
-        let ground = self.resolve_handle(ground_handle)?;
-        if let Some(ground) = &ground {
-            let world = self
-                .world
-                .as_ref()
-                .ok_or_else(|| invalid("Observer world identity missing"))?;
-            if ground.address != world.address || ground.reference_handle != world.reference_handle
-            {
-                return Err(invalid(
-                    "Observer support is outside the static world profile",
-                ));
-            }
-        }
+        let ground_binding = self.ground_binding(&player)?;
+        let ground_handle = ground_binding.handle;
+        let ground = ground_binding.entity.clone();
         let (cached_surface_index, cached_surface_data_address, surface) =
             self.surface(player.address)?;
         if ground.is_some() && surface.is_none() {
@@ -1584,6 +1586,7 @@ impl State {
         let velocity = self.memory.vector(player.address + 0x3c0)?;
         let absolute_velocity = self.memory.vector(player.address + 0x34c)?;
         let base_velocity = self.memory.vector(player.address + 0x340)?;
+        self.check_ground_binding(&player, &ground_binding)?;
         let probe = self
             .request
             .profile
@@ -1591,6 +1594,7 @@ impl State {
             .probe_distance
             .map(|distance| self.probe(&player, origin, distance))
             .transpose()?;
+        self.check_ground_binding(&player, &ground_binding)?;
         self.physics_idle()?;
         let row = PlayerSupportSample {
             phase: "pre_server_gameframe_after_completed_step".into(),
@@ -1618,16 +1622,10 @@ impl State {
             hull_maxs,
             model_scale,
             ground_handle,
-            ground_resolution: if ground_handle == 0 {
-                "null_handle"
-            } else if ground_handle == u32::MAX {
-                "invalid_handle_resolves_null"
-            } else {
-                "serial_resolved_world"
-            }
-            .into(),
+            ground_resolution: ground_binding.resolution().into(),
             surface_is_cached: ground.is_none(),
             ground,
+            ground_state: ground_binding.state.clone(),
             surface,
             cached_surface_index,
             cached_surface_data_address,
@@ -1670,6 +1668,7 @@ impl State {
             ));
         }
         self.client_catalog = self.sole_active_client(self.player_edict)?.catalog;
+        self.check_ground_binding(&row.player, &ground_binding)?;
         self.plugins_only()?;
         if FAILED.load(Ordering::Acquire) {
             return Err(invalid("Observer callback failed before row commit"));
@@ -1879,9 +1878,14 @@ fn retired(edict: Object) {
         && let Some(state) = guard.as_mut()
         && !state.closed
         && (state.pending_client == Some(edict as u64)
+            || state
+                .retained_supports
+                .values()
+                .any(|support| support.edict == edict as u64)
             || ((edict as u64 == state.player_edict || edict as u64 == state.world_edict)
                 && state.player_edict != 0))
-        && let Err(error) = state.publish(Some("Observed player/world edict retired".into()))
+        && let Err(error) =
+            state.publish(Some("Observed player/world/support edict retired".into()))
     {
         eprintln!("HAMMERR_PLAYER_SUPPORT_ERROR {error}");
     }

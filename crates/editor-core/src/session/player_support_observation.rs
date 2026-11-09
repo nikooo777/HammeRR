@@ -5,7 +5,9 @@ use std::sync::{
 };
 
 use compiler::Control;
-use native_runtime::{CaptureObserver, CleanupDisposition, PlayerSupportSample};
+use native_runtime::{
+    CaptureObserver, CleanupDisposition, PlayerSupportGroundState, PlayerSupportSample,
+};
 use serde_json::{Value, json};
 
 pub use native_runtime::{
@@ -27,7 +29,7 @@ pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
 pub const MAX_RETAINED_BYTES: usize = MAX_PLAYER_SUPPORT_RESULT_BYTES;
 const MAX_OBSERVATION_BYTES: usize = 128 * 1024;
-const POLICY: &str = "Snapshots of one freshly spawned player in the exact retained compiled BSP, observed in a private owned Linux CS:S client with -insecure and sv_lan 1. Requested idle/forward/crouch combinations require native button acknowledgement before measurement. Samples retain actual native identity, origin, velocities, collision bounds, movement hull selected independently by m_bDucked, simulation time, ground owner and checked supporting surface identity. Raw flags remain independent. Airborne surface fields are cached previous state and do not establish present support. Optional native movement-hull sweeps are diagnostic queries in the sampled state; their returned hull-reference endpoints/planes are not actual contact points or future player motion. No authored face/triangle correspondence or VPhysics friction-contact qualification is claimed. Historical samples remain inspectable; framing and guides require the current build/runtime and no displayed geometry draft.";
+const POLICY: &str = "Snapshots of one freshly spawned player in the exact retained compiled BSP, observed in a private owned Linux CS:S client with -insecure and sv_lan 1. Requested idle/forward/crouch combinations require native button acknowledgement before measurement. Samples retain actual native identity, origin, velocities, collision bounds, movement hull selected independently by m_bDucked, simulation time, ground owner and checked supporting surface identity. Raw flags remain independent. Actual ground_state distinguishes world from an exact compiled BSP-declared unparented func_movelinear and retains the latter's native pose/motion and raw model/solid state. Its compiled model ordinal/name association is separate from the raw native model index. Other ground-owner classes refuse explicitly. Ground ownership and sampled mover motion do not establish contact geometry, a physics-body identity or continuous carrying. Airborne surface fields are cached previous state and do not establish present support. Optional native movement-hull sweeps are diagnostic queries in the sampled state; their returned hull-reference endpoints/planes are not actual contact points or future player motion. No authored face/triangle correspondence or VPhysics friction-contact qualification is claimed. Historical samples remain inspectable; framing and guides require the current build/runtime and no displayed geometry draft.";
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -247,6 +249,15 @@ impl Request {
                         .checked_add(sample.phase.capacity())
                         .and_then(|bytes| bytes.checked_add(sample.ground_resolution.capacity()))
                         .and_then(|bytes| bytes.checked_add(sample.player.classname.capacity()))
+                        .and_then(|bytes| {
+                            bytes.checked_add(match &sample.ground_state {
+                                Some(PlayerSupportGroundState::FuncMovelinear {
+                                    model_name,
+                                    ..
+                                }) => model_name.capacity(),
+                                Some(PlayerSupportGroundState::World { .. }) | None => 0,
+                            })
+                        })
                         .and_then(|bytes| {
                             bytes.checked_add(
                                 sample

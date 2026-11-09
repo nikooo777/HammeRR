@@ -339,6 +339,8 @@ impl Controller {
             self.window.set_motion("".into());
             self.window.set_hull("".into());
             self.window.set_support("".into());
+            self.window.set_support_motion("".into());
+            self.window.set_support_state("".into());
             self.window.set_input_status("".into());
             self.window.set_probe_status("".into());
             self.window.set_probe_details("".into());
@@ -421,10 +423,46 @@ impl Controller {
             "No retained surface data.".into()
         };
         let ground_flag = flag(&row["flags"], 1);
+        let ground_state = self.present_support_state(&row["ground_state"]);
         self.window.set_support(
-            format!("{ground_text}\nOn-ground flag: {ground_flag}\n{surface_text}").into(),
+            format!("{ground_text}\n{ground_state}\nOn-ground flag: {ground_flag}\n{surface_text}")
+                .into(),
         );
         self.present_probe(&row["probe"]);
+    }
+
+    fn present_support_state(&self, state: &Value) -> String {
+        self.window.set_support_motion("".into());
+        self.window.set_support_state("".into());
+        match state["kind"].as_str() {
+            Some("world") => {
+                "Ground kind: world\nWorld has no mover pose or velocity fields.".into()
+            }
+            Some("func_movelinear") => {
+                self.window.set_support_motion(format!(
+                    "Absolute origin: {} · local: {}\nAbsolute angles: {} · local: {}\nLocal velocity: {}\nAbsolute velocity: {}\nBase velocity: {}",
+                    vector(&state["origin"]), vector(&state["local_origin"]),
+                    vector(&state["angles"]), vector(&state["local_angles"]),
+                    vector(&state["velocity"]), vector(&state["absolute_velocity"]), vector(&state["base_velocity"])
+                ).into());
+                self.window.set_support_state(format!(
+                    "Move type: {} · solid type: {}\nSolid flags: {} · entity flags: {}\nMove-parent handle: {}\nNative edict: {}\nRuntime OBB: {} to {}",
+                    scalar(&state["move_type"]), scalar(&state["solid_type"]),
+                    hexadecimal(&state["solid_flags"]), hexadecimal(&state["eflags"]),
+                    hexadecimal(&state["move_parent_handle"]), hexadecimal(&state["edict"]),
+                    vector(&state["collision_mins"]), vector(&state["collision_maxs"])
+                ).into());
+                format!(
+                    "Ground kind: declared func_movelinear\nCompiled declaration: Hammer ID {} · model name {} · BSP model {}\nNative model index (independent): {}",
+                    scalar(&state["hammer_id"]),
+                    scalar(&state["model_name"]),
+                    scalar(&state["bsp_model_index"]),
+                    scalar(&state["model_index"])
+                )
+            }
+            _ if state.is_null() => "No current mover telemetry.".into(),
+            _ => "Ground kind and mover telemetry unavailable.".into(),
+        }
     }
 
     fn present_guide(&self, guide: &Value) {

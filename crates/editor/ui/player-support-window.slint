@@ -23,6 +23,7 @@ export component PlayerSupportWindow inherits Window {
     in-out property <int> probe-distance: 2;
     in-out property <bool> settings-expanded: true;
     in-out property <bool> samples-expanded: true;
+    in-out property <bool> support-expanded;
     in property <[string]> inputs;
     in property <int> minimum-probe-distance: 1;
     in property <int> maximum-probe-distance: 128;
@@ -43,6 +44,8 @@ export component PlayerSupportWindow inherits Window {
     in property <string> motion;
     in property <string> hull;
     in property <string> support;
+    in property <string> support-motion;
+    in property <string> support-state;
     in property <string> observation;
     in property <string> input-status;
     in property <string> probe-status;
@@ -175,8 +178,21 @@ export component PlayerSupportWindow inherits Window {
                     }
                     if root.support != "": VerticalLayout {
                         spacing: Theme.space;
-                        support-header := SectionHeader { text: "Support"; inset: false; expanded: false; }
-                        if support-header.expanded: Text { text: root.support; color: Theme.text; wrap: word-wrap; }
+                        support-header := SectionHeader { text: "Support"; inset: false; expanded <=> root.support-expanded; }
+                        if support-header.expanded: VerticalLayout {
+                            spacing: Theme.space;
+                            Text { text: root.support; color: Theme.text; wrap: word-wrap; }
+                            if root.support-motion != "": VerticalLayout {
+                                spacing: Theme.space;
+                                support-motion-header := SectionHeader { text: "Support pose and velocity"; inset: false; }
+                                if support-motion-header.expanded: Text { text: root.support-motion; color: Theme.text; wrap: word-wrap; }
+                            }
+                            if root.support-state != "": VerticalLayout {
+                                spacing: Theme.space;
+                                state-header := SectionHeader { text: "Raw support state"; inset: false; expanded: false; }
+                                if state-header.expanded: Text { text: root.support-state; color: Theme.text; wrap: word-wrap; }
+                            }
+                        }
                     }
                     if root.probe-status != "": VerticalLayout {
                         spacing: Theme.space;

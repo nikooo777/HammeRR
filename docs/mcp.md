@@ -1287,6 +1287,24 @@ ground identity. Supporting surface properties remain distinct from cached
 airborne values. Declared input and sampled movement describe the observed route;
 the sampled trajectory does not prove unsampled continuous motion.
 
+`ground_state` is `null` while airborne, or a tagged `world`/`func_movelinear`
+state for the actual serial-resolved owner. World retains its edict without
+invented mover vectors. The supported mover must match an exact compiled BSP
+entity and `*N` model-name declaration, have no parent and satisfy the native
+rotation-free profile; other ground owners refuse explicitly. No selector or
+special launch setting is needed.
+
+Mover rows retain actual edict/identity, local and absolute origin/angles,
+local/absolute/base velocity, move type, parent handle, solid type/flags,
+collision OBB and cache flags. `hammer_id`, `model_name` and `bsp_model_index`
+label the exact compiled declaration association. `model_index` is the separate
+raw native model-index field. These labels do not identify a measured physics
+body or map directly to an authored selection. Classname alone does not prove
+motion; compare the retained pose/velocity samples. Ground ownership and sampled
+motion do not establish contact geometry, a contact point/triangle, continuous
+carrying or moving-displacement support. Public readiness retains declaration
+count/profile/hash rather than repeating the complete private declaration set.
+
 Omit/null `probe_distance` to disable diagnostic sweeps, or specify 1–128 units.
 Each optional downward query uses the actual native movement hull, movement
 mask, collision group and filtering. Its result retains requested/native start

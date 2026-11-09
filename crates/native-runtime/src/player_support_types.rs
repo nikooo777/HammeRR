@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
@@ -146,7 +147,7 @@ pub struct PlayerSupportCapture {
     pub preservation_passed: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerSupportEntity {
     pub index: u32,
@@ -164,6 +165,111 @@ pub struct PlayerSupportSurface {
     pub data_address: u64,
     pub friction: f32,
     pub material: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlayerSupportGroundState {
+    World {
+        edict: u64,
+    },
+    FuncMovelinear {
+        edict: u64,
+        hammer_id: i32,
+        model_name: String,
+        bsp_model_index: u32,
+        model_index: u16,
+        move_parent_handle: u32,
+        move_type: u8,
+        solid_type: u8,
+        solid_flags: u16,
+        origin: [f32; 3],
+        local_origin: [f32; 3],
+        angles: [f32; 3],
+        local_angles: [f32; 3],
+        velocity: [f32; 3],
+        absolute_velocity: [f32; 3],
+        base_velocity: [f32; 3],
+        collision_mins: [f32; 3],
+        collision_maxs: [f32; 3],
+        eflags: u32,
+    },
+}
+
+impl PlayerSupportGroundState {
+    pub const fn edict(&self) -> u64 {
+        match self {
+            Self::World { edict } | Self::FuncMovelinear { edict, .. } => *edict,
+        }
+    }
+
+    pub fn model_name(&self) -> Option<&str> {
+        match self {
+            Self::World { .. } => None,
+            Self::FuncMovelinear { model_name, .. } => Some(model_name),
+        }
+    }
+
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        if self.edict() != other.edict() || self.model_name() != other.model_name() {
+            return false;
+        }
+        match (self, other) {
+            (Self::World { .. }, Self::World { .. }) => true,
+            (
+                Self::FuncMovelinear {
+                    hammer_id: first_hammer,
+                    bsp_model_index: first_bsp,
+                    model_index: first_native,
+                    ..
+                },
+                Self::FuncMovelinear {
+                    hammer_id: second_hammer,
+                    bsp_model_index: second_bsp,
+                    model_index: second_native,
+                    ..
+                },
+            ) => {
+                first_hammer == second_hammer
+                    && first_bsp == second_bsp
+                    && first_native == second_native
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn same_bits(&self, other: &Self) -> bool {
+        if self != other {
+            return false;
+        }
+        let vectors = |value: &Self| match value {
+            Self::World { .. } => None,
+            Self::FuncMovelinear {
+                origin,
+                local_origin,
+                angles,
+                local_angles,
+                velocity,
+                absolute_velocity,
+                base_velocity,
+                collision_mins,
+                collision_maxs,
+                ..
+            } => Some([
+                *origin,
+                *local_origin,
+                *angles,
+                *local_angles,
+                *velocity,
+                *absolute_velocity,
+                *base_velocity,
+                *collision_mins,
+                *collision_maxs,
+            ]),
+        };
+        vectors(self).map(|values| values.map(|vector| vector.map(f32::to_bits)))
+            == vectors(other).map(|values| values.map(|vector| vector.map(f32::to_bits)))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +363,8 @@ pub struct PlayerSupportSample {
     pub hull_maxs: [f32; 3],
     pub model_scale: f32,
     pub ground: Option<PlayerSupportEntity>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub ground_state: Option<PlayerSupportGroundState>,
     pub ground_handle: u32,
     pub ground_resolution: String,
     pub surface: Option<PlayerSupportSurface>,
@@ -395,6 +503,9 @@ pub fn validate_player_support_samples(
         return Err(invalid());
     }
     let first = &samples[0];
+    let mut grounds = BTreeMap::<u32, (&PlayerSupportEntity, &PlayerSupportGroundState)>::new();
+    let mut edicts = BTreeMap::<u64, u32>::new();
+    let mut declarations = BTreeMap::<i32, u32>::new();
     for (ordinal, row) in samples.iter().enumerate() {
         if row.ordinal != ordinal
             || row.phase != "pre_server_gameframe_after_completed_step"
@@ -461,20 +572,93 @@ pub fn validate_player_support_samples(
         }) {
             return Err(invalid());
         }
-        match &row.ground {
-            Some(ground) => {
-                if ground.index != 0
-                    || ground.classname != "worldspawn"
-                    || ground.address == 0
+        match (&row.ground, &row.ground_state) {
+            (Some(ground), Some(state)) => {
+                if ground.address == 0
+                    || ground.index >= 8192
                     || ground.reference_handle != row.ground_handle
+                    || matches!(ground.reference_handle, 0 | u32::MAX)
                     || ground.serial != ground.reference_handle >> 16
-                    || row.ground_resolution != "serial_resolved_world"
+                    || ground.reference_handle != ((ground.serial << 16) | ground.index)
+                    || state.edict() == 0
                     || row.surface.is_none()
                 {
                     return Err(invalid());
                 }
+                if let Some((previous_entity, previous_state)) = grounds.get(&ground.index)
+                    && (**previous_entity != *ground || !previous_state.same_identity(state))
+                {
+                    return Err(invalid());
+                }
+                if edicts
+                    .insert(state.edict(), ground.index)
+                    .is_some_and(|index| index != ground.index)
+                {
+                    return Err(invalid());
+                }
+                grounds.insert(ground.index, (ground, state));
+                match state {
+                    PlayerSupportGroundState::World { .. } => {
+                        if ground.index != 0
+                            || ground.classname != "worldspawn"
+                            || row.ground_resolution != "serial_resolved_world"
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                    PlayerSupportGroundState::FuncMovelinear {
+                        hammer_id,
+                        model_name,
+                        bsp_model_index,
+                        move_parent_handle,
+                        origin,
+                        local_origin,
+                        angles,
+                        local_angles,
+                        velocity,
+                        absolute_velocity,
+                        base_velocity,
+                        collision_mins,
+                        collision_maxs,
+                        eflags,
+                        ..
+                    } => {
+                        if declarations
+                            .insert(*hammer_id, ground.index)
+                            .is_some_and(|index| index != ground.index)
+                        {
+                            return Err(invalid());
+                        }
+                        if ground.index == 0
+                            || ground.classname != "func_movelinear"
+                            || row.ground_resolution != "serial_resolved_compiled_func_movelinear"
+                            || *hammer_id <= 0
+                            || *bsp_model_index == 0
+                            || model_name != &format!("*{bsp_model_index}")
+                            || !matches!(*move_parent_handle, 0 | u32::MAX)
+                            || eflags & 0x1800 != 0
+                            || (0..3).any(|axis| collision_mins[axis] >= collision_maxs[axis])
+                            || [
+                                origin,
+                                local_origin,
+                                angles,
+                                local_angles,
+                                velocity,
+                                absolute_velocity,
+                                base_velocity,
+                                collision_mins,
+                                collision_maxs,
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .any(|value| !value.is_finite())
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                }
             }
-            None => {
+            (None, None) => {
                 let expected = match row.ground_handle {
                     0 => "null_handle",
                     u32::MAX => "invalid_handle_resolves_null",
@@ -484,6 +668,7 @@ pub fn validate_player_support_samples(
                     return Err(invalid());
                 }
             }
+            _ => return Err(invalid()),
         }
         match (&row.probe, settings.probe_distance) {
             (Some(probe), Some(distance)) => validate_probe(probe, distance, row.origin)?,

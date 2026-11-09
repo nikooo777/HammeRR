@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use source_formats::keyvalues::{FlatBlockLimits, parse_flat_blocks_bounded};
 
 use crate::process::WorkerRequest;
 use crate::terrain_snapshot::{self, EngineImage, PinnedFile, TerrainSnapshotProfile};
@@ -14,10 +13,11 @@ use crate::{
     PlayerSupportSample, PlayerSupportSettings,
 };
 
+mod compiled_supports;
 mod memory;
 mod plugin;
 
-pub(crate) const PROFILE: &str = "css_linux64_build25338318_player_support_v2";
+pub(crate) const PROFILE: &str = "css_linux64_build25338318_player_support_v3";
 pub(crate) const SERVER_SHA: &str =
     "7887c8cc24a3dec6b8739bfebcad48c00b95423ebcbfc647f49fef1ab904dbe2";
 pub(crate) const VPHYSICS_SHA: &str =
@@ -52,7 +52,7 @@ impl PlayerSupportProfile {
             settings,
         };
         value.validate()?;
-        validate_bsp(bsp, settings.team, &mut || Ok(()))?;
+        compiled_supports::derive(bsp, settings.team, &mut || Ok(()))?;
         Ok(value)
     }
     pub fn validate(&self) -> io::Result<()> {
@@ -73,6 +73,31 @@ struct PluginRequest {
     root: PathBuf,
     observer_path: PathBuf,
     observer_sha256: String,
+    compiled_supports: Vec<compiled_supports::CompiledSupportDeclaration>,
+}
+
+impl PluginRequest {
+    fn encoded(&self) -> io::Result<Vec<u8>> {
+        self.profile.validate()?;
+        compiled_supports::validate(&self.compiled_supports)?;
+        let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
+        if bytes.len() > compiled_supports::MAX_PLUGIN_REQUEST_BYTES {
+            return Err(invalid(
+                "Player support private request exceeds its bounded byte limit",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    fn read(path: &Path) -> io::Result<Self> {
+        let request: Self = util::json_read(path, compiled_supports::MAX_PLUGIN_REQUEST_BYTES)?;
+        request.encoded()?;
+        Ok(request)
+    }
+
+    fn write(&self, path: &Path) -> io::Result<()> {
+        util::atomic_write(path, &self.encoded()?)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,42 +110,6 @@ struct Publication {
     observer: serde_json::Value,
     error: Option<String>,
     sampling_closed: bool,
-}
-
-fn validate_bsp(
-    bytes: &[u8],
-    team: u8,
-    check: &mut dyn FnMut() -> io::Result<()>,
-) -> io::Result<()> {
-    let bsp = crate::owned_client::parse_bsp(bytes, check)?;
-    let entities = parse_flat_blocks_bounded(
-        bsp.entities()?,
-        FlatBlockLimits {
-            max_bytes: 4 * 1024 * 1024,
-            max_blocks: 16384,
-            max_pairs: 131072,
-        },
-    )
-    .map_err(io::Error::other)?;
-    let spawn_class = if team == 2 {
-        "info_player_terrorist"
-    } else {
-        "info_player_counterterrorist"
-    };
-    let spawns = entities
-        .iter()
-        .filter(|entity| {
-            entity.iter().any(|(key, value)| {
-                key.eq_ignore_ascii_case("classname") && value.eq_ignore_ascii_case(spawn_class)
-            })
-        })
-        .count();
-    if spawns == 0 {
-        return Err(invalid(
-            "Player support observation requires an eligible spawn for the selected team",
-        ));
-    }
-    Ok(())
 }
 
 fn plugin_binary() -> io::Result<PathBuf> {
@@ -203,9 +192,15 @@ pub(crate) fn execute(
     let root = request.environment.engine_root.canonicalize()?;
     let staged = PinnedFile::open(&directory.join("staged.bsp"), &profile.bsp_sha256)?;
     let bytes = util::read(&directory.join("staged.bsp"), util::MAX_BSP)?;
-    validate_bsp(&bytes, profile.settings.team, &mut || {
+    if util::hash(&bytes) != profile.bsp_sha256 {
+        return Err(invalid(
+            "Player support staged BSP bytes differ from their pinned identity",
+        ));
+    }
+    let compiled_supports = compiled_supports::derive(&bytes, profile.settings.team, &mut || {
         crate::owned_client::checkpoint(directory, request)
     })?;
+    staged.verify()?;
     let images = [
         EngineImage::open_at(&root.join("bin/linux64/engine.so"), util::ENGINE_SHA)?,
         EngineImage::open_at(&root.join("cstrike/bin/linux64/server.so"), SERVER_SHA)?,
@@ -220,15 +215,14 @@ pub(crate) fn execute(
     let observer_sha256 = util::hash_file(&observer_path, util::MAX_BSP)?;
     let observer_image = EngineImage::open_at(&observer_path, &observer_sha256)?;
     terrain_snapshot::verify_providers(&request.environment, &game, &profile.map_name)?;
-    util::json_write(
-        &directory.join("player-support-observer-request.json"),
-        &PluginRequest {
-            profile: profile.clone(),
-            root: root.clone(),
-            observer_path,
-            observer_sha256,
-        },
-    )?;
+    PluginRequest {
+        profile: profile.clone(),
+        root: root.clone(),
+        observer_path,
+        observer_sha256,
+        compiled_supports: compiled_supports.clone(),
+    }
+    .write(&directory.join("player-support-observer-request.json"))?;
     let (publication, process) = crate::owned_client::run(
         directory,
         request,
@@ -263,7 +257,7 @@ pub(crate) fn execute(
                     return Ok(None);
                 }
                 let publication: Publication = util::json_read(&path, MAX_OUTPUT)?;
-                validate_publication(&publication, profile)?;
+                validate_publication(&publication, profile, &compiled_supports)?;
                 staged.verify()?;
                 consumed.verify()?;
                 Ok(Some(publication))
@@ -330,7 +324,7 @@ pub(crate) fn execute(
         bsp_sha256: profile.bsp_sha256.clone(),
         map_name: profile.map_name.clone(),
         process,
-        readiness: json!({"setup":format!("jointeam {}; joinclass 1",profile.settings.team),"setup_api":"IServerPluginCallbacks003::ClientActive -> next GameFrame / VEngineServer023::ClientCommand","setup_retired_before_measurement":true,"input":profile.settings.input,"expected_buttons":profile.settings.input.expected_buttons(),"input_acknowledged_before_measurement":true,"probe_distance":profile.settings.probe_distance,"phase":"public_gameframe_before_next_server_simulation","exact_bsp":true}),
+        readiness: json!({"setup":format!("jointeam {}; joinclass 1",profile.settings.team),"setup_api":"IServerPluginCallbacks003::ClientActive -> next GameFrame / VEngineServer023::ClientCommand","setup_retired_before_measurement":true,"input":profile.settings.input,"expected_buttons":profile.settings.input.expected_buttons(),"input_acknowledged_before_measurement":true,"probe_distance":profile.settings.probe_distance,"phase":"public_gameframe_before_next_server_simulation","exact_bsp":true,"compiled_supports":compiled_supports::metadata(&compiled_supports)?}),
         observer: publication.observer.clone(),
         resumed: true,
     };
@@ -340,6 +334,7 @@ pub(crate) fn execute(
 fn validate_publication(
     publication: &Publication,
     profile: &PlayerSupportProfile,
+    declarations: &[compiled_supports::CompiledSupportDeclaration],
 ) -> io::Result<()> {
     if let Some(error) = &publication.error {
         return Err(invalid(format!("Player support observer refused: {error}")));
@@ -356,6 +351,36 @@ fn validate_publication(
         ));
     }
     crate::validate_player_support_samples(&publication.samples, &profile.settings)?;
+    if publication.observer["compiled_supports"] != compiled_supports::metadata(declarations)? {
+        return Err(invalid(
+            "Player support compiled declaration receipt differs from the BSP",
+        ));
+    }
+    for row in &publication.samples {
+        if let Some(crate::PlayerSupportGroundState::FuncMovelinear {
+            hammer_id,
+            model_name,
+            bsp_model_index,
+            ..
+        }) = &row.ground_state
+        {
+            let ground = row
+                .ground
+                .as_ref()
+                .ok_or_else(|| invalid("Declared mover has no ground owner"))?;
+            let declaration = compiled_supports::matching(
+                declarations,
+                &ground.classname,
+                *hammer_id,
+                model_name,
+            )?;
+            if declaration.bsp_model_index != *bsp_model_index {
+                return Err(invalid(
+                    "Player support mover BSP model declaration differs",
+                ));
+            }
+        }
+    }
     let first = publication
         .samples
         .first()
@@ -416,8 +441,18 @@ pub(crate) fn decode_output(
             "Player support observer callback failure latch is set",
         ));
     }
+    let staged_path = directory.join("staged.bsp");
+    let staged = PinnedFile::open(&staged_path, &profile.bsp_sha256)?;
+    let bsp = util::read(&staged_path, util::MAX_BSP)?;
+    if util::hash(&bsp) != profile.bsp_sha256 {
+        return Err(invalid(
+            "Player support decoded BSP bytes differ from their pinned identity",
+        ));
+    }
+    let declarations = compiled_supports::derive(&bsp, profile.settings.team, &mut || Ok(()))?;
+    staged.verify()?;
     let publication: Publication = util::json_read(&directory.join(OUTPUT), MAX_OUTPUT)?;
-    validate_publication(&publication, profile)?;
+    validate_publication(&publication, profile, &declarations)?;
     let observation: PlayerSupportObservationReceipt = util::json_read(
         &directory.join("player-support-observation.json"),
         MAX_OUTPUT,
@@ -429,6 +464,8 @@ pub(crate) fn decode_output(
         || observation.vphysics_sha256 != VPHYSICS_SHA
         || observation.map_name != profile.map_name
         || !observation.resumed
+        || observation.observer["compiled_supports"] != compiled_supports::metadata(&declarations)?
+        || observation.readiness["compiled_supports"] != compiled_supports::metadata(&declarations)?
     {
         return Err(invalid("Player support observation receipt differs"));
     }

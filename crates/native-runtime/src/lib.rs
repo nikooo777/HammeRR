@@ -184,10 +184,10 @@ pub use player_support_types::{
     MAX_PLAYER_SUPPORT_PROBE_COORDINATE, MAX_PLAYER_SUPPORT_PROBE_DISTANCE,
     MAX_PLAYER_SUPPORT_RESULT_BYTES, MAX_PLAYER_SUPPORT_SAMPLES, MIN_PLAYER_SUPPORT_DURATION_MS,
     MIN_PLAYER_SUPPORT_INTERVAL_MS, MIN_PLAYER_SUPPORT_PROBE_DISTANCE, MIN_PLAYER_SUPPORT_SAMPLES,
-    PlayerSupportCapture, PlayerSupportEntity, PlayerSupportInput, PlayerSupportObservationReceipt,
-    PlayerSupportProbe, PlayerSupportProbePlane, PlayerSupportProbeStatus, PlayerSupportRequest,
-    PlayerSupportSample, PlayerSupportSettings, PlayerSupportSurface,
-    validate_player_support_samples,
+    PlayerSupportCapture, PlayerSupportEntity, PlayerSupportGroundState, PlayerSupportInput,
+    PlayerSupportObservationReceipt, PlayerSupportProbe, PlayerSupportProbePlane,
+    PlayerSupportProbeStatus, PlayerSupportRequest, PlayerSupportSample, PlayerSupportSettings,
+    PlayerSupportSurface, validate_player_support_samples,
 };
 #[cfg(target_os = "linux")]
 pub use process::observe_movement_with_cleanup;

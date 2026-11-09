@@ -121,10 +121,10 @@ export component RopePlacementWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: Theme.space;
-                if root.shared-draft: Button { text: "Review shared placement"; primary: true; clicked => { root.review(); } }
-                if root.owned: Button { text: "Apply rope"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
                 Button { text: root.shared-draft ? "Close" : "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
+                if root.shared-draft: Button { text: "Review shared placement"; primary: true; clicked => { root.review(); } }
+                if root.owned: Button { text: "Apply rope"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

@@ -156,15 +156,15 @@ export component CarveWindow inherits Window {
                     Text { text: "1–8 ordinary convex cutters · up to 16 targets · 256 fragments at every stage. Whole world brushes may disappear; empty brush entities reject."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Discard preview"; enabled: root.token != ""; clicked => { root.discard(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview carve"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
                 Button { text: "Apply carve"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
-                Rectangle { horizontal-stretch: 1; }
             }
         }
     }

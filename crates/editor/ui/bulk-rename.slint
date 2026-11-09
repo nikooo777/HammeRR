@@ -84,8 +84,8 @@ export component BulkRenameWindow inherits Window {
                     }
                 }
             }
-            Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
-            SectionHeader { text: "Reference updates"; inset: false; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+            SectionHeader { text: "Reference updates"; inset: false; collapsible: false; }
             if root.references.length == 0 && root.names.length > 0: Text {
                 text: root.dirty ? "Preview all names to refresh reference updates." : root.status != "" ? "Reference review is unavailable. Resolve the reported issue, then preview all names." : "No affected references in this preview.";
                 wrap: word-wrap;
@@ -107,10 +107,10 @@ export component BulkRenameWindow inherits Window {
             if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Preview all names"; enabled: root.ready && root.names.length > 0; clicked => { root.preview(); } }
-                Button { text: "Apply renames"; primary: true; enabled: root.can-apply && !root.dirty; clicked => { root.apply(); } }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: "Preview all names"; enabled: root.ready && root.names.length > 0; clicked => { root.preview(); } }
+                Button { text: "Apply renames"; primary: true; enabled: root.can-apply && !root.dirty; clicked => { root.apply(); } }
             }
         }
     }

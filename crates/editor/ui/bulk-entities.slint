@@ -35,7 +35,7 @@ export component BulkEntitiesWindow inherits Window {
                 font-weight: 600;
                 wrap: word-wrap;
             }
-            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             if !root.move-to-world: FieldRow {
                 label: "Class name";
                 label-width: 86px;
@@ -69,9 +69,9 @@ export component BulkEntitiesWindow inherits Window {
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Apply"; primary: true; enabled: root.can-apply; clicked => { root.apply(); } }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply"; primary: true; enabled: root.can-apply; clicked => { root.apply(); } }
             }
         }
     }

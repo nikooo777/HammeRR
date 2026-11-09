@@ -14,7 +14,7 @@ export component OpenDocumentsWindow inherits Window {
     title: "Open documents";
     preferred-width: 820px;
     preferred-height: 540px;
-    background: Theme.control;
+    background: Theme.panel;
     in property <[OpenDocumentRow]> rows;
     in property <string> summary;
     in property <bool> can-create;
@@ -43,9 +43,9 @@ export component OpenDocumentsWindow inherits Window {
     callback refresh();
     callback close-list();
     VerticalLayout {
-        padding: Theme.space-xl; spacing: 12px;
+        padding: Theme.space-xl; spacing: Theme.space-lg;
         Text { text: "Open documents"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
-        Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
+        if root.summary != "": Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
         if !root.quit-review && !root.restore-review: Text { text: "Each tab keeps its own selection, Undo, drafts and views. New map / Open… replace only that tab's map."; color: Theme.text-muted; wrap: word-wrap; }
         if !root.quit-review && !root.restore-review: HorizontalLayout {
             spacing: 10px;
@@ -72,9 +72,9 @@ export component OpenDocumentsWindow inherits Window {
             Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
-                Button { text: root.quit-discard-required ? "Discard reviewed changes and quit all" : "Quit all reviewed documents"; enabled: !root.busy; clicked => { root.confirm-quit-all(); } }
                 Button { text: "Cancel quit"; enabled: !root.busy; clicked => { root.cancel-quit-all(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: root.quit-discard-required ? "Discard reviewed changes and quit all" : "Quit all reviewed documents"; enabled: !root.busy; clicked => { root.confirm-quit-all(); } }
             }
         }
         if root.restore-review: VerticalLayout {
@@ -86,35 +86,40 @@ export component OpenDocumentsWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 10px;
-                Button { text: "Restore reviewed workspace"; enabled: !root.busy; clicked => { root.confirm-restore-workspace(); } }
                 Button { text: "Cancel restore"; enabled: !root.busy; clicked => { root.cancel-restore-workspace(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: "Restore reviewed workspace"; primary: true; enabled: !root.busy; clicked => { root.confirm-restore-workspace(); } }
             }
         }
         if !root.quit-review && !root.restore-review: ListView {
-            for row in root.rows: VerticalLayout {
-                padding: 10px; spacing: 7px;
+            for row in root.rows: HorizontalLayout {
+                padding-right: Theme.space-lg;
+                padding-bottom: Theme.space-xs;
+                spacing: Theme.space;
                 SelectableRow {
                     label: row.title;
                     selected: row.active;
                     enabled: row.live && !root.busy;
+                    horizontal-stretch: 1;
                     clicked => { root.show-document(row.selector); }
                     VerticalLayout {
-                        padding: Theme.space; spacing: Theme.space-sm;
-                        Text { text: row.title; color: Theme.text; font-weight: 600; wrap: word-wrap; }
-                        Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
+                        padding: Theme.space; spacing: Theme.space-xs;
+                        Text { text: row.title; color: Theme.text; font-weight: 600; overflow: elide; }
+                        Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font-small; wrap: word-wrap; }
                     }
                 }
-                HorizontalLayout {
-                    spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
                     Button { text: "Select silently"; enabled: row.live && !root.busy; clicked => { root.show-silent(row.selector); } }
+                }
+                VerticalLayout {
+                    alignment: center;
                     Button { text: "Close document"; enabled: row.live && !root.busy; clicked => { root.close-document(row.selector); } }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
         }
         if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-        if !root.quit-review && !root.restore-review: Text { text: "Click a row to select its tab. MCP-created and restored documents stay hidden until selected. Quit all… reviews every map, including hidden documents."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
-        HorizontalLayout { spacing: Theme.space; Button { text: "Close list"; clicked => { root.close-list(); } } Rectangle { horizontal-stretch: 1; } }
+        if !root.quit-review && !root.restore-review: Text { text: "Click a row to select its tab. MCP-created and restored documents stay hidden until selected. Quit all… reviews every map, including hidden documents."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+        HorizontalLayout { spacing: Theme.space; Rectangle { horizontal-stretch: 1; } Button { text: "Close list"; clicked => { root.close-list(); } } }
     }
 }

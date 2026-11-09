@@ -77,7 +77,7 @@ export component TerrainTrianglesWindow inherits Window {
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        Text { text: root.selection-label; vertical-alignment: center; }
+                        Text { text: root.selection-label; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; color: Theme.text-muted; }
                         Button { text: "Select surface"; enabled: !root.stale; clicked => { root.select-all(true); } }
                         Button { text: "Clear selection"; enabled: !root.stale; clicked => { root.select-all(false); } }
                     }
@@ -86,6 +86,7 @@ export component TerrainTrianglesWindow inherits Window {
                         Button {text: root.kind-index == 1 ? "Pick vertex in viewport…" : "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
                         Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
                         Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     ScrollView {
                         height: 260px;
@@ -165,10 +166,10 @@ export component TerrainTrianglesWindow inherits Window {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Use selection"; enabled: !root.stale; clicked => { root.use-selection(); } }
+                Rectangle { horizontal-stretch: 1; }
                 if root.has-preview: Button { text: "Discard preview"; clicked => { root.discard(); } }
                 if root.kind-index == 0: Button { text: root.operation-index == 1 ? "Preview removal" : "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
                 Button { text: "Apply"; primary: true; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
-                Rectangle { horizontal-stretch: 1; }
             }
         }
     }

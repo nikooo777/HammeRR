@@ -138,8 +138,8 @@ export component FogWindow inherits Window {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
             Text { text: "Fog preview"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.document-label; color: Theme.text-faint; overflow: elide; }
-            Text { text: root.current; wrap: word-wrap; color: root.has-issue ? Theme.warning : Theme.text-muted; }
+            if root.document-label != "": Text { text: root.document-label; color: Theme.text-faint; overflow: elide; }
+            if root.current != "": Text { text: root.current; wrap: word-wrap; color: root.has-issue ? Theme.warning : Theme.text-muted; }
             HorizontalLayout {
                 spacing: Theme.space;
                 Switch {

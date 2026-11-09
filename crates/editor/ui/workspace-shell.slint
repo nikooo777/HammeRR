@@ -1,5 +1,4 @@
-import { Theme, SelectableRow, IconButton, Icon } from "kit.slint";
-import { Button } from "widgets.slint";
+import { Theme, IconButton, Icon } from "kit.slint";
 
 export struct WorkspaceDocumentTab {
     selector: string,
@@ -9,39 +8,113 @@ export struct WorkspaceDocumentTab {
     hidden: bool,
 }
 
+component DocumentTab inherits Rectangle {
+    in property <WorkspaceDocumentTab> document;
+    in property <bool> closable;
+    callback select();
+    callback close();
+    min-width: 96px;
+    preferred-width: 180px;
+    max-width: 240px;
+    horizontal-stretch: 0;
+    border-top-left-radius: Theme.radius;
+    border-top-right-radius: Theme.radius;
+    background: root.document.selected ? Theme.bar : touch.has-hover && root.document.enabled ? Theme.base : transparent;
+    opacity: root.document.enabled ? 1 : 0.55;
+    accessible-role: tab;
+    accessible-label: root.document.title + (root.document.hidden ? ", hidden" : "");
+    accessible-checked: root.document.selected;
+    accessible-enabled: root.document.enabled;
+    accessible-action-default => { if root.document.enabled { root.select(); } }
+    if root.document.selected: Rectangle {
+        border-top-left-radius: Theme.radius;
+        border-top-right-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        height: parent.height + 1px;
+        y: 0px;
+    }
+    if root.document.selected: Rectangle {
+        x: 1px;
+        y: 0px;
+        width: parent.width - 2px;
+        height: 2px;
+        border-top-left-radius: Theme.radius;
+        border-top-right-radius: Theme.radius;
+        background: Theme.accent;
+    }
+    if !root.document.selected: Rectangle {
+        x: parent.width - 1px;
+        y: (parent.height - self.height) / 2;
+        width: 1px;
+        height: 14px;
+        background: Theme.border-strong;
+    }
+    touch := TouchArea {
+        enabled: root.document.enabled;
+        clicked => { root.select(); }
+    }
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: root.closable ? Theme.space-xs : Theme.space-lg;
+        spacing: Theme.space-sm;
+        Text {
+            text: root.document.title;
+            color: root.document.selected ? Theme.text : Theme.text-muted;
+            font-weight: root.document.selected ? 600 : 400;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.document.hidden: Text { text: "Hidden"; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+        if root.closable: IconButton {
+            y: (parent.height - self.height) / 2;
+            width: 22px;
+            height: 22px;
+            icon-size: 12px;
+            icon: Icon.close;
+            tooltip: "Close active document";
+            clicked => { root.close(); }
+        }
+    }
+}
+
 export component DocumentTabs inherits Rectangle {
     in property <[WorkspaceDocumentTab]> documents;
     in property <bool> has-active-document;
     callback select-document(string);
     callback close-active-document();
     callback open-documents();
-    height: 42px;
-    background: Theme.base;
+    height: 36px;
+    background: Theme.chrome;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     HorizontalLayout {
-        padding: Theme.space-sm; spacing: Theme.space-sm;
-        for document in root.documents: HorizontalLayout {
-            spacing: 2px;
-            min-width: 90px;
-            max-width: 268px;
-            preferred-width: 228px;
-            horizontal-stretch: 1;
-            SelectableRow {
-                label: document.title + (document.hidden ? " · hidden" : "");
-                selected: document.selected;
-                enabled: document.enabled;
-                horizontal-stretch: 1;
-                clicked => { root.select-document(document.selector); }
-                HorizontalLayout {
-                    padding-left: Theme.space;
-                    padding-right: Theme.space;
-                    spacing: Theme.space-sm;
-                    Text { text: document.title; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; color: document.selected ? Theme.text : Theme.text-muted; }
-                    if document.hidden: Text { text: "Hidden"; font-size: Theme.font-small; vertical-alignment: center; color: Theme.text-faint; }
-                }
-            }
-            if document.selected && root.has-active-document: IconButton { icon: Icon.close; tooltip: "Close active document"; clicked => { root.close-active-document(); } }
+        padding-left: Theme.space;
+        padding-right: Theme.space;
+        padding-top: Theme.space-sm;
+        spacing: 2px;
+        for document in root.documents: DocumentTab {
+            document: document;
+            closable: document.selected && root.has-active-document;
+            select => { root.select-document(document.selector); }
+            close => { root.close-active-document(); }
         }
-        Button { horizontal-stretch: 0; text: "Open documents…"; clicked => { root.open-documents(); } }
+        Rectangle {
+            width: open-label.preferred-width + 26px + Theme.space-lg;
+            border-radius: Theme.radius-sm;
+            background: open-touch.has-hover ? Theme.base : transparent;
+            accessible-role: button;
+            accessible-label: "Open documents…";
+            accessible-action-default => { root.open-documents(); }
+            HorizontalLayout {
+                padding-left: Theme.space;
+                padding-right: Theme.space;
+                spacing: Theme.space-sm;
+                Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.outliner; colorize: open-touch.has-hover ? Theme.text : Theme.text-faint; }
+                open-label := Text { text: "Open documents…"; color: open-touch.has-hover ? Theme.text : Theme.text-faint; vertical-alignment: center; }
+            }
+            open-touch := TouchArea { mouse-cursor: pointer; clicked => { root.open-documents(); } }
+        }
         Rectangle { horizontal-stretch: 1; }
     }
 }

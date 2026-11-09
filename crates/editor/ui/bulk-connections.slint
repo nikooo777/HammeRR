@@ -18,7 +18,7 @@ component BatchConnectionField inherits HorizontalLayout {
     in-out property <string> value;
     callback changed();
     spacing: Theme.space;
-    Text { text: root.label; width: 96px; vertical-alignment: center; color: Theme.text; }
+    Text { text: root.label; width: 96px; vertical-alignment: center; color: Theme.text-muted; }
     if root.choose: CheckBox {
         text: "Replace"; checked <=> root.replace;
         enabled: root.editable;
@@ -79,24 +79,22 @@ export component ConnectionBatchWindow inherits Window {
     callback cancel-plan();
     callback close-window();
     VerticalLayout {
-        padding: Theme.space-xl; spacing: Theme.space;
+        padding: Theme.space-xl; spacing: Theme.space-lg;
         Text { text: "Batch connections"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
-        ScrollView {
-            min-height: 36px; max-height: 80px; content-width: self.width;
-            VerticalLayout { alignment: start; padding-right: Theme.space-lg; Text { text: root.sources-label; wrap: word-wrap; color: Theme.text-muted; } }
+        if root.sources-label != "": ScrollView {
+            vertical-stretch: 0;
+            height: min(80px, sources-text.preferred-height);
+            content-width: self.width;
+            VerticalLayout { alignment: start; padding-right: Theme.space-lg; sources-text := Text { text: root.sources-label; wrap: word-wrap; color: Theme.text-muted; } }
         }
         Text { text: "Highlight exact rows to edit or remove. Equal row numbers on different entities have no shared meaning."; wrap: word-wrap; color: Theme.text-muted; }
         HorizontalLayout {
             spacing: Theme.space;
             Button { text: "Use selected sources"; enabled: !root.has-plan; clicked => { root.capture(); } }
-            Button { text: "Add on selected sources"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-add(); } }
             Rectangle { horizontal-stretch: 1; }
-        }
-        HorizontalLayout {
-            spacing: Theme.space;
+            Button { text: "Add on selected sources"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-add(); } }
             Button { text: "Edit highlighted rows"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-edit(); } }
             Button { text: "Remove highlighted rows"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-remove(); } }
-            Rectangle { horizontal-stretch: 1; }
         }
         ScrollView {
             vertical-stretch: 1; min-height: 110px; content-width: self.width;
@@ -113,6 +111,7 @@ export component ConnectionBatchWindow inherits Window {
                         Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
                     }
                 }
+                if root.rows.length == 0: Text { text: "No captured connections. Select source entities in the map, then Use selected sources."; color: Theme.text-faint; wrap: word-wrap; }
             }
         }
         if root.has-plan: Text { text: root.summary; color: Theme.text; wrap: word-wrap; font-weight: 600; }
@@ -133,10 +132,10 @@ export component ConnectionBatchWindow inherits Window {
         if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
             spacing: Theme.space;
-            Button { text: "Apply connections"; primary: true; enabled: root.has-plan && root.can-apply; clicked => { root.apply(); } }
-            Button { text: "Cancel plan"; enabled: root.has-plan; clicked => { root.cancel-plan(); } }
             Button { text: "Close"; clicked => { root.close-window(); } }
             Rectangle { horizontal-stretch: 1; }
+            Button { text: "Cancel plan"; enabled: root.has-plan; clicked => { root.cancel-plan(); } }
+            Button { text: "Apply connections"; primary: true; enabled: root.has-plan && root.can-apply; clicked => { root.apply(); } }
         }
     }
 }

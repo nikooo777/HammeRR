@@ -27,7 +27,7 @@ Use [Polygon brushes](polygon-brushes.md) for custom outlines.
 7. Use **Focus preview** to inspect it.
 8. Click **Add shape**.
 
-![Editable wedges, cylinders, cones, spheres and arches](images/primitive-gallery.png)
+![Editable arch, cylinder, cone, sphere, wedge and polygon brushes](images/primitive-gallery.png)
 
 Arches also have inset, start-angle and sweep controls.
 Their bounds describe the complete ellipse; a 180° sweep creates half an ellipse.

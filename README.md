@@ -53,7 +53,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Brush shapes](docs/brushes.md) | [Hollow rooms](docs/brush-tools.md) |
 | --- | --- |
-| ![Wedges, cylinders, cones, spheres and an arch](docs/images/primitive-gallery.png) | ![A hollow masonry room](docs/images/hollow-room.png) |
+| ![An arch, cylinder, cone, sphere, wedge and prism under colored lights](docs/images/primitive-gallery.png) | ![A lit hollow brick room with props inside](docs/images/hollow-room.png) |
 | Build exact shapes or import block batches. | Turn solids into rooms with selected openings. |
 
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
@@ -148,7 +148,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Document tabs and workspaces](docs/open-documents.md) | [Content profiles](docs/content-profiles.md) |
 | --- | --- |
-| ![Two persistent tabs and independent map views](docs/images/document-tabs.png) | ![The same map rendered with a mod material profile](docs/images/content-profile-mod.png) |
+| ![A lit chapel scene open beside a second map tab](docs/images/document-tabs.png) | ![The same map rendered with a mod material profile](docs/images/content-profile-mod.png) |
 | Keep independent maps open and restore saved content, cameras and layouts. | Switch content per document and restore it when reopening maps. |
 
 | [Prefab library](docs/prefabs.md) | [Coordinated views](docs/basics.md#coordinated-views) |

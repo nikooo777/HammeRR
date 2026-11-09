@@ -17,7 +17,7 @@ Select brushes to show **Brush tools** in the Inspector. The same commands are i
 7. Inspect the cavity with **Look inside**.
 8. Click **Create walls**.
 
-![A hollow room with its roof and front removed](images/hollow-room.png)
+![A hollow brick room with its roof and front left open](images/hollow-room.png)
 
 Inside keeps the outer dimensions. Outside keeps the original interior dimensions.
 Each source needs at least one wall. Open shells need other geometry to seal a playable map.

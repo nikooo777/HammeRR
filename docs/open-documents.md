@@ -15,7 +15,7 @@ The ordinary **New map** and **Open…** controls replace only the current tab's
 Successful replacement clears pending terrain strokes. A failed Open keeps the
 current map and stroke.
 
-![Two persistent document tabs and four views of the selected map](images/document-tabs.png)
+![Two document tabs with the lit chapel map selected](images/document-tabs.png)
 
 ## Save and restore a workspace
 

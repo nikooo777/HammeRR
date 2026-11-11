@@ -361,15 +361,24 @@ impl Session {
         if self.magnetic_preview_stale(report) {
             return;
         }
+        const GUIDE_COLOR: [u8; 4] = [255, 220, 95, 255];
+        let mut push = |point: DVec3| {
+            mesh.lines.push(render::scene::LineVertex {
+                position: point.as_vec3().to_array(),
+                color: GUIDE_COLOR,
+            });
+        };
         for position in [Some(report.proposed), report.target].into_iter().flatten() {
             for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
-                for point in [position - axis * 3.0, position + axis * 3.0] {
-                    mesh.lines.push(render::scene::LineVertex {
-                        position: point.as_vec3().to_array(),
-                        color: [255, 220, 95, 255],
-                    });
-                }
+                push(position - axis * 8.0);
+                push(position + axis * 8.0);
             }
+        }
+        if let Some(target) = report.target
+            && report.result["captured"] == true
+        {
+            push(report.proposed);
+            push(target);
         }
     }
 }

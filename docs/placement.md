@@ -50,13 +50,16 @@ inside that radius. Capture can move off the handle axis or plane to join the
 corners exactly. Outside the radius, or with no target under the pointer, the
 ordinary handle/grid movement remains active.
 
+Yellow crosses mark the corner position from ordinary movement and the nearest
+target corner. A line joins them while the target captures.
+
 The source corner stays explicit; other selected objects move with it. Individual
 entity brushes use the same authored coordinates as face/component editing and
 keep their owning entity's properties. Settings are temporary. After replacing
 the map, refresh the sources and choose a corner again. Numeric transforms and
 ordinary surface placement retain their own controls.
 
-![Magnetic capture joins two actual brush corners](images/magnetic-snapping.png)
+![The capture line pulls the dragged corner onto the other brush's corner](images/magnetic-snapping.png)
 
 ## Limits
 

@@ -12,7 +12,7 @@ Show small surface detail without adding geometry.
 
 | Ordinary shading | Normal-map preview |
 | --- | --- |
-| ![Curved stone terrain with ordinary shading](images/normal-maps-off.png) | ![The same terrain with normal-map detail](images/normal-maps-on.png) |
+| ![Cobbled hills under colored lights with ordinary shading](images/normal-maps-off.png) | ![The same cobbles with normal-map relief](images/normal-maps-on.png) |
 
 For authored lights, set **Overlays → Lighting → Quality** to **Detail · per-fragment**. Fast lighting cannot use normal maps.
 Use **Reload material assets** after changing material files.

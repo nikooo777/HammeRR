@@ -4,7 +4,7 @@
 
 Use the viewport to inspect the map. Use the Inspector to change the selection.
 
-![The HammeRR editor window with detail brushes selected](images/editor-window.png)
+![The HammeRR editor window with a lantern selected in a lit chapel scene](images/editor-window.png)
 
 ## The window
 
@@ -66,7 +66,7 @@ Set **Fly speed** under **Overlays → Camera**, or scroll while flying.
 4. Click a pane to make it active. An orange outline marks it, and its header adds shading, **Overlays**, framing and saved views. Edit, pick or navigate there.
 5. Choose **View → Frame all views** to frame the selection in each visible pane. With no selection, frame the map.
 
-![Four views share the selected bridges](images/coordinated-views.png)
+![Four views of the chapel share the selected pumpkin](images/coordinated-views.png)
 
 All panes share map edits, selection, Undo, shading and display switches. Each pane keeps its own camera.
 Enable **View → View layout → Link orthographic pan and zoom** to move and zoom orthographic cameras together. Perspective cameras stay independent.

@@ -45,7 +45,7 @@ See the [tool index and setup](docs/mcp.md).
 
 ## The editor
 
-![HammeRR with detail brushes selected: menus, tool rail, viewport, Inspector and Agent activity](docs/images/editor-window.png)
+![HammeRR at dusk with a lantern selected: menus, tool rail, lit viewport, Inspector and Agent activity](docs/images/editor-window.png)
 
 Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Editor basics](docs/basics.md).
 
@@ -68,7 +68,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |
-| ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on curved stone terrain](docs/images/normal-maps-on.png) |
+| ![Different materials on one brush](docs/images/face-materials.png) | ![Cyan and orange light catching normal-mapped cobbles on curved terrain](docs/images/normal-maps-on.png) |
 | Filter native materials and inspect both blend-image layers. | Inspect normal detail on brushes and curved terrain. |
 
 | [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
@@ -103,7 +103,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Reference images](docs/reference-images.md) | [Magnetic snapping](docs/placement.md#magnetic-translation) |
 | --- | --- |
-| ![A blueprint reference plane standing behind the compound](docs/images/reference-images.png) | ![Brush corners joined through magnetic capture](docs/images/magnetic-snapping.png) |
+| ![A blueprint reference plane standing behind the compound](docs/images/reference-images.png) | ![A dragged brush corner pulled onto a neighbor's corner by magnetic capture](docs/images/magnetic-snapping.png) |
 | Trace PNG references with shared pose and display controls. | Capture visible brush, terrain and model vertices while moving. |
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
@@ -153,7 +153,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Prefab library](docs/prefabs.md) | [Coordinated views](docs/basics.md#coordinated-views) |
 | --- | --- |
-| ![One cottage prefab placed at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share the selected bridges](docs/images/coordinated-views.png) |
+| ![One cottage prefab placed at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views of the chapel share the selected pumpkin](docs/images/coordinated-views.png) |
 | Organize saved assemblies, replace their content and place scaled copies. | Edit through independent cameras with linked orthographic navigation. |
 
 | [Linked paths and trains](docs/path-authoring.md) | [Entity graphs](docs/entities.md#inspect-connected-logic) |

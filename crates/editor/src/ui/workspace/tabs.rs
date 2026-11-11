@@ -137,16 +137,7 @@ pub(super) fn refresh(owner: &SharedOwner) {
             let selector = document["document_id"].as_str().unwrap_or_default();
             WorkspaceDocumentTab {
                 selector: selector.into(),
-                title: format!(
-                    "{}{}",
-                    document["title"].as_str().unwrap_or("Untitled map"),
-                    if document["unsaved_changes"] == true {
-                        " *"
-                    } else {
-                        ""
-                    }
-                )
-                .into(),
+                title: document["title"].as_str().unwrap_or("Untitled map").into(),
                 selected: active.as_deref() == Some(selector),
                 enabled: document["lifecycle"] == "live",
                 hidden: document["visibility"] == "hidden",

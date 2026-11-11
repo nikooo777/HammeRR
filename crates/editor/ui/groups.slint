@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView } from "widgets.slint";
 
 export struct ObjectGroupRow { id: string, label: string, detail: string }
@@ -71,6 +72,7 @@ export component ObjectGroupsWindow inherits Window {
                 Button { text: "New from selection"; enabled: root.available && !root.editing && root.can-group-selection; clicked => { root.begin-new(); } }
                 Button { text: "Edit group"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-edit(); } }
                 Button { text: "Ungroup…"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-ungroup(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 spacing: 16px;
@@ -80,11 +82,20 @@ export component ObjectGroupsWindow inherits Window {
                     Text { text: "Groups"; font-weight: 600; }
                     ListView {
                         min-height: 160px;
-                        for group in root.groups: VerticalLayout {
-                            spacing: 3px;
-                            padding-bottom: 8px;
-                            Button { text: (root.selected == group.id ? "● " : "") + group.label; clicked => { root.choose(group.id); } }
-                            Text { text: group.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        for group in root.groups: SelectableRow {
+                            height: 52px;
+                            label: group.label;
+                            selected: root.selected == group.id;
+                            fill: transparent;
+                            clicked => { root.choose(group.id); }
+                            VerticalLayout {
+                                padding-left: Theme.space;
+                                padding-right: Theme.space;
+                                alignment: center;
+                                spacing: 2px;
+                                Text { text: group.label; color: Theme.text; overflow: elide; }
+                                Text { text: group.detail; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
+                            }
                         }
                     }
                     HorizontalLayout {
@@ -93,8 +104,11 @@ export component ObjectGroupsWindow inherits Window {
                         Text { text: root.page-label; vertical-alignment: center; horizontal-stretch: 1; }
                         Button { text: "Next"; enabled: root.next; clicked => { root.page(1); } }
                     }
-                    ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; }
-                    Button { text: "Select group"; enabled: root.available && root.selected != ""; clicked => { root.select-group(); } }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; accessible-label: "Selection mode"; }
+                        Button { text: "Select group"; enabled: root.available && root.selected != ""; clicked => { root.select-group(); } }
+                    }
                 }
                 VerticalLayout {
                     horizontal-stretch: 1;
@@ -139,6 +153,7 @@ export component ObjectGroupsWindow inherits Window {
                         spacing: 8px;
                         Button { text: "Add current selection"; enabled: root.can-group-selection; clicked => { root.add-selection(); } }
                         Button { text: "Add chosen group"; enabled: root.selected != ""; clicked => { root.add-chosen-group(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
@@ -147,13 +162,13 @@ export component ObjectGroupsWindow inherits Window {
                 wrap: word-wrap;
                 color: Theme.text-muted;
             }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 36px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Close"; clicked => { root.close-dialog(); } }
-                Rectangle { horizontal-stretch: 1; }
                 if root.editing: Button { text: "Cancel"; clicked => { root.cancel(); } }
-                if root.editing: Button { text: root.ungrouping ? "Ungroup" : "Apply group"; enabled: root.ready; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if root.editing: Button { text: root.ungrouping ? "Ungroup" : "Apply group"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

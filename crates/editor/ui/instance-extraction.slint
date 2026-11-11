@@ -5,7 +5,7 @@ export component InstanceExtractionWindow inherits Window {
     title: "Extract selection to instance - HammeRR";
     preferred-width: 760px;
     preferred-height: 650px;
-    background: Theme.hover;
+    background: Theme.panel;
     in-out property <string> file;
     in-out property <int> pivot-mode;
     in-out property <string> pivot-x: "0";
@@ -27,7 +27,7 @@ export component InstanceExtractionWindow inherits Window {
     VerticalLayout {
         padding: Theme.space-xl;
         spacing: 14px;
-        Text { text: "Extract selection to instance"; color: Theme.text; font-size: Theme.font-display; }
+        Text { text: "Extract selection to instance"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
         Text { text: "New child VMF · explicit relative path under the saved parent"; color: Theme.text-muted; }
         LineEdit { text <=> root.file; enabled: !root.active; placeholder-text: "assemblies/platform.vmf"; }
         HorizontalLayout {
@@ -62,11 +62,11 @@ export component InstanceExtractionWindow inherits Window {
         Text { text: "Undo restores the parent objects. The exported child stays on disk; Redo changes only the parent. Refresh instance contents explicitly after extraction."; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 10px;
-            Button { text: "Prepare extraction"; enabled: !root.active; clicked => { root.prepare(); } }
-            Button { text: "Review shared extraction"; enabled: root.active && !root.owned && !root.busy; clicked => { root.review(); } }
-            Rectangle { horizontal-stretch: 1; background: transparent; }
-            Button { text: "Extract"; enabled: root.ready && root.owned && !root.busy; clicked => { root.extract(); } }
             Button { text: "Cancel"; clicked => { root.cancel(); } }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Button { text: "Review shared extraction"; enabled: root.active && !root.owned && !root.busy; clicked => { root.review(); } }
+            Button { text: "Prepare extraction"; enabled: !root.active; clicked => { root.prepare(); } }
+            Button { text: "Extract"; primary: true; enabled: root.ready && root.owned && !root.busy; clicked => { root.extract(); } }
         }
     }
     }

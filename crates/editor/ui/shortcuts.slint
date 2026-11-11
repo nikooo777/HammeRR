@@ -195,15 +195,15 @@ export component ShortcutsWindow inherits Window {
                     Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: Theme.space;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Reload saved"; clicked => { root.reload(); } }
                 Button { text: "Reset saved shortcuts"; clicked => { root.reset(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Save shortcuts"; enabled: root.can-save; clicked => { root.save(); } }
+                Button { text: "Save shortcuts"; primary: true; enabled: root.can-save; clicked => { root.save(); } }
             }
         }
     }

@@ -248,21 +248,21 @@ export component PrefabsWindow inherits Window {
                         CheckBox {text:"Keep external links by name";checked<=>root.keep-external;}
                       }
                     }
-                    if !root.editing: Button {text:"Preview placement…";enabled:root.can-preview;clicked=>{root.preview();}}
                     if !root.editing: Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:Theme.text-muted;}
                     if root.editing: Rectangle {vertical-stretch:1;}
                 }
             }
-            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:Theme.text-faint;font-size: Theme.font;}
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:36px;}
+            if root.directory!="": Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:Theme.text-faint;font-size: Theme.font;}
+            if root.message!="": Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Close";clicked=>{root.close-dialog();}}
-                Rectangle {horizontal-stretch:1;}
                 if root.editing: Button {text:"Cancel";clicked=>{root.cancel();}}
-                if root.saving: Button {text:"Save prefab";enabled:root.prefab-name!="";clicked=>{root.save();}}
-                if root.deleting: Button {text:"Delete prefab";clicked=>{root.delete();}}
-                if root.renaming: Button {text:"Rename prefab";enabled:root.prefab-name!=""&&root.prefab-name!=root.selected;clicked=>{root.rename();}}
+                Rectangle {horizontal-stretch:1;}
+                if !root.editing: Button {text:"Preview placement…";primary:true;enabled:root.can-preview;clicked=>{root.preview();}}
+                if root.saving: Button {text:"Save prefab";primary:true;enabled:root.prefab-name!="";clicked=>{root.save();}}
+                if root.deleting: Button {text:"Delete prefab";primary:true;clicked=>{root.delete();}}
+                if root.renaming: Button {text:"Rename prefab";primary:true;enabled:root.prefab-name!=""&&root.prefab-name!=root.selected;clicked=>{root.rename();}}
                 if root.replacing:Button {text:"Replace prefab";primary:true;clicked=>{root.replace();}}
                 if root.organizing:Button {text:"Save category and tags";primary:true;clicked=>{root.organize();}}
             }

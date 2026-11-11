@@ -58,25 +58,23 @@ export component CompileRegionWindow inherits Window {
                 LineEdit { text <=> root.max-z; input-type: decimal; edited => { root.edited(); } }
             }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Use selection / map bounds"; clicked => { root.use-bounds(); } }
+                Button { text: "Frame region"; clicked => { root.frame(); } }
                 Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             Text { text: "Orange lines show the region. Source geometry stays visible and editable. Preview changes nothing until Apply."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.scope-help; wrap: word-wrap; color: Theme.warning; }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.scope-help != "": Text { text: root.scope-help; wrap: word-wrap; color: Theme.warning; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Preview clear"; clicked => { root.preview-clear(); } }
-                Button { text: "Frame region"; clicked => { root.frame(); } }
-                Button { text: "Preview region"; clicked => { root.preview(); } }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Rectangle { horizontal-stretch: 1; }
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply region"; enabled: root.ready; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Preview clear"; clicked => { root.preview-clear(); } }
+                Button { text: "Preview region"; clicked => { root.preview(); } }
+                Button { text: "Apply region"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import { Button, LineEdit, ListView, ScrollView, SpinBox } from "widgets.slint";
 
 export struct OverlayTargetRow {
@@ -85,12 +86,22 @@ export component OverlayWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 10px;
             Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.source-label; wrap: word-wrap; color: Theme.text-muted; }
+            if root.source-label != "": Text { text: root.source-label; wrap: word-wrap; color: Theme.text-muted; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Edit selected corners"; enabled: root.can-edit-corners; clicked => { root.edit-corners(); } }
+                Button { text: "Refit selected overlay"; enabled: root.can-refit; clicked => { root.refit(); } }
+                Button { text: "Preview rebind"; enabled: root.can-rebind; clicked => { root.rebind(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
             if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Corner editing keeps the stored axes and every binding. Rebind uses the selected destination set and its first eligible quad; multi-face refit requires an explicit reference quad."; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
                 vertical-stretch: 1;
+                content-width: self.visible-width;
                 VerticalLayout {
                     spacing: 10px;
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     if root.reference-required: VerticalLayout {
                         spacing: 6px;
                         Text { text: "Reference face"; font-weight: 600; }
@@ -98,10 +109,12 @@ export component OverlayWindow inherits Window {
                         Text { text: "Its current edges set the projection axes. Refit, then review the new outline."; wrap: word-wrap; color: Theme.text-muted; }
                         ListView {
                             height: min(root.refit-references.length * 36px, 144px);
-                            for entry in root.refit-references: Button {
-                                text: entry.label;
+                            for entry in root.refit-references: SelectableRow {
+                                height: 32px;
+                                label: entry.label;
                                 enabled: entry.eligible;
                                 clicked => { root.choose-refit-reference(entry.entity); }
+                                Text { x: Theme.space; width: parent.width - 2 * Theme.space; text: entry.label; color: Theme.text; vertical-alignment: center; overflow: elide; }
                             }
                         }
                     }
@@ -111,10 +124,19 @@ export component OverlayWindow inherits Window {
                         LineEdit { text <=> root.overlay-search; placeholder-text: "Search overlay names or materials"; accessible-label: "Search existing overlays"; edited => { root.search-overlays(); } }
                         ListView {
                             height: root.overlay-targets.length > 0 ? 140px : 0px;
-                            for entry in root.overlay-targets: VerticalLayout {
-                                spacing: 3px; padding-bottom: 6px;
-                                Button { text: entry.label; enabled: entry.eligible; clicked => { root.choose-overlay(entry.entity); } }
-                                Text { text: entry.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                            for entry in root.overlay-targets: SelectableRow {
+                                height: 46px;
+                                label: entry.label;
+                                enabled: entry.eligible;
+                                clicked => { root.choose-overlay(entry.entity); }
+                                VerticalLayout {
+                                    padding-left: Theme.space;
+                                    padding-right: Theme.space;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: entry.label; color: Theme.text; overflow: elide; }
+                                    Text { text: entry.detail; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
+                                }
                             }
                         }
                         HorizontalLayout {
@@ -131,7 +153,7 @@ export component OverlayWindow inherits Window {
                             spacing: 5px;
                             Text { text: root.corners-mode || root.source-count > 1 ? "Projection outline" : "Source face outline"; font-weight: 600; }
                             Rectangle {
-                                min-width: 320px; min-height: 180px; background: Theme.hover; border-color: Theme.border-strong; border-width: 1px; border-radius: 4px;
+                                min-width: 320px; min-height: 180px; background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 4px;
                                 if root.outline != "": Path {
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
@@ -151,7 +173,7 @@ export component OverlayWindow inherits Window {
                             width: 220px; spacing: 5px;
                             Text { text: "Material thumbnail"; font-weight: 600; }
                             Rectangle {
-                                height: 180px; background: Theme.hover; border-color: Theme.border-strong; border-width: 1px; border-radius: 4px;
+                                height: 180px; background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 4px;
                                 Image { width: parent.width; height: parent.height; source: root.material-image; image-fit: contain; }
                             }
                             Text { text: root.material-detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
@@ -233,26 +255,19 @@ export component OverlayWindow inherits Window {
                         LineEdit { enabled: !root.refit-mode; text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
                     }
                     Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
-                    Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
+                    if root.draft-label != "": Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
                     Text { text: "Cyan lines mark the projection corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 8px;
-                Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
                 Button { text: "Fit / Preview"; enabled: root.can-preview; clicked => { root.fit(); } }
                 Button { text: "Preview settings"; enabled: root.can-preview; clicked => { root.preview(); } }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Button { text: "Edit selected corners"; enabled: root.can-edit-corners; clicked => { root.edit-corners(); } }
-                Button { text: "Refit selected overlay"; enabled: root.can-refit; clicked => { root.refit(); } }
-                Button { text: "Preview rebind"; enabled: root.can-rebind; clicked => { root.rebind(); } }
-                Rectangle { horizontal-stretch: 1; }
-                Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: root.corners-mode ? "Apply corners" : root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.corners-mode ? "Apply corners" : root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

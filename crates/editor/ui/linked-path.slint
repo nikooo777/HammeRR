@@ -219,8 +219,12 @@ export component LinkedPathWindow inherits Window {
             }
             if root.preview-status != "": Text { text: root.preview-status; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
-            if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
-            if root.handling: Button { text: "Finish moving"; clicked => { root.finish-handles(); } }
+            if root.picking || root.handling: HorizontalLayout {
+                spacing: Theme.space;
+                if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
+                if root.handling: Button { text: "Finish moving"; clicked => { root.finish-handles(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

@@ -105,7 +105,7 @@ component ConnectionField inherits VerticalLayout {
             selected(value) => { if self.current-index > 0 { root.value = value; root.changed(); } }
         }
     }
-    if root.help != "": Text { text: root.help; wrap: word-wrap; font-size: Theme.font; }
+    if root.help != "": Text { text: root.help; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
 }
 
 export component ConnectionWindow inherits Window {
@@ -154,7 +154,7 @@ export component ConnectionWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 16px;
+            padding: Theme.space-xl;
             spacing: 12px;
             Text { text: root.source-label; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
             HorizontalLayout {
@@ -165,8 +165,9 @@ export component ConnectionWindow inherits Window {
                     spacing: 8px;
                     HorizontalLayout {
                         spacing: 8px;
-                        ComboBox { model: ["Outgoing", "Incoming"]; current-index <=> root.direction; }
+                        ComboBox { width: 150px; model: ["Outgoing", "Incoming"]; current-index <=> root.direction; }
                         Button { text: "Add connection"; clicked => { root.add(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     ListView {
                         vertical-stretch: 1;
@@ -174,7 +175,7 @@ export component ConnectionWindow inherits Window {
                             padding-bottom: 12px;
                             spacing: 4px;
                             Text { text: row.label; wrap: word-wrap; font-weight: 600; }
-                            Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; }
+                            Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
                             if row.warning != "": Text { text: row.warning; wrap: word-wrap; color: Theme.warning; font-size: Theme.font; }
                             HorizontalLayout {
                                 spacing: 8px;
@@ -186,12 +187,14 @@ export component ConnectionWindow inherits Window {
                                     text: "Delete connection";
                                     clicked => { root.delete-connection(row.index); }
                                 }
+                                Rectangle { horizontal-stretch: 1; }
                             }
                         }
                     }
                     Text {
                         text: root.direction == 0 ? root.outgoing.length + " outgoing connections" : root.incoming.length + " incoming connections · choose one to edit its source";
                         wrap: word-wrap;
+                        color: Theme.text-muted;
                     }
                 }
                 VerticalLayout {
@@ -236,9 +239,8 @@ export component ConnectionWindow inherits Window {
                             placeholder: "Empty uses the output's value";
                             changed => { root.fields-changed(); }
                         }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: "Delay (seconds)"; vertical-alignment: center; }
+                        FieldRow {
+                            label: "Delay (seconds)"; label-width: 120px; inset: false;
                             LineEdit {
                                 text <=> root.delay;
                                 input-type: decimal;
@@ -246,9 +248,8 @@ export component ConnectionWindow inherits Window {
                                 edited => { root.fields-changed(); }
                             }
                         }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: "Fire"; vertical-alignment: center; }
+                        FieldRow {
+                            label: "Fire"; label-width: 120px; inset: false;
                             ComboBox {
                                 model: ["Unlimited", "Once", "Specific count"];
                                 current-index <=> root.firing-mode;
@@ -265,15 +266,16 @@ export component ConnectionWindow inherits Window {
                             }
                         }
                     }
-                    Text { text: root.message; wrap: word-wrap; color: root.can-apply ? Theme.success : Theme.warning; }
+                    if root.message != "": Text { text: root.message; wrap: word-wrap; color: root.can-apply ? Theme.success : Theme.warning; }
                     if root.warnings != "": TextEdit { text: root.warnings; read-only: true; wrap: word-wrap; vertical-stretch: 1; }
                     Rectangle { vertical-stretch: 1; }
                 }
             }
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply connection"; enabled: root.editing && root.can-apply; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply connection"; primary: true; enabled: root.editing && root.can-apply; clicked => { root.apply(); } }
             }
         }
     }
@@ -394,7 +396,7 @@ export component RenameWindow inherits Window {
                 spacing: 12px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply rename"; enabled: root.can-apply; clicked => { root.apply(); } }
+                Button { text: "Apply rename"; primary: true; enabled: root.can-apply; clicked => { root.apply(); } }
             }
         }
     }
@@ -430,9 +432,11 @@ export component EntityWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 12px;
-            spacing: 10px;
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: root.brush-mode ? "Tie brushes to an entity" : "Place an entity"; font-size: Theme.font-display; font-weight: 600; }
             HorizontalLayout {
+                spacing: Theme.space;
                 LineEdit {
                     placeholder-text: "Search classes or descriptions";
                     input-type: search;
@@ -441,45 +445,59 @@ export component EntityWindow inherits Window {
                 }
                 Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
             }
-            ScrollView {
-                height: Theme.catalog-metadata-status-height;
+            if root.catalog-status != "": ScrollView {
+                height: min(Theme.catalog-metadata-status-height, catalog-text.preferred-height);
                 content-width: self.visible-width;
-                Text { text: root.catalog-status; wrap: word-wrap; color: Theme.text-muted; accessible-label: "Loaded FGD catalog"; }
+                VerticalLayout {
+                    alignment: start;
+                    catalog-text := Text { text: root.catalog-status; wrap: word-wrap; color: Theme.text-muted; accessible-label: "Loaded FGD catalog"; }
+                }
             }
             HorizontalLayout {
                 spacing: 12px;
                 vertical-stretch: 1;
                 ListView {
                     width: 280px;
-                    for class in root.classes: VerticalLayout {
-                        padding-bottom: 4px;
-                        Button {
-                            text: class.classname;
-                            clicked => {
-                                root.classname = class.classname;
-                                root.class-selected();
-                            }
+                    for class in root.classes: SelectableRow {
+                        height: 44px;
+                        label: class.classname;
+                        selected: class.classname == root.classname;
+                        clicked => {
+                            root.classname = class.classname;
+                            root.class-selected();
+                        }
+                        VerticalLayout {
+                            padding-left: Theme.space;
+                            padding-right: Theme.space;
+                            alignment: center;
+                            spacing: 2px;
+                            Text { text: class.classname; color: Theme.text; overflow: elide; }
+                            if class.description != "": Text { text: class.description; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
                         }
                     }
                 }
                 TextEdit { text: root.definition; read-only: true; wrap: word-wrap; }
             }
-            LineEdit {
-                placeholder-text: "Classname (custom classes are supported)";
-                text <=> root.classname;
-                edited => { root.class-selected(); }
+            FieldRow {
+                label: "Class"; label-width: 64px; inset: false;
+                LineEdit {
+                    placeholder-text: "Classname (custom classes are supported)";
+                    accessible-label: "Classname";
+                    text <=> root.classname;
+                    edited => { root.class-selected(); }
+                }
             }
-            if !root.brush-mode: HorizontalLayout {
-                spacing: 6px;
-                Text { text: "Position"; vertical-alignment: center; }
-                LineEdit { text <=> root.origin-x; placeholder-text: "X"; }
-                LineEdit { text <=> root.origin-y; placeholder-text: "Y"; }
-                LineEdit { text <=> root.origin-z; placeholder-text: "Z"; }
+            if !root.brush-mode: FieldRow {
+                label: "Position"; label-width: 64px; inset: false;
+                LineEdit { text <=> root.origin-x; placeholder-text: "X"; accessible-label: "Position X"; }
+                LineEdit { text <=> root.origin-y; placeholder-text: "Y"; accessible-label: "Position Y"; }
+                LineEdit { text <=> root.origin-z; placeholder-text: "Z"; accessible-label: "Position Z"; }
             }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 if !root.brush-mode: Button {
                     text: "Pick surface…";
                     enabled: root.classname != "";
@@ -487,6 +505,7 @@ export component EntityWindow inherits Window {
                 }
                 Button {
                     text: root.brush-mode ? "Tie selected brushes to entity" : "Place entity";
+                    primary: true;
                     enabled: root.classname != "";
                     clicked => { root.create(); }
                 }
@@ -516,14 +535,19 @@ export component GameLogWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 12px;
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Game log"; font-size: Theme.font-display; font-weight: 600; }
             TextEdit {
                 text: root.content;
                 read-only: true;
                 font-family: "monospace";
                 wrap: no-wrap;
             }
-            Button { text: "Close"; clicked => { root.cancel(); } }
+            HorizontalLayout {
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.cancel(); } }
+            }
         }
     }
 }
@@ -605,21 +629,21 @@ export component ColorWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 12px;
-            alignment: start;
-            Text { text: root.field-label; font-size: Theme.font-heading; }
-            Rectangle { height: 70px; background: rgb(root.red, root.green, root.blue); border-radius: 6px; }
+            Text { text: root.field-label; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
+            Rectangle { height: 70px; background: rgb(root.red, root.green, root.blue); border-radius: 6px; border-width: 1px; border-color: Theme.border; }
             HorizontalLayout {
                 spacing: 8px;
                 for preset in [#ffd296, #ffffff, #8cbeff, #ff7070, #8aff9c, #000000]: Rectangle {
                     height: 30px;
                     background: preset;
                     border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Theme.border;
                     TouchArea { clicked => { root.preset(preset.red, preset.green, preset.blue); } }
                 }
             }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { text: "Color model"; vertical-alignment: center; }
+            FieldRow {
+                label: "Color model"; label-width: 110px; inset: false;
                 ComboBox { accessible-label: "Color model"; model: ["RGB", "HSV", "HSL"]; current-index <=> root.model-index; selected => { root.select-model(root.model-index); } }
             }
             if root.normalized: Text { text: "Stored as normalized RGB (0–1). RGB controls use 0–255."; wrap: word-wrap; }
@@ -627,19 +651,19 @@ export component ColorWindow inherits Window {
                 spacing: 12px;
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 45px; text: "Red"; vertical-alignment: center; }
+                    Text { width: 110px; text: "Red"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 255; value: root.red; changed(value) => { root.red = round(value); root.rgb-changed(); } }
                     SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.red; edited => { root.rgb-changed(); } }
                 }
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 45px; text: "Green"; vertical-alignment: center; }
+                    Text { width: 110px; text: "Green"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 255; value: root.green; changed(value) => { root.green = round(value); root.rgb-changed(); } }
                     SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.green; edited => { root.rgb-changed(); } }
                 }
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 45px; text: "Blue"; vertical-alignment: center; }
+                    Text { width: 110px; text: "Blue"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 255; value: root.blue; changed(value) => { root.blue = round(value); root.rgb-changed(); } }
                     SpinBox { width: 90px; minimum: 0; maximum: 255; value <=> root.blue; edited => { root.rgb-changed(); } }
                 }
@@ -648,29 +672,29 @@ export component ColorWindow inherits Window {
                 spacing: 12px;
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 110px; text: "Hue (degrees)"; vertical-alignment: center; }
+                    Text { width: 110px; text: "Hue (degrees)"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 360; value: root.hue-value; changed(value) => { root.hue = "\{value}"; root.components-changed(); } }
                     LineEdit { width: 110px; text <=> root.hue; input-type: decimal; accessible-label: "Hue in degrees"; edited => { root.components-changed(); } }
                 }
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 110px; text: "Saturation (%)"; vertical-alignment: center; }
+                    Text { width: 110px; text: "Saturation (%)"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 100; value: root.saturation-value; changed(value) => { root.saturation = "\{value}"; root.components-changed(); } }
                     LineEdit { width: 110px; text <=> root.saturation; input-type: decimal; accessible-label: "Saturation in percent"; edited => { root.components-changed(); } }
                 }
                 HorizontalLayout {
                     spacing: 10px;
-                    Text { width: 110px; text: root.model-index == 1 ? "Value (%)" : "Lightness (%)"; vertical-alignment: center; }
+                    Text { width: 110px; text: root.model-index == 1 ? "Value (%)" : "Lightness (%)"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: 100; value: root.level-value; changed(value) => { root.level = "\{value}"; root.components-changed(); } }
                     LineEdit { width: 110px; text <=> root.level; input-type: decimal; accessible-label: root.model-index == 1 ? "Value in percent" : "Lightness in percent"; edited => { root.components-changed(); } }
                 }
-                Text { text: "Hue 360° equals 0°. Achromatic conversions use hue 0°."; wrap: word-wrap; }
+                Text { text: "Hue 360° equals 0°. Achromatic conversions use hue 0°."; wrap: word-wrap; color: Theme.text-muted; }
             }
             if root.has-intensity: VerticalLayout {
                 spacing: 6px;
-                Text { text: "Brightness"; }
                 HorizontalLayout {
                     spacing: 10px;
+                    Text { width: 110px; text: "Brightness"; color: Theme.text-muted; vertical-alignment: center; }
                     Slider { minimum: 0; maximum: max(1000, root.brightness); value: root.brightness; released(value) => { root.brightness = value; root.intensity = "\{value}"; } }
                     LineEdit { width: 100px; text <=> root.intensity; input-type: decimal; }
                 }
@@ -681,7 +705,7 @@ export component ColorWindow inherits Window {
                 FieldRow {
                     inset: false;
                     label: "Palette source";
-                    label-width: 100px;
+                    label-width: 110px;
                     ComboBox {
                         accessible-label: "Palette source";
                         model: ["User palette", "Map palette"];
@@ -689,8 +713,8 @@ export component ColorWindow inherits Window {
                         selected => { root.palette-source-choice(); }
                     }
                 }
-                HorizontalLayout {
-                    spacing: 8px;
+                FieldRow {
+                    label: "Saved color"; label-width: 110px; inset: false;
                     ComboBox {
                         accessible-label: "Saved colors";
                         model: root.palette-names;
@@ -699,8 +723,8 @@ export component ColorWindow inherits Window {
                     }
                     Button { text: "Use saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("use"); } }
                 }
-                HorizontalLayout {
-                    spacing: 8px;
+                FieldRow {
+                    label: "Name"; label-width: 110px; inset: false;
                     LineEdit { accessible-label: "Saved color name"; text <=> root.palette-name; placeholder-text: "Name for a new saved color"; }
                     Button { text: "Rename saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("rename"); } }
                 }
@@ -709,19 +733,19 @@ export component ColorWindow inherits Window {
                     Button { text: "Save new color"; enabled: root.palette-ready; clicked => { root.palette-action("save"); } }
                     Button { text: "Replace saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("replace"); } }
                     Button { text: "Delete saved color"; enabled: root.palette-ready && root.palette-index > 0; clicked => { root.palette-action("delete"); } }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
                     Button { text: root.palette-source-index == 1 ? "Refresh palette" : "Reload palette"; enabled: root.palette-reload-available; clicked => { root.palette-action("reload"); } }
-                    Text { text: "16 named colors · brightness stays unchanged"; vertical-alignment: center; wrap: word-wrap; }
+                    Rectangle { horizontal-stretch: 1; }
                 }
-                ScrollView { height: 64px; Text { text: root.palette-status; wrap: word-wrap; color: root.palette-ready ? Theme.text-muted : Theme.warning; } }
+                Text { text: "16 named colors · brightness stays unchanged"; wrap: word-wrap; color: Theme.text-muted; }
+                if root.palette-status != "": Text { text: root.palette-status; wrap: word-wrap; color: root.palette-ready ? Theme.text-muted : Theme.warning; }
             }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply color"; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply color"; primary: true; clicked => { root.apply(); } }
             }
         }
     }
@@ -790,24 +814,31 @@ export component MaterialWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 16px;
+            padding: Theme.space-xl;
             spacing: 12px;
+            Text { text: "Choose a material"; font-size: Theme.font-display; font-weight: 600; }
             LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.offset = 0; root.search(); } }
             HorizontalLayout {
-                spacing: Theme.space;
-                Text { text: "Name match"; vertical-alignment: center; }
-                ComboBox { model: ["Substring", "Prefix", "Regex"]; current-index <=> root.match-mode; selected => { root.offset = 0; root.search(); } }
-                Text { text: "Shader"; vertical-alignment: center; }
-                LineEdit { text <=> root.shader-filter; placeholder-text: "All shaders · e.g. WorldVertexTransition"; accessible-label: "Exact resolved shader filter"; edited => { root.offset = 0; root.search(); } }
+                spacing: Theme.space-lg;
+                FieldRow {
+                    label: "Name match"; label-width: 136px; inset: false;
+                    ComboBox { width: 140px; model: ["Substring", "Prefix", "Regex"]; current-index <=> root.match-mode; selected => { root.offset = 0; root.search(); } }
+                }
+                FieldRow {
+                    label: "Shader"; label-width: 52px; inset: false; horizontal-stretch: 1;
+                    LineEdit { text <=> root.shader-filter; placeholder-text: "All shaders · e.g. WorldVertexTransition"; accessible-label: "Exact resolved shader filter"; edited => { root.offset = 0; root.search(); } }
+                }
             }
             HorizontalLayout {
-                spacing: 12px;
-                Text { text: "Winning VMT source"; vertical-alignment: center; }
-                ComboBox { horizontal-stretch: 1; model: root.source-labels; current-index <=> root.source-index; selected => { root.offset = 0; root.search(); } }
+                spacing: Theme.space-lg;
+                FieldRow {
+                    label: "Winning VMT source"; label-width: 136px; inset: false; horizontal-stretch: 1;
+                    ComboBox { model: root.source-labels; current-index <=> root.source-index; selected => { root.offset = 0; root.search(); } }
+                }
                 CheckBox { text: "Exclude maps/ materials"; checked <=> root.exclude-generated-map-materials; toggled => { root.offset = 0; root.search(); } }
+                CheckBox { text: "Hide FGD-excluded directories"; checked <=> root.exclude-fgd-materials; toggled => { root.offset = 0; root.search(); } }
             }
-            CheckBox { text: "Hide FGD-excluded directories"; checked <=> root.exclude-fgd-materials; toggled => { root.offset = 0; root.search(); } }
-            Text { text: root.fgd-exclusion-status; wrap: word-wrap; color: Theme.text-muted; }
+            if root.fgd-exclusion-status != "": Text { text: root.fgd-exclusion-status; wrap: word-wrap; color: Theme.text-muted; }
             if root.shader-scan-status != "": ScrollView {
                 height: 64px;
                 content-width: self.visible-width;
@@ -818,15 +849,24 @@ export component MaterialWindow inherits Window {
                 vertical-stretch: 1;
                 ListView {
                     width: 210px;
-                    for group in root.groups: Button {
-                        text: group.label;
-                        enabled: root.group != group.id;
+                    for group in root.groups: SelectableRow {
+                        height: 30px;
+                        label: group.label;
+                        selected: root.group == group.id;
                         clicked => { root.group = group.id; root.offset = 0; root.search(); }
+                        Text {
+                            x: Theme.space;
+                            width: parent.width - 2 * Theme.space;
+                            text: group.label;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
                     }
                 }
                 VerticalLayout {
                     spacing: 8px;
-                    Text { text: root.catalog-label; }
+                    Text { text: root.catalog-label; color: Theme.text-muted; }
                     ListView {
                         vertical-stretch: 1;
                         for row in root.rows: HorizontalLayout {
@@ -859,6 +899,7 @@ export component MaterialWindow inherits Window {
                         spacing: 8px;
                         Button { text: "Previous"; enabled: root.offset > 0; clicked => { root.offset = max(0, root.offset - 36); root.search(); } }
                         Button { text: "Next"; enabled: root.offset + 36 < root.total; clicked => { root.offset += 36; root.search(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
                 VerticalLayout {
@@ -867,11 +908,15 @@ export component MaterialWindow inherits Window {
                     ComboBox { model: ["Layer 1 · Editor display", "Layer 2 · $basetexture2"]; current-index <=> root.preview-layer; selected => { root.preview-layer-changed(); } }
                     Rectangle {
                         height: 220px;
-                        background: Theme.control-strong;
+                        background: Theme.field;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border;
                         preview-image := Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
                         if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
                     }
                     HorizontalLayout {
+                        spacing: Theme.space;
                         Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
                         Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
                     }
@@ -887,19 +932,23 @@ export component MaterialWindow inherits Window {
                     Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
                     Button { text: "Reload favorites"; enabled: root.favorites-reload-available; clicked => { root.reload-favorites(); } }
-                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: Theme.font-small; }
+                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: Theme.font-small; color: Theme.text-muted; }
                 }
             }
             if root.reload-status != "": ScrollView {
                 height: 70px;
                 Text { text: root.reload-status; wrap: word-wrap; vertical-alignment: top; }
             }
-            LineEdit { text <=> root.material; placeholder-text: "Material path"; accepted => { root.preview-material(); } }
+            FieldRow {
+                label: "Material"; label-width: 136px; inset: false;
+                LineEdit { text <=> root.material; placeholder-text: "Material path"; accessible-label: "Material path"; accepted => { root.preview-material(); } }
+            }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Reload material assets"; clicked => { root.reload-material-assets(); } }
-                Button { text: "Use material"; enabled: root.material != ""; clicked => { root.use-material(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Use material"; primary: true; enabled: root.material != ""; clicked => { root.use-material(); } }
             }
         }
     }
@@ -977,7 +1026,7 @@ export component TerrainWindow inherits Window {
                     LineEdit {preferred-width:100px;min-width:0px;horizontal-stretch:1;text <=> root.vertex-z;enabled:root.mask-available && !root.stale;edited=>{root.edited();}}
                 }
                 Text {text:"Moves only the retained vertex selection by exact world coordinates. X/Y reshape the terrain sideways; Z changes height. Each offset can be −4096 to 4096 units. Neighboring triangles follow their shared vertices.";wrap:word-wrap;color:Theme.text-muted;}
-                Button {text:"Move with handles…";enabled:root.mask-available && !root.stale;clicked=>{root.move-handles();}}
+                HorizontalLayout { Button {text:"Move with handles…";enabled:root.mask-available && !root.stale;clicked=>{root.move-handles();}} Rectangle { horizontal-stretch: 1; } }
                 Text {text:"Drag an axis or plane, then review with Apply or Cancel. Handles follow the editor's grid snapping.";wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font;}
             }
             if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
@@ -1000,7 +1049,7 @@ export component TerrainWindow inherits Window {
                     Text {text: "Y"; vertical-alignment: center;} LineEdit {text <=> root.center-y; edited => {root.edited();}}
                     Text {text: "Z"; vertical-alignment: center;} LineEdit {text <=> root.center-z; edited => {root.edited();}}
                 }
-                Button {text:"Pick center in viewport…"; enabled:!root.stale; clicked=>{root.pick-center();}}
+                HorizontalLayout { Button {text:"Pick center in viewport…"; enabled:!root.stale; clicked=>{root.pick-center();}} Rectangle { horizontal-stretch: 1; } }
                 Text {text: "Brush direction";}
                 ComboBox {model:["Up / down · world Z", "Along the face normal"]; current-index <=> root.direction-index; selected => {root.edited();}}
                 Text {text: "Radius · world units";}
@@ -1072,13 +1121,14 @@ export component TerrainWindow inherits Window {
             if root.operation-index != 0 && root.operation-index != 10 && root.operation-index != 11 && root.operation-index != 12: Text {text:root.operation-index == 9 ? "Join full/half borders or matching corners at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:Theme.text-muted;}
             Rectangle {vertical-stretch: 1;}
             if root.operation-index >= 1 && root.operation-index <= 5: Text {text:"A stroke applies this brush at each sample. Overlapping samples build up the edit.";wrap:word-wrap;font-size: Theme.font;color:Theme.text-muted;}
-            if root.operation-index >= 1 && root.operation-index <= 5: Button {text:"Draw stroke in viewport…";enabled:!root.stale;clicked=>{root.draw-stroke();}}
+            if root.operation-index >= 1 && root.operation-index <= 5: HorizontalLayout { Button {text:"Draw stroke in viewport…";enabled:!root.stale;clicked=>{root.draw-stroke();}} Rectangle { horizontal-stretch: 1; } }
             if root.message != "": Text {text: root.message; wrap: word-wrap; color: Theme.text-faint;}
             HorizontalLayout {
-                spacing: 8px;
+                spacing: Theme.space;
                 Button {text: "Cancel"; clicked => {root.cancel();}}
+                Rectangle { horizontal-stretch: 1; }
                 Button {text: "Preview"; enabled: !root.stale; clicked => {root.preview-edit();}}
-                Button {text: "Apply"; enabled: !root.stale && root.ready; clicked => {root.apply();}}
+                Button {text: "Apply"; primary: true; enabled: !root.stale && root.ready; clicked => {root.apply();}}
             }
         }
     }
@@ -1136,7 +1186,7 @@ export component SurfaceWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: root.selection-label; font-size: Theme.font-heading; }
+            Text { text: root.selection-label; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
             ComboBox {
                 model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces", "Vary texture offsets"];
                 current-index <=> root.operation-index;
@@ -1183,18 +1233,30 @@ export component SurfaceWindow inherits Window {
             }
             if root.operation-index == 0: ScrollView {
                 vertical-stretch: 1;
+                content-width: self.visible-width;
                 VerticalLayout {
                     spacing: 10px;
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     Text { text: "Blank fields keep each face's current value."; color: Theme.text-faint; }
                     HorizontalLayout {
                         spacing: 12px;
-                        Image { width: 72px; height: 72px; source: root.preview; image-fit: contain; }
+                        Rectangle {
+                            width: 72px; height: 72px;
+                            background: Theme.field; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border;
+                            Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
+                        }
                         VerticalLayout {
                             spacing: 6px;
+                            alignment: center;
                             Text { text: "Material"; }
-                            LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; edited => { root.ready = false; } }
-                            Button { text: "Browse materials…"; clicked => { root.browse(); } }
-                            Button { text: "Fit atlas region…"; clicked => { root.fit-atlas(); } }
+                            LineEdit { text <=> root.material; placeholder-text: "Mixed · keep current materials"; accessible-label: "Material"; edited => { root.ready = false; } }
+                            HorizontalLayout {
+                                spacing: Theme.space;
+                                Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                                Button { text: "Fit atlas region…"; clicked => { root.fit-atlas(); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
                         }
                     }
                     HorizontalLayout {
@@ -1272,12 +1334,13 @@ export component SurfaceWindow inherits Window {
                     }
                 }
             }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: root.operation-index == 5 ? "Preview variation" : "Preview textures"; enabled: !root.stale && (root.operation-index == 0 || root.operation-index == 5 || root.sample-present); clicked => { root.preview-edit(); } }
-                Button { text: "Apply textures"; enabled: !root.stale && (root.operation-index == 0 || root.operation-index == 5 || root.sample-present) && (root.operation-index == 5 ? root.ready : (root.operation-index != 0 || !root.direct-vectors || root.ready)); clicked => { root.apply(); } }
+                Button { text: "Apply textures"; primary: true; enabled: !root.stale && (root.operation-index == 0 || root.operation-index == 5 || root.sample-present) && (root.operation-index == 5 ? root.ready : (root.operation-index != 0 || !root.direct-vectors || root.ready)); clicked => { root.apply(); } }
             }
         }
     }
@@ -1481,11 +1544,14 @@ export component PropertiesWindow inherits Window {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: Theme.space-xl; spacing: 12px;
-            Text { text: root.heading; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.summary; wrap: word-wrap; }
-            if root.world-settings: Button {
-                text: "Inspect applied sky…";
-                clicked => { root.inspect-sky-assets(); }
+            Text { text: root.heading; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.world-settings: HorizontalLayout {
+                Button {
+                    text: "Inspect applied sky…";
+                    clicked => { root.inspect-sky-assets(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
             }
             LineEdit { text <=> root.filter; placeholder-text: "Find a property…"; edited => { root.search(); } }
             ListView {
@@ -1514,11 +1580,12 @@ export component PropertiesWindow inherits Window {
                 LineEdit { text <=> root.custom-value; placeholder-text: "Value"; }
                 Button { text: "Stage value"; enabled: root.custom-key != ""; clicked => { root.edit(root.custom-key, root.custom-value); } }
             }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply properties"; enabled: root.can-apply; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply properties"; primary: true; enabled: root.can-apply; clicked => { root.apply(); } }
             }
         }
     }
@@ -1568,31 +1635,59 @@ export component ChecksWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: 12px;
             HorizontalLayout {
+                spacing: Theme.space-lg;
                 VerticalLayout {
                     spacing: 4px;
+                    horizontal-stretch: 1;
                     Text { text: "Map checks"; font-size: Theme.font-display; font-weight: 600; }
-                    Text { text: root.summary; color: Theme.text-muted; }
+                    if root.summary != "": Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
                 }
-                Button { text: "Run checks"; clicked => { root.run-checks(); } }
+                VerticalLayout {
+                    alignment: start;
+                    Button { text: "Run checks"; primary: true; clicked => { root.run-checks(); } }
+                }
             }
             if root.stale: Text { text: "Results are out of date. Run checks again before selecting or repairing an issue."; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 LineEdit { text <=> root.query; placeholder-text: "Search issues…"; edited => { root.page = 0; root.filter(); } }
-                ComboBox { model: ["All severities", "Errors", "Warnings", "Notes"]; current-index <=> root.severity; selected => { root.page = 0; root.filter(); } }
+                ComboBox { width: 180px; model: ["All severities", "Errors", "Warnings", "Notes"]; current-index <=> root.severity; selected => { root.page = 0; root.filter(); } }
             }
             HorizontalLayout {
                 spacing: 18px;
                 VerticalLayout {
                     horizontal-stretch: 1; min-width: 390px; spacing: 8px;
                     ScrollView {
+                        content-width: self.visible-width;
                         VerticalLayout {
-                            spacing: 6px;
-                            for row in root.rows: Button {
-                                text: (row.severity == "error" ? "Error · " : row.severity == "warning" ? "Warning · " : "Note · ") + row.title + "\n" + row.location;
-                                checked: root.selected-id == row.id;
-                                height: 62px;
+                            spacing: Theme.space-xs;
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            for row in root.rows: SelectableRow {
+                                height: 52px;
+                                label: (row.severity == "error" ? "Error · " : row.severity == "warning" ? "Warning · " : "Note · ") + row.title;
+                                selected: root.selected-id == row.id;
                                 clicked => { root.inspect(row.id); }
+                                HorizontalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space;
+                                    Rectangle {
+                                        width: 3px;
+                                        border-radius: 1px;
+                                        background: row.severity == "error" ? Theme.danger : row.severity == "warning" ? Theme.warning : Theme.info;
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: row.title; color: Theme.text; overflow: elide; }
+                                        Text {
+                                            text: (row.severity == "error" ? "Error" : row.severity == "warning" ? "Warning" : "Note") + " · " + row.location;
+                                            color: Theme.text-faint;
+                                            font-size: Theme.font-small;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1601,20 +1696,23 @@ export component ChecksWindow inherits Window {
                         spacing: 8px;
                         Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.filter(); } }
                         Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.filter(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
-                Rectangle { width: 1px; background: Theme.control-strong; }
+                Rectangle { width: 1px; background: Theme.border; }
                 VerticalLayout {
                     horizontal-stretch: 1; min-width: 450px; spacing: 12px;
-                    Text { text: root.detail-title; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
-                    Text { text: root.detail; wrap: word-wrap; }
-                    Text { text: root.location; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
+                    if root.detail-title == "": Text { text: "Choose an issue to see its details."; color: Theme.text-faint; wrap: word-wrap; }
+                    if root.detail-title != "": Text { text: root.detail-title; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
+                    if root.detail != "": Text { text: root.detail; wrap: word-wrap; }
+                    if root.location != "": Text { text: root.location; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Select issue"; enabled: root.can-select; clicked => { root.navigate(false); } }
                         Button { text: "Focus issue"; enabled: root.can-select; clicked => { root.navigate(true); } }
+                        Button { text: "Review repair…"; enabled: root.can-repair; clicked => { root.review-repair(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    Button { text: "Review repair…"; enabled: root.can-repair; clicked => { root.review-repair(); } }
                     if root.preview-token != "": VerticalLayout {
                         spacing: 8px;
                         Text { text: "Proposed repair"; font-size: Theme.font-heading; font-weight: 600; }
@@ -1624,14 +1722,18 @@ export component ChecksWindow inherits Window {
                             spacing: 8px;
                             Button { text: "Cancel repair"; clicked => { root.cancel-repair(); } }
                             Button { text: "Apply repair"; enabled: !root.stale; clicked => { root.apply-repair(); } }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
             }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-            Text { text: "Checks include hidden objects and exclude pending edits. Compile and test in CS:S to check leaks and playability."; color: Theme.text-faint; font-size: Theme.font; wrap: word-wrap; }
-            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                Text { horizontal-stretch: 1; text: "Checks include hidden objects and exclude pending edits. Compile and test in CS:S to check leaks and playability."; color: Theme.text-faint; font-size: Theme.font; wrap: word-wrap; vertical-alignment: center; }
+                Button { text: "Close"; clicked => { root.cancel(); } }
+            }
         }
     }
 }
@@ -1725,12 +1827,9 @@ export component RecentMapsWindow inherits Window {
             if root.dirty-map: CheckBox { text: "Discard current unsaved edits and drafts when opening"; enabled: !root.busy; checked <=> root.discard-changes; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Open selected map"; primary: true; enabled: !root.busy && !root.selection-stale && root.selected-available && (!root.dirty-map || root.discard-changes); clicked => { root.open-selected(); } }
                 Button { text: "Locate moved map…"; enabled: !root.busy && !root.selection-stale && root.writable && root.selected-relocatable; clicked => { root.locate-selected(); } }
                 Button { text: "Remove from list"; enabled: !root.busy && !root.selection-stale && root.writable && root.selected-path != ""; clicked => { root.remove-selected(); } }
-            }
-            HorizontalLayout {
-                spacing: Theme.space;
+                Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Confirm clear list"; enabled: !root.busy; checked <=> root.confirm-clear; }
                 Button { text: "Clear list"; enabled: !root.busy && root.writable && root.confirm-clear && root.rows.length > 0; clicked => { root.clear-list(); } }
             }
@@ -1739,9 +1838,10 @@ export component RecentMapsWindow inherits Window {
             if root.progress != "": Text { text: root.progress; color: Theme.info; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Cancel / close"; clicked => { root.cancel(); } }
-                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.cancel(); } }
                 if root.can-cancel-work: Button { text: "Cancel operation"; clicked => { root.cancel-work(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Open selected map"; primary: true; enabled: !root.busy && !root.selection-stale && root.selected-available && (!root.dirty-map || root.discard-changes); clicked => { root.open-selected(); } }
             }
         }
     }
@@ -1789,20 +1889,22 @@ export component RecoveryWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: 10px;
             Text { text: "Autosave and recovery"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
+            if root.status != "": Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
                 CheckBox { text: "Autosave changes"; checked <=> root.autosave-enabled; toggled => { root.settings-dirty = true; } }
-                Text { text: "Every (seconds)"; vertical-alignment: center; }
-                SpinBox { value <=> root.interval-seconds; minimum: 30; maximum: 3600; edited => { root.settings-dirty = true; } }
-                Text { text: "Keep per map"; vertical-alignment: center; }
-                SpinBox { value <=> root.keep-count; minimum: 1; maximum: 50; edited => { root.settings-dirty = true; } }
+                Text { text: "Every (seconds)"; vertical-alignment: center; color: Theme.text-muted; }
+                SpinBox { width: 120px; value <=> root.interval-seconds; minimum: 30; maximum: 3600; edited => { root.settings-dirty = true; } }
+                Text { text: "Keep per map"; vertical-alignment: center; color: Theme.text-muted; }
+                SpinBox { width: 100px; value <=> root.keep-count; minimum: 1; maximum: 50; edited => { root.settings-dirty = true; } }
+                Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Reload settings"; clicked => { root.reload-settings(); } }
                 Button { text: "Apply settings"; enabled: root.available && root.settings-dirty; clicked => { root.apply-settings(); } }
                 Button { text: "Save snapshot now"; enabled: root.available && !root.busy; clicked => { root.snapshot-now(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             Text { text: "Snapshots include applied edits, even in unnamed maps. Use Save to update the map file."; wrap: word-wrap; color: Theme.text-faint; }
             HorizontalLayout {
@@ -1813,30 +1915,47 @@ export component RecoveryWindow inherits Window {
             }
             ListView {
                 min-height: 140px;
-                for row in root.rows: VerticalLayout {
-                    spacing: 3px; padding-bottom: 8px;
-                    Button { text: row.title + (root.selected-id == row.id ? " · selected" : ""); clicked => { root.select-snapshot(row.id); } }
-                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; }
+                vertical-stretch: 1;
+                for row in root.rows: SelectableRow {
+                    height: 52px;
+                    label: row.title;
+                    selected: root.selected-id == row.id;
+                    fill: transparent;
+                    clicked => { root.select-snapshot(row.id); }
+                    VerticalLayout {
+                        padding-left: Theme.space;
+                        padding-right: Theme.space;
+                        alignment: center;
+                        spacing: 2px;
+                        Text { text: row.title; color: Theme.text; overflow: elide; }
+                        Text { text: row.detail; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
+                    }
                 }
             }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.refresh(); } }
                 Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.refresh(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
+            if root.selected-detail != "": Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
             if root.dirty-map: CheckBox { text: "Discard current unsaved edits when opening the recovered copy"; checked <=> root.discard-changes; }
             HorizontalLayout {
                 spacing: 10px;
-                Button { text: "Open recovered copy"; enabled: root.selected-id != "" && (!root.dirty-map || root.discard-changes); clicked => { root.restore-snapshot(); } }
+                Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Confirm permanent deletion"; checked <=> root.confirm-delete; }
                 Button { text: "Delete snapshot"; enabled: root.selected-id != "" && root.confirm-delete && !root.busy; clicked => { root.delete-snapshot(); } }
             }
             Text { text: "Recovered maps open as unsaved copies. Choose a save path to keep them."; wrap: word-wrap; color: Theme.text-faint; }
             if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: Theme.warning; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; }
-            Text { text: "Storage: " + root.storage; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
-            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+            if root.storage != "": Text { text: "Storage: " + root.storage; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Close"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Open recovered copy"; primary: true; enabled: root.selected-id != "" && (!root.dirty-map || root.discard-changes); clicked => { root.restore-snapshot(); } }
+            }
         }
     }
 }
@@ -1873,8 +1992,8 @@ export component PointfileWindow inherits Window {
                 Button { text: "Browse…"; clicked => { root.browse(); } }
                 Button { text: "Load"; enabled: root.path != ""; clicked => { root.load(); } }
             }
-            Text { text: root.source; wrap: word-wrap; }
-            Text { text: root.summary; wrap: word-wrap; color: root.has-path && !root.current ? Theme.warning : Theme.text-muted; }
+            if root.source != "": Text { text: root.source; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: root.has-path && !root.current ? Theme.warning : Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Point"; vertical-alignment: center; }
@@ -1885,14 +2004,15 @@ export component PointfileWindow inherits Window {
                 Button { text: "Previous"; enabled: root.current && root.point > 1; clicked => { root.navigate(root.point - 2); } }
                 Button { text: "Next"; enabled: root.current && root.point < root.total; clicked => { root.navigate(root.point); } }
             }
-            Text { text: root.position; color: Theme.text-muted; }
+            if root.position != "": Text { text: root.position; color: Theme.text-muted; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Frame path"; enabled: root.current; clicked => { root.frame(); } }
-                Button { text: "Unload path"; enabled: root.has-path; clicked => { root.clear(); } }
+                spacing: Theme.space;
                 Button { text: "Close"; clicked => { root.cancel(); } }
+                Button { text: "Unload path"; enabled: root.has-path; clicked => { root.clear(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Frame path"; primary: true; enabled: root.current; clicked => { root.frame(); } }
             }
         }
     }
@@ -1904,7 +2024,8 @@ component StatisticCard inherits Rectangle {
     in property <string> label;
     in property <string> value;
     in property <string> detail;
-    background: Theme.hover; border-radius: 8px;
+    background: Theme.control; border-radius: 8px;
+    border-width: 1px; border-color: Theme.border;
     VerticalLayout {
         padding: 16px; spacing: 8px;
         Text { text: root.label; color: Theme.text-muted; }
@@ -1950,8 +2071,9 @@ export component StatisticsWindow inherits Window {
             Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
-                ComboBox { model: ["Materials · sides", "Entity classes · entities", "Model paths · references", "Lightmap scales · sides", "Terrain powers · displacements"]; current-index <=> root.section; selected => { root.page = 0; root.refresh(); } }
+                ComboBox { width: 280px; model: ["Materials · sides", "Entity classes · entities", "Model paths · references", "Lightmap scales · sides", "Terrain powers · displacements"]; current-index <=> root.section; selected => { root.page = 0; root.refresh(); } }
                 Button { text: "Refresh"; clicked => { root.refresh(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 Text { text: root.section == 0 ? "Material" : root.section == 1 ? "Entity class" : root.section == 2 ? "Model path" : root.section == 3 ? "Units per lightmap texel" : "Displacement power"; color: Theme.text-muted; horizontal-stretch: 1; }
@@ -1970,8 +2092,11 @@ export component StatisticsWindow inherits Window {
                 Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.refresh(); } }
                 Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.refresh(); } }
             }
-            Text { text: "Authored counts, not compiled BSP budgets. Brush sides count plane records. Hidden brushes include those inside hidden entities. Locate IDs with Object report."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font; }
-            Button { text: "Close"; clicked => { root.cancel(); } }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                Text { horizontal-stretch: 1; text: "Authored counts, not compiled BSP budgets. Brush sides count plane records. Hidden brushes include those inside hidden entities. Locate IDs with Object report."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font; vertical-alignment: center; }
+                Button { text: "Close"; clicked => { root.cancel(); } }
+            }
         }
     }
 }
@@ -2038,35 +2163,37 @@ export component ReportWindow inherits Window {
             Text { text: "Enter one full classname per line. Any listed exact class may match, ignoring letter case. Entity class and other filters still apply. Clear Classes (any exact) to remove the set."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
-                ComboBox { model: ["All types", "World brushes", "All entities", "Point entities", "Brush entities"]; current-index <=> root.kind; selected => { root.page = 0; root.search(); } }
-                ComboBox { model: ["Visible and hidden", "Visible", "Hidden"]; current-index <=> root.visibility; selected => { root.page = 0; root.search(); } }
+                ComboBox { width: 200px; model: ["All types", "World brushes", "All entities", "Point entities", "Brush entities"]; current-index <=> root.kind; selected => { root.page = 0; root.search(); } }
+                ComboBox { width: 200px; model: ["Visible and hidden", "Visible", "Hidden"]; current-index <=> root.visibility; selected => { root.page = 0; root.search(); } }
                 Button { text: "Refresh"; clicked => { root.search(); } }
+                Rectangle { horizontal-stretch: 1; }
+                CheckBox { text: "Limit to a map region"; checked <=> root.limit-bounds; toggled => { root.page = 0; root.search(); } }
             }
-            CheckBox { text: "Limit to a map region"; checked <=> root.limit-bounds; toggled => { root.page = 0; root.search(); } }
             if root.limit-bounds: VerticalLayout {
                 spacing: 6px;
                 HorizontalLayout {
                     spacing: 8px;
-                    Text { text: "Minimum XYZ"; vertical-alignment: center; width: 120px; }
+                    Text { text: "Minimum XYZ"; vertical-alignment: center; width: 120px; color: Theme.text-muted; }
                     LineEdit { text <=> root.min-x; input-type: decimal; edited => { root.page = 0; root.search(); } }
                     LineEdit { text <=> root.min-y; input-type: decimal; edited => { root.page = 0; root.search(); } }
                     LineEdit { text <=> root.min-z; input-type: decimal; edited => { root.page = 0; root.search(); } }
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    Text { text: "Maximum XYZ"; vertical-alignment: center; width: 120px; }
+                    Text { text: "Maximum XYZ"; vertical-alignment: center; width: 120px; color: Theme.text-muted; }
                     LineEdit { text <=> root.max-x; input-type: decimal; edited => { root.page = 0; root.search(); } }
                     LineEdit { text <=> root.max-y; input-type: decimal; edited => { root.page = 0; root.search(); } }
                     LineEdit { text <=> root.max-z; input-type: decimal; edited => { root.page = 0; root.search(); } }
                 }
             }
-            Text { text: root.summary; }
+            if root.summary != "": Text { text: root.summary; color: Theme.text-muted; }
             ListView {
+                vertical-stretch: 1;
                 for row in root.rows: VerticalLayout {
                     spacing: 4px; padding-bottom: 12px;
                     HorizontalLayout {
                         spacing: 8px;
-                        Text { text: row.label; horizontal-stretch: 1; vertical-alignment: center; }
+                        Text { text: row.label; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
                         Button { text: "Select"; clicked => { root.select-result(row.id, false); } }
                         Button { text: "Frame"; clicked => { root.select-result(row.id, true); } }
                     }
@@ -2077,7 +2204,8 @@ export component ReportWindow inherits Window {
                 spacing: 8px;
                 Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.search(); } }
                 Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.search(); } }
-                ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; }
+                Rectangle { horizontal-stretch: 1; }
+                ComboBox { width: 200px; model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle selection"]; current-index <=> root.selection-mode; }
                 Button { text: "Select all matches"; clicked => { root.select-all(false); } }
                 Button { text: "Frame all matches"; clicked => { root.select-all(true); } }
             }
@@ -2088,10 +2216,14 @@ export component ReportWindow inherits Window {
                 Button { text: "Show selected"; clicked => { root.visibility-action("show"); } }
                 Button { text: "Show all"; clicked => { root.visibility-action("show_all"); } }
                 Button { text: "Restore visibility"; clicked => { root.visibility-action("restore"); } }
+                Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: "Hidden objects are saved as hidden and omitted from compilation."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.message; wrap: word-wrap; }
-            Button { text: "Close"; clicked => { root.cancel(); } }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                Text { horizontal-stretch: 1; text: "Hidden objects are saved as hidden and omitted from compilation."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font; vertical-alignment: center; }
+                Button { text: "Close"; clicked => { root.cancel(); } }
+            }
         }
     }
 }

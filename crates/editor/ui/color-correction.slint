@@ -44,10 +44,10 @@ export component ColorCorrectionWindow inherits Window {
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;
+                Button { text: "Close"; clicked => { root.dismiss(); } }
                 Button { text: "Clear LUT"; clicked => { root.clear(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply preview"; clicked => { root.apply(); } }
-                Button { text: "Close"; clicked => { root.dismiss(); } }
+                Button { text: "Apply preview"; primary: true; clicked => { root.apply(); } }
             }
         }
     }

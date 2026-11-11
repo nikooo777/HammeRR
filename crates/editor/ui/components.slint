@@ -214,12 +214,13 @@ export component ComponentsWindow inherits Window {
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        ComboBox { model: ["Edges", "Vertices", "Faces"]; enabled: !root.topology-preview; current-index <=> root.kind; selected => { root.change-kind(); } }
+                        ComboBox { width: 140px; model: ["Edges", "Vertices", "Faces"]; enabled: !root.topology-preview; current-index <=> root.kind; selected => { root.change-kind(); } }
                         Button { text: "Refresh"; clicked => { root.refresh(); } }
+                        Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: (root.rows.length > 0 && !root.topology-preview) || root.picking; clicked => { root.toggle-picking(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: (root.rows.length > 0 && !root.topology-preview) || root.picking; clicked => { root.toggle-picking(); } }
                     if root.picking: Text { text: root.picking-summary; wrap: word-wrap; color: Theme.info; }
-                    Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
                     ListView {
                         vertical-stretch: 1;
                         for row in root.rows: VerticalLayout {
@@ -233,6 +234,7 @@ export component ComponentsWindow inherits Window {
                         spacing: 8px;
                         Button { text: "Select all shown"; enabled: root.rows.length > 0 && !root.topology-preview; clicked => { root.select-all(); } }
                         Button { text: "Clear selection"; enabled: root.has-selection && !root.topology-preview; clicked => { root.clear(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
                 ScrollView {

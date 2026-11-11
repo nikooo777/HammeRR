@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import {Button, ComboBox, LineEdit, ListView} from "widgets.slint";
 
 export struct SelectionDefaultRow {
@@ -68,32 +69,39 @@ export component SelectionDefaultsWindow inherits Window {
                 Text { text: "Save current selection mode and type switches under a name, then apply a profile when needed. Startup defaults stay separate."; color: Theme.text-muted; wrap: word-wrap; }
                 ListView {
                     height: 96px;
-                    for profile in root.profiles: Rectangle {
-                        height: 48px;
-                        background: root.selected-profile == profile.id ? Theme.selection : Theme.hover;
+                    for profile in root.profiles: SelectableRow {
+                        height: 44px;
+                        label: profile.name;
+                        selected: root.selected-profile == profile.id;
+                        enabled: root.ready;
+                        clicked => { root.choose-profile(profile.id); }
                         HorizontalLayout {
-                            spacing: 10px; padding: 4px;
-                            Button { text: profile.name; width: 190px; enabled: root.ready; clicked => { root.choose-profile(profile.id); } }
-                            Text { text: profile.filters; horizontal-stretch: 1; wrap: word-wrap; vertical-alignment: center; }
+                            spacing: 10px; padding-left: Theme.space; padding-right: Theme.space;
+                            Text { text: profile.name; width: 190px; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                            Text { text: profile.filters; horizontal-stretch: 1; wrap: word-wrap; vertical-alignment: center; color: Theme.text-muted; }
                         }
                     }
                 }
                 LineEdit { text <=> root.profile-name; accessible-label: "Profile name"; placeholder-text: "Profile name"; }
                 HorizontalLayout {
+                    spacing: Theme.space;
                     Button { text: "Save current as profile"; enabled: root.ready; clicked => { root.save-profile(); } }
                     Button { text: "Apply selected profile"; enabled: root.ready && root.selected-profile != ""; clicked => { root.apply-profile(); } }
+                    Rectangle { horizontal-stretch: 1; }
                 }
                 HorizontalLayout {
+                    spacing: Theme.space;
                     Button { text: "Replace selected profile"; enabled: root.ready && root.selected-profile != ""; clicked => { root.replace-profile(); } }
                     Button { text: "Rename profile"; enabled: root.ready && root.selected-profile != ""; clicked => { root.rename-profile(); } }
                     Button { text: "Delete profile"; enabled: root.ready && root.selected-profile != ""; clicked => { root.delete-profile(); } }
+                    Rectangle { horizontal-stretch: 1; }
                 }
             }
-            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            if root.storage != "": Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
             if root.section == 0: Text { text: "New/Open retain current rules. Reset saves Groups with all types enabled and keeps the last valid profiles, or an empty list if none were loaded."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.message; wrap: word-wrap; min-height: 34px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             if root.section == 0: HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Reload defaults"; clicked => { root.reload(); } }

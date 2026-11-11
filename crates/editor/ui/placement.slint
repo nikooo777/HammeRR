@@ -23,11 +23,11 @@ export component PlacementWindow inherits Window {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
         VerticalLayout {
             padding: Theme.space-xl;spacing:14px;
-            Text {text:"Place selection on a surface";font-size: Theme.font-display;}
+            Text {text:"Place selection on a surface";font-size: Theme.font-display;font-weight:600;}
             Text {text:root.selection+" · selected objects move together";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
-                Text {text:"Target";vertical-alignment:center;width:70px;}
+                Text {text:"Target";vertical-alignment:center;width:70px;color:Theme.text-muted;}
                 ComboBox {horizontal-stretch:1;model:["Floor","Ceiling","Pick surface","Snap selected corner"];current-index<=>root.method;selected=>{if root.method==3{root.align=false;root.offset="0";}root.invalidate();}}
             }
             if root.method==3:VerticalLayout {
@@ -39,7 +39,7 @@ export component PlacementWindow inherits Window {
             }
             HorizontalLayout {
                 spacing:10px;
-                Text {text:"Offset";vertical-alignment:center;width:70px;}
+                Text {text:"Offset";vertical-alignment:center;width:70px;color:Theme.text-muted;}
                 LineEdit {width:110px;enabled:root.method!=3;text<=>root.offset;input-type:decimal;edited=>{root.invalidate();}}
                 Text {text:"units away from surface";vertical-alignment:center;color:Theme.text-muted;}
             }
@@ -49,15 +49,16 @@ export component PlacementWindow inherits Window {
                 spacing:10px;
                 Button {text:root.method==3 ? "Pick target corner" : root.method==2 ? "Pick surface" : "Preview placement";clicked=>{root.preview();}}
                 Button {text:"Frame preview";enabled:root.ready;clicked=>{root.frame();}}
+                Rectangle {horizontal-stretch:1;}
             }
-            Text {text:root.summary;wrap:word-wrap;color:Theme.text;}
+            if root.summary!="": Text {text:root.summary;wrap:word-wrap;color:Theme.text;}
             Rectangle {vertical-stretch:1;}
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:30px;}
+            if root.message!="": Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Button {text:"Apply placement";enabled:root.ready;clicked=>{root.apply();}}
+                Button {text:"Apply placement";primary:true;enabled:root.ready;clicked=>{root.apply();}}
             }
         }
     }

@@ -77,18 +77,18 @@ export component ExternalComparisonWindow inherits Window {
                 Button { text: "Previous page"; enabled: root.previous && !root.busy && root.owned; clicked => { root.page(-1); } }
                 Button { text: "Next page"; enabled: root.next && !root.busy && root.owned; clicked => { root.page(1); } }
                 Rectangle { horizontal-stretch: 1; }
-            }
-            Text { text: "Actions use every unambiguous current object matching these filters, across all pages. External-only and ambiguous rows have no current action. Each request rechecks the original external file; captured rows are not continuously watched. Map settings and expanded instances are outside this comparison."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
-            HorizontalLayout {
-                spacing: 8px;
-                ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; enabled: !root.busy; }
+                ComboBox { width: 120px; model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; enabled: !root.busy; accessible-label: "Selection mode"; }
                 Button { text: "Select current matches"; enabled: root.can-act && !root.busy && root.owned; clicked => { root.select-current(); } }
                 Button { text: "Frame current matches"; enabled: root.can-act && !root.busy && root.owned; clicked => { root.frame-current(); } }
+            }
+            Text { text: "Actions use every unambiguous current object matching these filters, across all pages. External-only and ambiguous rows have no current action. Each request rechecks the original external file; captured rows are not continuously watched. Map settings and expanded instances are outside this comparison."; wrap: word-wrap; color: Theme.text-muted; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Button { text: "Cancel"; enabled: root.active && root.owned; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Review shared comparison"; enabled: root.active && !root.busy && !root.owned; clicked => { root.review(); } }
-                Button { text: "Cancel"; enabled: root.active && root.owned; clicked => { root.cancel(); } }
-                Button { text: "Close"; clicked => { root.close-dialog(); } }
             }
         }
     }

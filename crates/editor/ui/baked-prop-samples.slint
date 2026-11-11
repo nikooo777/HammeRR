@@ -108,10 +108,10 @@ export component BakedPropSamplesWindow inherits Window {
             MutedText { text: "Closing keeps the guide. Use Clear guide to remove it."; font-size: Theme.font-small; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Show sample guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
-                Button { text: "Clear guide"; enabled: root.can-clear-guide; clicked => { root.clear-guide(); } }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Cancel"; clicked => { root.close-dialog(); } }
+                Button { text: "Clear guide"; enabled: root.can-clear-guide; clicked => { root.clear-guide(); } }
+                Button { text: "Show sample guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
                 Button { text: "Frame sample"; primary: true; enabled: root.can-frame; clicked => { root.frame-sample(); } }
             }
         }

@@ -63,21 +63,23 @@ export component HollowWindow inherits Window {
                     CheckBox { text: face.label; checked: face.open; toggled => { root.choose-opening(face.key); } }
                 }
             }
-            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 if root.cavities > 1: Text { text: "Cavity"; vertical-alignment: center; }
                 if root.cavities > 1: SpinBox { minimum: 1; maximum: max(1,root.cavities); value <=> root.cavity; }
                 Button { text: "Look inside"; enabled: root.token != ""; clicked => { root.look-inside(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview walls"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
-                Button { text: "Create walls"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Create walls"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

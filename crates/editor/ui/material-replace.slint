@@ -37,51 +37,61 @@ export component MaterialReplaceWindow inherits Window {
             HorizontalLayout {
                 spacing: 12px;
                 Rectangle {
-                    width: 80px; height: 80px; background: Theme.hover; border-radius: 6px;
+                    width: 80px; height: 80px; background: Theme.field; border-radius: 6px; border-width: 1px; border-color: Theme.border;
                     source-thumbnail := Image { width: parent.width; height: parent.height; source: root.source-preview; image-fit: contain; }
                 }
                 VerticalLayout {
                     spacing: 6px;
+                    alignment: center;
                     Text { text: "Find this material"; font-weight: 600; }
-                    LineEdit { text <=> root.source; placeholder-text: "brick/brickwall001a"; edited => { root.search-edited(); } accepted => { root.find(); } }
-                    Button { text: "Choose source…"; clicked => { root.browse(false); } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        LineEdit { text <=> root.source; placeholder-text: "brick/brickwall001a"; accessible-label: "Find this material"; edited => { root.search-edited(); } accepted => { root.find(); } }
+                        Button { text: "Choose source…"; clicked => { root.browse(false); } }
+                    }
                 }
             }
             HorizontalLayout {
                 spacing: 12px;
-                Text { text: "Search in"; vertical-alignment: center; }
-                ComboBox { model: ["Whole map", "Selected objects", "Selected faces"]; current-index <=> root.scope; selected => { root.search-edited(); } }
+                Text { text: "Search in"; vertical-alignment: center; color: Theme.text-muted; }
+                ComboBox { width: 200px; model: ["Whole map", "Selected objects", "Selected faces"]; current-index <=> root.scope; selected => { root.search-edited(); } }
                 CheckBox { text: "Include hidden faces"; checked <=> root.include-hidden; toggled => { root.search-edited(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 spacing: 12px;
                 Button { text: "Find faces"; clicked => { root.find(); } }
                 Button { text: "Select matches"; enabled: root.ready; clicked => { root.select-matches(); } }
-                Text { text: "Exact path · ignores case"; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: "Exact path · ignores case"; color: Theme.text-muted; vertical-alignment: center; horizontal-stretch: 1; }
             }
-            Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
-            Rectangle { height: 1px; background: Theme.control-strong; }
+            if root.summary != "": Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
+            Rectangle { height: 1px; background: Theme.border; }
             HorizontalLayout {
                 spacing: 12px;
                 Rectangle {
-                    width: 80px; height: 80px; background: Theme.hover; border-radius: 6px;
+                    width: 80px; height: 80px; background: Theme.field; border-radius: 6px; border-width: 1px; border-color: Theme.border;
                     replacement-thumbnail := Image { width: parent.width; height: parent.height; source: root.replacement-preview; image-fit: contain; }
                 }
                 VerticalLayout {
                     spacing: 6px;
+                    alignment: center;
                     Text { text: "Replace with"; font-weight: 600; }
-                    LineEdit { text <=> root.replacement; placeholder-text: "Choose the new material"; edited => { root.replacement-edited(); } }
-                    Button { text: "Choose replacement…"; clicked => { root.browse(true); } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        LineEdit { text <=> root.replacement; placeholder-text: "Choose the new material"; accessible-label: "Replace with"; edited => { root.replacement-edited(); } }
+                        Button { text: "Choose replacement…"; clicked => { root.browse(true); } }
+                    }
                 }
             }
             Text { text: "UV placement and face lighting stay as authored. Hidden faces remain hidden."; color: Theme.text-muted; wrap: word-wrap; }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview replacement"; enabled: root.ready; clicked => { root.preview-edit(); } }
-                Button { text: "Replace faces"; enabled: root.ready && root.can-apply; clicked => { root.apply(); } }
+                Button { text: "Replace faces"; primary: true; enabled: root.ready && root.can-apply; clicked => { root.apply(); } }
             }
         }
     }

@@ -99,6 +99,7 @@ export component SoundBrowserWindow inherits Window {
                         spacing:8px;
                         Button {text:"Play";enabled:root.can-apply;clicked=>{root.play();}}
                         Button {text:"Stop";enabled:root.can-stop;clicked=>{root.stop();}}
+                        Rectangle {horizontal-stretch:1;}
                     }
                     if root.playback != "":Text {text:root.playback;wrap:word-wrap;color:Theme.text-muted;}
                     Text {text:"Up to 10 seconds · no game mixing or distance effects";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}

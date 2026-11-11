@@ -29,14 +29,15 @@ export component EntityPlacementWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 14px;
-            Text { text: "Place a point entity on a surface"; font-size: Theme.font-display; }
-            Text { text: "Entity · " + root.classname; wrap: word-wrap; }
+            Text { text: "Place a point entity on a surface"; font-size: Theme.font-display; font-weight: 600; }
+            if root.classname != "": Text { text: "Entity · " + root.classname; wrap: word-wrap; }
             Text { text: "Pick a visible brush, terrain or model surface. Review the entity bounds before applying."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 10px;
-                Text { text: "Offset"; vertical-alignment: center; }
-                LineEdit { width: 120px; text <=> root.offset; input-type: decimal; edited => { root.invalidate(); } }
-                Text { text: "units away from surface"; vertical-alignment: center; }
+                Text { text: "Offset"; vertical-alignment: center; color: Theme.text-muted; }
+                LineEdit { width: 120px; text <=> root.offset; input-type: decimal; accessible-label: "Offset"; edited => { root.invalidate(); } }
+                Text { text: "units away from surface"; vertical-alignment: center; color: Theme.text-muted; }
+                Rectangle { horizontal-stretch: 1; }
             }
             CheckBox { text: "Align local up to surface"; checked <=> root.align; toggled => { root.invalidate(); } }
             CheckBox { text: "Snap along surface · grid " + root.grid; checked <=> root.snap; toggled => { root.invalidate(); } }
@@ -44,15 +45,16 @@ export component EntityPlacementWindow inherits Window {
                 spacing: 10px;
                 Button { text: "Pick surface"; enabled: root.owned; clicked => { root.pick(); } }
                 if root.shared-draft: Button { text: "Review shared placement"; clicked => { root.review(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 40px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply entity"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
+                Button { text: "Apply entity"; primary: true; enabled: root.ready && root.owned; clicked => { root.apply(); } }
             }
         }
     }

@@ -62,6 +62,7 @@ export component ReferenceImagesWindow inherits Window {
                         Button { text: "Add image"; clicked => { root.add(); } }
                         Button { text: "Reload image"; enabled: root.selected; clicked => { root.reload(); } }
                         Button { text: "Delete image"; enabled: root.selected; clicked => { root.delete(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     if root.source-status != "": Text { text: root.source-status; color: Theme.text-muted; wrap: word-wrap; }
                     FieldRow { inset: false; label: "Position XYZ"; label-width: 108px; LineEdit { text <=> root.position; accessible-label: "Reference image position XYZ"; } }
@@ -71,10 +72,11 @@ export component ReferenceImagesWindow inherits Window {
                         Button { text: "Top plane"; clicked => { root.rotation = "0 0 0"; } }
                         Button { text: "Front plane"; clicked => { root.rotation = "90 0 0"; } }
                         Button { text: "Side plane"; clicked => { root.rotation = "90 90 0"; } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     FieldRow { inset: false; label: "Width / height"; label-width: 108px; LineEdit { text <=> root.size; accessible-label: "Reference image width and height in units"; } }
                     FieldRow { inset: false; label: "Opacity 0–1"; label-width: 108px; LineEdit { text <=> root.image-opacity; accessible-label: "Reference image opacity"; } }
-                    HorizontalLayout { spacing: Theme.space-lg; CheckBox { text: "Flip horizontally"; checked <=> root.flip-x; } CheckBox { text: "Flip vertically"; checked <=> root.flip-y; } }
+                    HorizontalLayout { spacing: Theme.space-lg; CheckBox { text: "Flip horizontally"; checked <=> root.flip-x; } CheckBox { text: "Flip vertically"; checked <=> root.flip-y; } Rectangle { horizontal-stretch: 1; } }
                     HorizontalLayout {
                         spacing: Theme.space-lg;
                         Text { text: "Show in"; color: Theme.text-muted; vertical-alignment: center; }
@@ -82,18 +84,19 @@ export component ReferenceImagesWindow inherits Window {
                         CheckBox { text: "Front"; checked <=> root.front; }
                         CheckBox { text: "Side"; checked <=> root.side; }
                         CheckBox { text: "Perspective"; checked <=> root.perspective; }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     MutedText { text: "Position and size use Source units; rotation uses XYZ Euler degrees. Plane presets change the rotation fields. Apply settings to keep changes."; }
                     MutedText { text: "Images stay external and editor-only. Save the map to keep references. Missing or changed PNG files require Reload image; they are never substituted or packaged into the game."; }
                 }
             }
-            Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Frame image"; enabled: root.selected; clicked => { root.frame(); } }
-                Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply settings"; enabled: root.selected; clicked => { root.apply(); } }
                 Button { text: "Close"; clicked => { root.dismiss(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Frame image"; enabled: root.selected; clicked => { root.frame(); } }
+                Button { text: "Apply settings"; primary: true; enabled: root.selected; clicked => { root.apply(); } }
             }
         }
     }

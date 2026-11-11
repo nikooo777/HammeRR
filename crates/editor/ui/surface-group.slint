@@ -45,36 +45,45 @@ export component SurfaceGroupWindow inherits Window {
             }
             if root.projection == 0: HorizontalLayout {
                 spacing: 12px;
-                Text { text: "Texture direction"; vertical-alignment: center; }
+                Text { text: "Texture direction"; vertical-alignment: center; color: Theme.text-muted; }
                 ComboBox { model: root.references; current-index <=> root.reference-index; selected => { root.edited(); } }
             }
             HorizontalLayout {
                 spacing: 12px;
-                Image { width: 80px; height: 80px; source: root.material-preview; image-fit: contain; visible: root.material == root.preview-material; }
+                Rectangle {
+                    width: 80px; height: 80px;
+                    background: Theme.field; border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                    if root.material == root.preview-material: Image { width: parent.width; height: parent.height; source: root.material-preview; image-fit: contain; }
+                }
                 VerticalLayout {
                     spacing: 6px;
+                    alignment: center;
                     Text { text: "Shared material"; font-weight: 600; }
-                    LineEdit { text <=> root.material; placeholder-text: "Choose one material for these faces"; edited => { root.edited(); } accepted => { root.load-material(); } }
-                    Button { text: "Choose material…"; clicked => { root.browse(); } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        LineEdit { text <=> root.material; placeholder-text: "Choose one material for these faces"; accessible-label: "Shared material"; edited => { root.edited(); } accepted => { root.load-material(); } }
+                        Button { text: "Choose material…"; clicked => { root.browse(); } }
+                    }
                 }
             }
             Text { text: "Tiles across the whole surface"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 12px;
-                Text { text: "Horizontal"; vertical-alignment: center; }
+                Text { text: "Horizontal"; vertical-alignment: center; color: Theme.text-muted; }
                 LineEdit { text <=> root.repeats-u; input-type: decimal; edited => { root.edited(); } }
-                Text { text: "Vertical"; vertical-alignment: center; }
+                Text { text: "Vertical"; vertical-alignment: center; color: Theme.text-muted; }
                 LineEdit { text <=> root.repeats-v; input-type: decimal; edited => { root.edited(); } }
             }
             Text { text: "1 × 1 fits one tile across the combined bounds. More tiles make the texture smaller; fractions make it larger."; color: Theme.text-muted; wrap: word-wrap; }
             if root.projection == 1: Text { text: "Projection follows the view direction without perspective distortion. Preview again after moving the camera."; color: Theme.text-muted; wrap: word-wrap; }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview mapping"; enabled: !root.stale; clicked => { root.preview-edit(); } }
-                Button { text: "Apply mapping"; enabled: !root.stale && root.can-apply; clicked => { root.apply(); } }
+                Button { text: "Apply mapping"; primary: true; enabled: !root.stale && root.can-apply; clicked => { root.apply(); } }
             }
         }
     }

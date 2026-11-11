@@ -106,14 +106,19 @@ export component ContentProfilesWindow inherits Window {
                             if root.rows.length == 0: MutedText { text: "No saved profiles."; }
                         }
                     }
-                    Button { text: "Use current content"; enabled: !root.busy; clicked => { root.use-current(); } }
-                    Button { text: "Reload"; enabled: !root.busy; clicked => { root.reload(); } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Use current content"; enabled: !root.busy; clicked => { root.use-current(); } }
+                        Button { text: "Reload"; enabled: !root.busy; clicked => { root.reload(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
                 }
                 ScrollView {
                     content-width: self.width;
                     horizontal-scrollbar-policy: always-off;
                     horizontal-stretch: 1;
                     VerticalLayout {
+                        alignment: start;
                         padding-right: Theme.space-lg;
                         spacing: Theme.space-lg;
                         if root.selection != "": Text { text: root.selection; color: Theme.text; font-weight: 600; wrap: word-wrap; }
@@ -144,12 +149,14 @@ export component ContentProfilesWindow inherits Window {
                             spacing: Theme.space;
                             Button { text: "Use current Build settings"; enabled: !root.busy; clicked => { root.capture-build(); } }
                             Button { text: "Build settings…"; enabled: !root.busy; clicked => { root.build-settings(); } }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                         MutedText { text: "Edit shared Build settings, then capture them here. Save new and Replace selected save these fields; Apply uses the selected saved profile."; }
                         HorizontalLayout {
                             spacing: Theme.space;
                             Button { text: "Save new"; enabled: root.can-save; clicked => { root.save-new(); } }
                             Button { text: "Replace selected"; enabled: root.can-save && root.selected-id != ""; clicked => { root.replace(); } }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                         Rectangle { vertical-stretch: 1; }
                     }

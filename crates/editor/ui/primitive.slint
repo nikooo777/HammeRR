@@ -108,9 +108,14 @@ export component PrimitiveWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 12px;
-                Image { width: 66px; height: 66px; source: root.material-image; image-fit: contain; }
+                Rectangle {
+                    width: 66px; height: 66px;
+                    background: Theme.field; border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border;
+                    Image { width: parent.width; height: parent.height; source: root.material-image; image-fit: contain; }
+                }
                 VerticalLayout {
                     spacing: 6px;
+                    alignment: center;
                     Text { text: "Material on new faces"; font-weight: 600; }
                     HorizontalLayout {
                         spacing: 8px;
@@ -120,7 +125,7 @@ export component PrimitiveWindow inherits Window {
                 }
             }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
             if root.actual-bounds != "": Text { text: root.actual-bounds; color: Theme.text-faint; wrap: word-wrap; }
             if root.feedback != "": Text { text: root.feedback; color: Theme.warning; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
@@ -128,9 +133,10 @@ export component PrimitiveWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Preview shape"; enabled: root.can-preview; clicked => { root.preview-shape(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Focus preview"; enabled: root.token != ""; clicked => { root.focus-preview(); } }
-                Button { text: "Add shape"; enabled: root.token != ""; clicked => { root.apply(); } }
+                Button { text: "Preview shape"; enabled: root.can-preview; clicked => { root.preview-shape(); } }
+                Button { text: "Add shape"; primary: true; enabled: root.token != ""; clicked => { root.apply(); } }
             }
         }
     }

@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import { Button, LineEdit, ScrollView } from "widgets.slint";
 
 export struct SavedViewRow { id: string, name: string, projection: string }
@@ -35,20 +36,24 @@ export component SavedViewsWindow inherits Window {
         Text { text: "Return to named camera positions. Views are stored in this map."; wrap: word-wrap; color: Theme.text-muted; }
         ScrollView {
             vertical-stretch: 1;
+            content-width: self.visible-width;
             VerticalLayout {
-                spacing: 6px;
+                spacing: Theme.space-xs;
+                alignment: start;
+                padding-right: Theme.space-lg;
                 if root.views.length == 0: Text { text: "No saved views yet. Name the current view below."; color: Theme.text-muted; wrap: word-wrap; }
-                for view in root.views: Rectangle {
-                    height: 48px;
-                    background: view.id == root.selected-id ? Theme.selection : Theme.control-strong;
-                    border-radius: 6px;
+                for view in root.views: SelectableRow {
+                    height: 40px;
+                    label: view.name;
+                    selected: view.id == root.selected-id;
+                    clicked => { root.choose(view.id); }
                     HorizontalLayout {
                         padding-left: 12px;
                         padding-right: 12px;
-                        Text { text: view.name; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        spacing: Theme.space;
+                        Text { text: view.name; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                         Text { text: view.projection; vertical-alignment: center; color: Theme.text-muted; }
                     }
-                    TouchArea { clicked => { root.choose(view.id); } }
                 }
             }
         }
@@ -58,10 +63,10 @@ export component SavedViewsWindow inherits Window {
             Button { text: "Delete view"; enabled: root.selected-id != "" && root.editable; clicked => { root.delete-view(); } }
             Rectangle { horizontal-stretch: 1; }
         }
-        Text { text: root.current; color: Theme.text-muted; wrap: word-wrap; }
+        if root.current != "": Text { text: root.current; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 10px;
-            Text { text: "View name"; vertical-alignment: center; }
+            Text { text: "View name"; vertical-alignment: center; color: Theme.text-muted; }
             LineEdit { text <=> root.view-name; placeholder-text: "Courtyard entrance"; horizontal-stretch: 1; }
         }
         HorizontalLayout {
@@ -69,11 +74,13 @@ export component SavedViewsWindow inherits Window {
             Button { text: "Save current as new"; enabled: root.editable && root.view-name != ""; clicked => { root.save-new(); } }
             Button { text: "Replace with current"; enabled: root.editable && root.selected-id != "" && root.view-name != ""; clicked => { root.replace-view(); } }
             Button { text: "Rename"; enabled: root.editable && root.selected-id != "" && root.view-name != ""; clicked => { root.rename-view(); } }
+            Rectangle { horizontal-stretch: 1; }
         }
-        Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+        if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
         HorizontalLayout {
-            Text { text: "Map undo restores changed views. Save the VMF to keep them."; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; color: Theme.text-muted; }
-            Button { text: "Cancel / close"; clicked => { root.close-dialog(); } }
+            spacing: Theme.space-lg;
+            Text { text: "Map undo restores changed views. Save the VMF to keep them."; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; color: Theme.text-faint; font-size: Theme.font; }
+            Button { text: "Close"; clicked => { root.close-dialog(); } }
         }
     }
 }

@@ -5,7 +5,7 @@ export component ModelWindow inherits Window {
     background: Theme.panel;
     title:"Model details";
     preferred-width:620px;
-    preferred-height:min(850px, 340px + root.materials.length * 20px + root.bodygroups.length * 40px + (root.attachments.length>0 ? 170px : 0px));
+    preferred-height:min(850px, 380px + root.materials.length * 20px + root.bodygroups.length * 40px + (root.attachments.length>0 ? 170px : 0px));
     in property <string> model-path;
     in property <string> geometry;
     in property <string> skin-info;
@@ -29,11 +29,12 @@ export component ModelWindow inherits Window {
         key-pressed(event)=>{if event.text==Key.Escape {root.cancel();accept} else {reject}}
         VerticalLayout {
             padding: Theme.space-xl;spacing:12px;
-            Text {text:root.model-path;wrap:word-wrap;font-size: Theme.font-heading;}
-            Text {text:root.geometry;wrap:word-wrap;}
-            Text {text:root.skin-info;wrap:word-wrap;}
-            Text {text:root.bounds;wrap:word-wrap;color:Theme.text-muted;}
-            Text {text:"Skin materials";}
+            Text {text:"Model details";font-size: Theme.font-display;font-weight:600;}
+            if root.model-path!="": Text {text:root.model-path;wrap:word-wrap;color:Theme.text-muted;}
+            if root.geometry!="": Text {text:root.geometry;wrap:word-wrap;}
+            if root.skin-info!="": Text {text:root.skin-info;wrap:word-wrap;}
+            if root.bounds!="": Text {text:root.bounds;wrap:word-wrap;color:Theme.text-muted;}
+            Text {text:"Skin materials";font-weight:600;}
             ListView {vertical-stretch:1;for material in root.materials:Text {text:material;wrap:word-wrap;color:Theme.text-muted;}}
             if root.bodygroups.length > 0:VerticalLayout {
                 spacing:6px;
@@ -41,22 +42,24 @@ export component ModelWindow inherits Window {
             }
             if root.attachments.length > 0:VerticalLayout {
                 spacing:8px;
-                Text {text:"Attachment";}
+                Text {text:"Attachment";font-weight:600;}
                 ComboBox {model:root.attachments;current-index<=>root.attachment-index;selected=>{root.attachment-changed();}}
                 Text {text:root.attachment-info;wrap:word-wrap;color:Theme.text-muted;}
                 HorizontalLayout {
                     spacing:8px;
                     CheckBox {text:"Show attachment axes";checked<=>root.show-axes;toggled=>{root.show-attachment();}}
                     Button {text:"Frame attachment";clicked=>{root.frame-attachment();}}
+                    Rectangle {horizontal-stretch:1;}
                 }
                 Text {text:"Reference pose · X red · Y green · Z blue";font-size: Theme.font;color:Theme.text-faint;}
             }
-            Text {text:root.pose-info;wrap:word-wrap;font-size: Theme.font;color:Theme.text-muted;}
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-faint;}
+            if root.pose-info!="": Text {text:root.pose-info;wrap:word-wrap;font-size: Theme.font;color:Theme.text-muted;}
+            if root.message!="": Text {text:root.message;wrap:word-wrap;color:Theme.text-faint;}
             HorizontalLayout {
                 spacing:8px;
-                Button {text:"Cancel";clicked=>{root.cancel();}}
                 Button {text:"Reload models";clicked=>{root.reload();}}
+                Rectangle {horizontal-stretch:1;}
+                Button {text:"Close";clicked=>{root.cancel();}}
             }
         }
     }

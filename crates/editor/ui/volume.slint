@@ -37,47 +37,54 @@ export component VolumeWindow inherits Window {
             Text { text: "Choose objects or faces inside a box in world space."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
-                ComboBox { model: ["Objects", "Faces"]; current-index <=> root.target; selected => { root.edited(); } }
-                ComboBox { model: ["Intersects the box", "Fully inside the box"]; current-index <=> root.rule; selected => { root.edited(); } }
+                ComboBox { width: 160px; model: ["Objects", "Faces"]; current-index <=> root.target; accessible-label: "Volume target"; selected => { root.edited(); } }
+                ComboBox { width: 220px; model: ["Intersects the box", "Fully inside the box"]; current-index <=> root.rule; accessible-label: "Volume rule"; selected => { root.edited(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
             Text { text: "Box corners · world units"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;
                 Text { width: 80px; text: ""; }
-                Text { horizontal-stretch: 1; text: "X"; }
-                Text { horizontal-stretch: 1; text: "Y"; }
-                Text { horizontal-stretch: 1; text: "Z · height"; }
+                Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
+                Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
+                Text { horizontal-stretch: 1; text: "Z · height"; color: Theme.axis-z; }
             }
             HorizontalLayout {
                 spacing: 10px;
-                Text { width: 80px; text: "Minimum"; vertical-alignment: center; }
+                Text { width: 80px; text: "Minimum"; vertical-alignment: center; color: Theme.text-muted; }
                 LineEdit { text <=> root.min-x; input-type: decimal; edited => { root.edited(); } }
                 LineEdit { text <=> root.min-y; input-type: decimal; edited => { root.edited(); } }
                 LineEdit { text <=> root.min-z; input-type: decimal; edited => { root.edited(); } }
             }
             HorizontalLayout {
                 spacing: 10px;
-                Text { width: 80px; text: "Maximum"; vertical-alignment: center; }
+                Text { width: 80px; text: "Maximum"; vertical-alignment: center; color: Theme.text-muted; }
                 LineEdit { text <=> root.max-x; input-type: decimal; edited => { root.edited(); } }
                 LineEdit { text <=> root.max-y; input-type: decimal; edited => { root.edited(); } }
                 LineEdit { text <=> root.max-z; input-type: decimal; edited => { root.edited(); } }
             }
-            Button { text: root.bounds-label; clicked => { root.use-bounds(); } }
             HorizontalLayout {
-                spacing: 12px;
-                Text { text: "When applied"; vertical-alignment: center; }
-                ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle matches"]; current-index <=> root.mode; selected => { root.edited(); } }
+                Text { width: 90px; }
+                if root.bounds-label != "": Button { text: root.bounds-label; clicked => { root.use-bounds(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
-            Text { text: "Blue lines mark the box; highlights show the resulting selection. Hidden geometry is skipped. Terrain uses its supporting brush faces."; color: Theme.text-muted; wrap: word-wrap; }
-            Text { text: root.message; wrap: word-wrap; }
-            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;
+                Text { width: 80px; text: "When applied"; vertical-alignment: center; color: Theme.text-muted; }
+                ComboBox { width: 220px; model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle matches"]; current-index <=> root.mode; selected => { root.edited(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.summary != "": Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
+            Text { text: "Blue lines mark the box; highlights show the resulting selection. Hidden geometry is skipped. Terrain uses its supporting brush faces."; color: Theme.text-muted; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Frame box"; enabled: root.ready; clicked => { root.frame(); } }
                 Button { text: "Preview matches"; clicked => { root.preview-edit(); } }
-                Button { text: "Select matches"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Select matches"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

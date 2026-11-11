@@ -31,7 +31,7 @@ A destination already listed under another path requires resolving that duplicat
 - **Reload saved list** reads outside changes and checks availability.
 - **Remove from list** forgets the chosen entry.
 - **Confirm clear list → Clear list** forgets all entries.
-- **Cancel / close** closes the dialog and cancels its pending work.
+- **Close** closes the dialog and cancels its pending work.
 
 These actions do not delete map files. Successful Open/Save moves the path to the front.
 Changes to current content, definitions, game paths and build settings update the current map's context.

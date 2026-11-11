@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView, TextEdit } from "widgets.slint";
-import { FieldRow } from "kit.slint";
+import { FieldRow, SelectableRow } from "kit.slint";
 
 export struct VisibilityCategoryRow { id: string, label: string, detail: string, excluded: bool, available: bool }
 export struct VisibilityExclusionRow { index: int, summary: string }
@@ -138,7 +138,7 @@ export component WorkingRegionWindow inherits Window {
                         min-x <=> root.min-x; min-y <=> root.min-y; min-z <=> root.min-z;
                         max-x <=> root.max-x; max-y <=> root.max-y; max-z <=> root.max-z;
                     }
-                    Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } }
+                    HorizontalLayout { Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } } Rectangle { horizontal-stretch: 1; } }
                     CheckBox { text: "Center box on camera"; checked <=> root.follow-camera; }
                     Text { text: "Keeps the entered box dimensions and moves its center with the camera while the box is enabled."; wrap: word-wrap; color: Theme.text-muted; }
                     if root.effective-box != "": Text { text: root.effective-box; wrap: word-wrap; color: Theme.text-faint; }
@@ -233,7 +233,7 @@ export component WorkingRegionWindow inherits Window {
                     for exclusion in root.exclusions: VerticalLayout {
                         spacing: Theme.space;
                         Text { text: exclusion.summary; wrap: word-wrap; color: Theme.text; }
-                        Button { text: "Remove exclusion"; clicked => { root.remove-exclusion(exclusion.index); } }
+                        HorizontalLayout { Button { text: "Remove exclusion"; clicked => { root.remove-exclusion(exclusion.index); } } Rectangle { horizontal-stretch: 1; } }
                         Rectangle { height: 1px; background: Theme.border; }
                     }
                     Text { text: "Removing an exclusion applies immediately. Other overlapping rules, spatial filters and hidden state can still exclude its objects. Add custom exclusions from Box and filters."; wrap: word-wrap; color: Theme.text-muted; }
@@ -243,16 +243,19 @@ export component WorkingRegionWindow inherits Window {
                     spacing: Theme.space-lg;
                     Text { text: "Saved rule profiles"; color: Theme.text; font-weight: 600; }
                     Text { text: "Profiles store the applied inclusion filter and exclusions in this map. Save, replace, rename and delete are undoable map edits. Apply selected profile changes rules immediately and keeps spatial settings."; wrap: word-wrap; color: Theme.text-muted; }
-                    Text { text: root.profile-message; wrap: word-wrap; color: Theme.warning; }
-                    Text { text: root.profile-summary; wrap: word-wrap; color: Theme.text-muted; }
-                    for profile in root.profiles: Rectangle {
-                        background: root.selected-profile == profile.name ? Theme.selection : Theme.panel;
+                    if root.profile-message != "": Text { text: root.profile-message; wrap: word-wrap; color: Theme.warning; }
+                    if root.profile-summary != "": Text { text: root.profile-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    for profile in root.profiles: SelectableRow {
                         height: profile-row.preferred-height;
+                        label: profile.name;
+                        selected: root.selected-profile == profile.name;
+                        enabled: root.profiles-ready;
+                        clicked => { root.choose-profile(profile.name); }
                         profile-row := VerticalLayout {
                             padding: Theme.space;
                             spacing: Theme.space-xs;
-                            Button { text: profile.name; enabled: root.profiles-ready; clicked => { root.choose-profile(profile.name); } }
-                            Text { text: profile.detail; color: Theme.text-muted; wrap: word-wrap; }
+                            Text { text: profile.name; color: Theme.text; overflow: elide; }
+                            Text { text: profile.detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
                         }
                     }
                     if root.selected-profile != "": Text { text: root.selected-profile-detail; wrap: word-wrap; color: Theme.text-muted; }
@@ -264,8 +267,9 @@ export component WorkingRegionWindow inherits Window {
                         spacing: Theme.space;
                         Button { text: "Save applied as profile"; enabled: root.profiles-ready; clicked => { root.save-profile(false); } }
                         Button { text: "Apply selected profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.apply-profile(); } }
+                        Button { text: "Replace selected profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.save-profile(true); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    Button { text: "Replace selected profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.save-profile(true); } }
                     HorizontalLayout {
                         spacing: Theme.space;
                         Button { text: "Rename profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.rename-profile(); } }
@@ -277,13 +281,13 @@ export component WorkingRegionWindow inherits Window {
                 }
             }
             Text { text: "Apply updates box, distance and inclusion. Other action buttons take effect immediately; Cancel closes this panel."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: Theme.space;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Clear working region"; clicked => { root.clear(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Cancel"; clicked => { root.cancel(); } }
-                Button { text: "Apply"; clicked => { root.apply(); } }
+                Button { text: "Apply"; primary: true; clicked => { root.apply(); } }
             }
         }
     }

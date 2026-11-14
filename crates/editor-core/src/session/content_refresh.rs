@@ -380,7 +380,7 @@ impl Session {
                 "Watch configuration changed during reload; previous content retained".into(),
             );
         }
-        let prepared = result?;
+        let mut prepared = result?;
         prepared.candidate.verify()?;
         if let Some(watch) = &prepared.watch {
             let snapshot = watch.snapshot();
@@ -392,6 +392,10 @@ impl Session {
             }
         }
         request.control.checkpoint()?;
+        prepared.candidate.game = self.prepare_map_asset_game(
+            &prepared.candidate.game,
+            self.document.vmf().assets.as_deref(),
+        )?;
         self.adopt_refreshed_content(prepared.candidate);
         self.content_sources_changed(Some(WatchPublication {
             stamp: request.watch,

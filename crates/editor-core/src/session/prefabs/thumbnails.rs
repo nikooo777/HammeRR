@@ -341,11 +341,7 @@ impl Session {
         };
         let empty = std::collections::HashSet::new();
         let helpers = self.fgd_helper_appearances(&document, &models);
-        let no_assets = source_formats::gamefs::GameFs {
-            game_dir: Default::default(),
-            base_dir: Default::default(),
-            mounts: Vec::new(),
-        };
+        let no_assets = source_formats::gamefs::GameFs::default();
         let mesh = SceneMesh::build_with_helpers_filtered(
             document.vmf(),
             if style == ThumbnailStyle::Textured {

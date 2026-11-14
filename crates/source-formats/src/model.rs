@@ -169,29 +169,7 @@ impl Model {
             &reader,
             reference.as_ref().map_or(&[], |pose| pose.poses.as_slice()),
         )?;
-        let textures = reader.table(0, 204, 208, 64, MAX_MATERIALS)?;
-        budget.array::<String>(textures.len)?;
-        budget.array::<u8>(textures.len * reader::MAX_STRING_BYTES * 3)?;
-        let mut materials = Vec::with_capacity(textures.len);
-        for index in 0..textures.len {
-            budget.checkpoint(index)?;
-            let base = textures.at(index)?;
-            let path = reader.string(reader.relative(base, 0)?)?;
-            let path = crate::gamefs::asset_relative(&path)?;
-            if path.is_empty() {
-                return Err(invalid("MDL texture name cannot be empty"));
-            }
-            materials.push(path);
-        }
-        let directories = reader.table(0, 212, 216, 4, MAX_MATERIALS)?;
-        budget.array::<String>(directories.len)?;
-        budget.array::<u8>(directories.len * reader::MAX_STRING_BYTES * 3)?;
-        let mut material_directories = Vec::with_capacity(directories.len);
-        for index in 0..directories.len {
-            material_directories.push(crate::gamefs::asset_relative(
-                &reader.string(reader.count(directories.at(index)?, mdl.len())?)?,
-            )?);
-        }
+        let (materials, material_directories) = material_names(&reader, mdl.len(), budget)?;
         let skin_refs = reader.count(220, MAX_MATERIALS)?;
         let skin_entries = skin_refs
             .checked_mul(header.skins)
@@ -538,4 +516,68 @@ fn part_bounds(
         }
     }
     Ok(present.then_some([low, high]))
+}
+
+fn material_names(
+    reader: &reader::Reader<'_>,
+    mdl_bytes: usize,
+    budget: &mut hardware::Budget<'_>,
+) -> io::Result<(Vec<String>, Vec<String>)> {
+    let textures = reader.table(0, 204, 208, 64, MAX_MATERIALS)?;
+    budget.array::<String>(textures.len)?;
+    budget.array::<u8>(textures.len * reader::MAX_STRING_BYTES * 3)?;
+    let mut materials = Vec::with_capacity(textures.len);
+    for index in 0..textures.len {
+        budget.checkpoint(index)?;
+        let base = textures.at(index)?;
+        let path = reader.string(reader.relative(base, 0)?)?;
+        let path = crate::gamefs::asset_relative(&path)?;
+        if path.is_empty() {
+            return Err(invalid("MDL texture name cannot be empty"));
+        }
+        materials.push(path);
+    }
+    let directories = reader.table(0, 212, 216, 4, MAX_MATERIALS)?;
+    budget.array::<String>(directories.len)?;
+    budget.array::<u8>(directories.len * reader::MAX_STRING_BYTES * 3)?;
+    let mut material_directories = Vec::with_capacity(directories.len);
+    for index in 0..directories.len {
+        material_directories.push(crate::gamefs::asset_relative(
+            &reader.string(reader.count(directories.at(index)?, mdl_bytes)?)?,
+        )?);
+    }
+    Ok((materials, material_directories))
+}
+
+pub fn material_resources(mdl: &[u8]) -> io::Result<(Vec<String>, Vec<String>)> {
+    ModelHeader::parse(mdl)?;
+    let reader = reader::Reader::new(mdl, 408)?;
+    for offset in [336, 352] {
+        if reader.int(offset)? != 0 {
+            return Err(invalid(
+                "Portable sharing cannot resolve included models or external animation blocks",
+            ));
+        }
+    }
+    let animation = reader.count(348, mdl.len())?;
+    if animation != 0 && !reader.string(animation)?.is_empty() {
+        return Err(invalid(
+            "Portable sharing cannot resolve an external animation name",
+        ));
+    }
+    material_names(&reader, mdl.len(), &mut hardware::Budget::ordinary())
+}
+
+pub fn validate_vtx_material_dependencies(data: &[u8], checksum: i32) -> io::Result<()> {
+    vtx::validate_material_dependencies(data, checksum)
+}
+
+pub fn surface_property_name(mdl: &[u8]) -> io::Result<Option<String>> {
+    let reader = reader::Reader::new(mdl, 408)?;
+    let offset = reader.count(308, mdl.len())?;
+    if offset == 0 {
+        Ok(None)
+    } else {
+        reader.string(offset).map(Some)
+    }
 }

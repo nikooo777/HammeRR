@@ -51,6 +51,17 @@ impl SpanSettings {
     }
 }
 
+pub(super) fn material_name(entity: &Entity) -> Result<String, String> {
+    let material = identifier(entity, "RopeMaterial")?.filter(|name| !name.is_empty());
+    let legacy = integer(entity, "RopeShader", 0)?;
+    let material = material.unwrap_or(match legacy {
+        0 => "cable/cable",
+        1 => "cable/rope",
+        _ => "cable/chain",
+    });
+    Ok(material.to_owned())
+}
+
 pub(super) fn parse(entity: &Entity) -> Result<SpanSettings, String> {
     let nodes = match property(entity, "Type")? {
         None => 5,
@@ -64,13 +75,7 @@ pub(super) fn parse(entity: &Entity) -> Result<SpanSettings, String> {
     if !(0..=15).contains(&subdiv) {
         return Err("Subdiv must fit its authored 4-bit range 0–15".into());
     }
-    let material = identifier(entity, "RopeMaterial")?.filter(|name| !name.is_empty());
-    let legacy = integer(entity, "RopeShader", 0)?;
-    let material = material.unwrap_or(match legacy {
-        0 => "cable/cable",
-        1 => "cable/rope",
-        _ => "cable/chain",
-    });
+    let material = material_name(entity)?;
     let settings = SpanSettings {
         nodes,
         subdiv_authored: subdiv as u8,
@@ -78,7 +83,7 @@ pub(super) fn parse(entity: &Entity) -> Result<SpanSettings, String> {
         slack: integer(entity, "Slack", 0)?,
         width: number(entity, "Width", 2.0)?,
         texture_scale: number(entity, "TextureScale", 4.0)?,
-        material: material.to_owned(),
+        material,
         scroll_speed: number(entity, "ScrollSpeed", 0.0)?,
         dangling: flag(entity, "Dangling")?,
         collide: flag(entity, "Collide")?,

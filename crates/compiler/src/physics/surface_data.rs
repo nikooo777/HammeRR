@@ -68,6 +68,26 @@ pub(super) fn load(
         .ok_or("Brush-model mass requires scripts/surfaceproperties_manifest.txt on the GAME search path")?;
     let text =
         std::str::from_utf8(manifest.bytes()).map_err(|_| "Surface manifest must be UTF-8")?;
+    let paths = definition_paths(text)?;
+    let mut bytes = manifest.bytes().len();
+    let mut files = Vec::with_capacity(paths.len());
+    for name in paths {
+        control.checkpoint()?;
+        let data = sources
+            .read_asset(fs, &name, MAX_TEXT_BYTES.saturating_sub(bytes))
+            .map_err(|error| format!("Cannot read surface definitions {name:?}: {error}"))?
+            .ok_or_else(|| format!("Surface manifest references missing definitions {name:?}"))?;
+        bytes += data.bytes().len();
+        let text = std::str::from_utf8(data.bytes())
+            .map_err(|_| format!("Surface definitions {name:?} must be UTF-8"))?
+            .to_owned();
+        files.push(SurfaceData { name, text });
+    }
+    resolve(&files)?;
+    Ok(files)
+}
+
+pub fn definition_paths(text: &str) -> Result<Vec<String>, String> {
     let nodes = keyvalues::parse_bounded(text, 2, MAX_NODES).map_err(|error| error.to_string())?;
     let [root] = nodes.as_slice() else {
         return Err("Surface manifest needs one surfaceproperties_manifest block".into());
@@ -80,10 +100,8 @@ pub(super) fn load(
         return Err("Surface manifest requires 1–64 definition files".into());
     }
     let mut seen = BTreeSet::new();
-    let mut bytes = manifest.bytes().len();
-    let mut files = Vec::with_capacity(entries.len());
+    let mut paths = Vec::with_capacity(entries.len());
     for entry in entries {
-        control.checkpoint()?;
         let name = entry
             .as_str()
             .filter(|_| entry.key.eq_ignore_ascii_case("file"))
@@ -93,21 +111,9 @@ pub(super) fn load(
         {
             return Err("Surface manifest needs unique bounded file paths".into());
         }
-        let data = sources
-            .read_asset(fs, name, MAX_TEXT_BYTES.saturating_sub(bytes))
-            .map_err(|error| format!("Cannot read surface definitions {name:?}: {error}"))?
-            .ok_or_else(|| format!("Surface manifest references missing definitions {name:?}"))?;
-        bytes += data.bytes().len();
-        let text = std::str::from_utf8(data.bytes())
-            .map_err(|_| format!("Surface definitions {name:?} must be UTF-8"))?
-            .to_owned();
-        files.push(SurfaceData {
-            name: name.to_owned(),
-            text,
-        });
+        paths.push(name.to_owned());
     }
-    resolve(&files)?;
-    Ok(files)
+    Ok(paths)
 }
 
 pub(super) fn resolve(files: &[SurfaceData]) -> Result<BTreeMap<String, Properties>, String> {

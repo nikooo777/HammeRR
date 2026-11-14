@@ -34,6 +34,10 @@ See [Status and limits](status.md) for what is supported today, and the
 <td width="33%" valign="top"><a href="workspace-layout.md"><img src="images/thumbs/workspace-layout.jpg" width="260" alt=""></a><br><a href="workspace-layout.md"><b>Workspace layout</b></a><br>Choose how much space the dock, Agent feed and tool rail use.</td>
 <td width="33%" valign="top"><a href="open-documents.md"><img src="images/thumbs/document-tabs.jpg" width="260" alt=""></a><br><a href="open-documents.md"><b>Document tabs and workspaces</b></a><br>Keep two independent maps open and restore their saved editing contexts.</td>
 </tr>
+<tr>
+<td width="33%" valign="top"><a href="portable-maps.md"><img src="images/thumbs/portable-map-assets.jpg" width="260" alt=""></a><br><a href="portable-maps.md"><b>Portable VMFs</b></a><br>Send one VMF with its compressed custom assets.</td>
+<td width="33%"></td><td width="33%"></td>
+</tr>
 </table>
 
 More in this section:

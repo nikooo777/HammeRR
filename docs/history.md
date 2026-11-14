@@ -28,4 +28,4 @@ The target is the state immediately after that transaction.
 
 ---
 
-[← Open documents](open-documents.md) · [Manual](README.md) · [Keyboard shortcuts →](keyboard-shortcuts.md)
+[← Portable VMFs](portable-maps.md) · [Manual](README.md) · [Keyboard shortcuts →](keyboard-shortcuts.md)

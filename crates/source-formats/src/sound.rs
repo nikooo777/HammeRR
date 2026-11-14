@@ -5,6 +5,7 @@ use crate::{
     keyvalues::{self, Node},
 };
 
+pub const MAX_MANIFEST_SCRIPTS: usize = 128;
 pub const MAX_SCRIPT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_CUES: usize = 8192;
 pub const MAX_VARIANTS: usize = 128;
@@ -70,6 +71,51 @@ pub fn document(text: &str) -> io::Result<Vec<Node>> {
         index += 1;
     }
     keyvalues::parse_lenient(text).map_err(|error| invalid(&error.to_string()))
+}
+
+pub struct ManifestScript {
+    pub path: String,
+    pub preload: bool,
+}
+
+pub fn manifest_scripts(text: &str) -> io::Result<Vec<ManifestScript>> {
+    let nodes = document(text)?;
+    let [root] = nodes.as_slice() else {
+        return Err(invalid(
+            "Sound manifest needs one game_sounds_manifest block",
+        ));
+    };
+    if !root.key.eq_ignore_ascii_case("game_sounds_manifest") {
+        return Err(invalid("Sound manifest root is missing"));
+    }
+    let fields = root
+        .children()
+        .ok_or_else(|| invalid("Sound manifest requires a block"))?;
+    if fields.len() > MAX_MANIFEST_SCRIPTS {
+        return Err(invalid("Sound manifest exceeds 128 scripts"));
+    }
+    fields
+        .iter()
+        .map(|field| {
+            if !field.key.eq_ignore_ascii_case("preload_file")
+                && !field.key.eq_ignore_ascii_case("precache_file")
+            {
+                return Err(invalid("Unsupported sound manifest declaration"));
+            }
+            let path = asset_relative(
+                field
+                    .as_str()
+                    .ok_or_else(|| invalid("Sound script path must be a string"))?,
+            )?;
+            if !path.starts_with("scripts/") || !path.ends_with(".txt") {
+                return Err(invalid("Sound script paths require scripts/*.txt"));
+            }
+            Ok(ManifestScript {
+                path,
+                preload: field.key.eq_ignore_ascii_case("preload_file"),
+            })
+        })
+        .collect()
 }
 
 pub fn parse_script(text: &str) -> io::Result<Vec<Cue>> {

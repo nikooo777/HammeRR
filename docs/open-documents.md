@@ -63,4 +63,4 @@ See [MCP documents](mcp.md#documents) for routing and Close tokens.
 
 ---
 
-[← Workspace layout](workspace-layout.md) · [Manual](README.md) · [History →](history.md)
+[← Workspace layout](workspace-layout.md) · [Manual](README.md) · [Portable VMFs →](portable-maps.md)

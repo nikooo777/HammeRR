@@ -121,6 +121,10 @@ pub fn is_rope(entity: &Entity) -> bool {
     })
 }
 
+pub fn material_name(entity: &Entity) -> Result<String, String> {
+    settings::material_name(entity)
+}
+
 pub fn settings(entity: &Entity) -> Result<SpanSettings, String> {
     settings::parse(entity)
 }

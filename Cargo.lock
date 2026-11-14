@@ -4849,6 +4849,7 @@ dependencies = [
 name = "source-formats"
 version = "2026.11.5"
 dependencies = [
+ "base64",
  "bytemuck",
  "crc32fast",
  "flate2",
@@ -4856,6 +4857,7 @@ dependencies = [
  "libc",
  "png",
  "rustix 1.1.5",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",

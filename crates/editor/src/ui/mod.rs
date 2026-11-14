@@ -27,6 +27,7 @@ mod admission;
 mod content_profiles;
 mod content_refresh;
 mod document_window;
+mod portable_map;
 use document_window::DocumentWindow;
 pub(crate) use document_window::hide_window;
 mod document_host;
@@ -103,6 +104,7 @@ struct Ui {
     recent_maps_window: Option<RecentMapsWindow>,
     content_profiles: Option<content_profiles::Controller>,
     content_refresh: Option<content_refresh::Controller>,
+    portable_map: Option<portable_map::Controller>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
     primitive_window: Option<PrimitiveWindow>,
@@ -257,6 +259,7 @@ impl Ui {
             recent_maps_window: None,
             content_profiles: None,
             content_refresh: None,
+            portable_map: None,
             checks_window: None,
             context_window: None,
             primitive_window: None,
@@ -992,6 +995,22 @@ fn create_document_window(
             .unwrap()
             .show(&lock(&ui.session))
         {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_portable_map, |app| {
+        let app = app.unwrap();
+        let mut ui = ui.borrow_mut();
+        if ui.portable_map.is_none() {
+            match portable_map::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.portable_map = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.portable_map.as_ref().unwrap().show(&lock(&ui.session)) {
             app.set_message(error.to_string().into());
         }
     });

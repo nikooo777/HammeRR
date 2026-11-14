@@ -259,6 +259,25 @@ Map writes are independent undoable metadata edits. `save_map` persists them in 
 
 `action:"reload"` refreshes user storage or current map metadata; it accepts no name, color, new name or property token. `use` also forbids a property token. Invalid map metadata reports `ready:false`, `entries:null` and an explicit `error`; it is preserved and blocks Use/writes. Cancelling a color/property draft does not undo explicit palette edits. Neither source stores brightness.
 
+## Portable VMFs
+
+Call `get_portable_map` to read the current attachment and import sources.
+Call `portable_map` with one `action`:
+
+| `action` | Input | Result |
+| --- | --- | --- |
+| `attach` | Optional `companion_bsp`, ordered `content_roots` | Attach to the open map. Use `save_map` to persist it. |
+| `share` | `destination`; optional `source_vmf`, `companion_bsp`, `content_roots` | Write a portable VMF copy. |
+| `export_plain` | `destination`; optional `source_vmf` | Write a VMF without packaged assets. |
+| `export_assets` | `.zip` `destination`; optional `source_vmf` | Write the current package as a standard ZIP. |
+
+An omitted `source_vmf` uses the open map. Exports require a different path and
+preserve the source. An explicit source can be packaged without opening its
+geometry; this does not validate or repair that geometry. No BSP is inferred.
+Open mounts verified assets before configured content. Save and Compile refresh
+dependencies; failures preserve previous output. See [limits and external-tool
+steps](portable-maps.md).
+
 ## Start a task
 
 1. Call `list_documents` to identify the target map.

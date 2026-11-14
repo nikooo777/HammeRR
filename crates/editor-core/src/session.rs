@@ -68,6 +68,7 @@ pub mod entity_placement;
 pub mod external_comparison;
 mod favorites;
 pub mod fgd_helpers;
+pub mod portable_maps;
 
 pub mod fog;
 pub mod grid_preferences;
@@ -253,14 +254,7 @@ impl SessionContent {
     pub fn new(game: Result<GameFs, String>) -> Self {
         let (game, error) = match game {
             Ok(game) => (game, None),
-            Err(error) => (
-                GameFs {
-                    game_dir: PathBuf::new(),
-                    base_dir: PathBuf::new(),
-                    mounts: Vec::new(),
-                },
-                Some(error),
-            ),
+            Err(error) => (GameFs::default(), Some(error)),
         };
         Self {
             game: Arc::new(game),
@@ -322,6 +316,7 @@ pub struct Session {
     model_attachments: model_attachments::State,
     models: std::cell::RefCell<render::models::Library>,
     game: Arc<GameFs>,
+    portable_sources: portable_maps::Sources,
     game_error: Option<String>,
     document: Document,
     history_actors: BTreeMap<u64, Actor>,
@@ -658,6 +653,7 @@ impl Session {
             layers: layers::State::default(),
             prefabs: prefabs::State::default(),
             game: content.game,
+            portable_sources: portable_maps::Sources::default(),
             game_error: content.error,
             document: Document::empty(),
             history_actors: BTreeMap::new(),
@@ -1659,7 +1655,8 @@ impl Session {
         camera: Option<Camera>,
     ) -> Result<(), String> {
         let camera = self.replacement_camera(&document, camera)?;
-        self.adopt_document(document, path, camera);
+        let game = self.prepare_map_asset_game(&self.game, document.vmf().assets.as_deref())?;
+        self.adopt_document(document, path, camera, game);
         Ok(())
     }
 
@@ -1682,7 +1679,19 @@ impl Session {
         Ok(camera)
     }
 
-    fn adopt_document(&mut self, document: Document, path: Option<PathBuf>, camera: Camera) {
+    fn adopt_document(
+        &mut self,
+        document: Document,
+        path: Option<PathBuf>,
+        camera: Camera,
+        game: Arc<GameFs>,
+    ) {
+        self.portable_sources = portable_maps::Sources::default();
+        if !Arc::ptr_eq(&self.game, &game) {
+            self.game = game;
+            self.reset_mounted_content_assets();
+            self.content_sources_changed(None);
+        }
         self.reset_rope_preview();
         self.retire_terrain_stroke();
         self.retire_terrain_move_handles();
@@ -1818,11 +1827,15 @@ impl Session {
             .map(Path::to_owned)
             .or_else(|| self.path.clone())
             .ok_or("the map has no file name yet; give a path")?;
-        let text = self
-            .document
-            .snapshot_for_save()
+        let mut vmf = self.document.snapshot_for_save();
+        let package = self.refresh_portable_map(&mut vmf)?;
+        let game = self.prepare_map_asset_game(&self.game, vmf.assets.as_deref())?;
+        let text = vmf
             .try_write(&WriteOptions::default())
             .map_err(|error| format!("Cannot save map: {error}"))?;
+        if text.len() > source_formats::vmf::portable::MAX_VMF_BYTES {
+            return Err("Cannot save map: VMF exceeds 160 MiB; previous file preserved".into());
+        }
         let destination = match &self.file_claims.source {
             Some(claim) if !explicit_destination => claim.destination(),
             _ => source_formats::file_publication::BoundDestination::capture(
@@ -1842,6 +1855,9 @@ impl Session {
             let mut stage = destination.stage()?;
             stage.file_mut().write_all(text.as_bytes())?;
             stage.sync_all()?;
+            if let Some(package) = &package {
+                package.verify().map_err(std::io::Error::other)?;
+            }
             stage.commit()
         })();
         let receipt = match publication {
@@ -1858,6 +1874,12 @@ impl Session {
             .finish_save_backup(backup.as_ref().ok().and_then(Option::as_ref), true)
             .err();
         let backup_error = backup.err().or(retention_error);
+        self.document.set_map_assets(vmf.assets);
+        if !Arc::ptr_eq(&self.game, &game) {
+            self.game = game;
+            self.reset_mounted_content_assets();
+            self.content_sources_changed(None);
+        }
         self.document.bump_map_version();
         self.document.mark_saved();
         self.history_save_serial += 1;

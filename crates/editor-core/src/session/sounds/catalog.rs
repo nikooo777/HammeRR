@@ -7,7 +7,6 @@ use source_formats::{
 };
 
 const MAX_FILES: usize = 100_000;
-const MAX_SCRIPTS: usize = 128;
 const MAX_SCRIPT_TOTAL: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 32768;
 const MAX_SOURCE_PATHS: usize = 4096;
@@ -107,7 +106,7 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
         aliases: BTreeMap::new(),
         ambiguous: BTreeSet::new(),
         warnings: Vec::new(),
-        sources: source_capture(MAX_SCRIPT_TOTAL, MAX_SCRIPTS + 1),
+        sources: source_capture(MAX_SCRIPT_TOTAL, sound::MAX_MANIFEST_SCRIPTS + 1),
         source_paths: vec!["scripts/game_sounds_manifest.txt".into()],
     };
     let manifest = match catalog.sources.read_asset(
@@ -127,42 +126,22 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
             return Ok(catalog);
         }
     };
-    let roots = match std::str::from_utf8(manifest.bytes())
+    let scripts = match std::str::from_utf8(manifest.bytes())
         .map_err(|error| error.to_string())
-        .and_then(|text| sound::document(text).map_err(|error| error.to_string()))
+        .and_then(|text| sound::manifest_scripts(text).map_err(|error| error.to_string()))
     {
-        Ok(roots) => roots,
+        Ok(scripts) => scripts,
         Err(error) => {
             catalog.warnings.push(format!("Sound manifest: {error}"));
             return Ok(catalog);
         }
     };
-    let Some(fields) = roots
-        .iter()
-        .find(|node| node.key.eq_ignore_ascii_case("game_sounds_manifest"))
-        .and_then(|node| node.children())
-    else {
-        catalog
-            .warnings
-            .push("Sound manifest root is missing; only sound files are listed".into());
-        return Ok(catalog);
-    };
-    let scripts = fields
-        .iter()
-        .filter(|node| {
-            node.key.eq_ignore_ascii_case("preload_file")
-                || node.key.eq_ignore_ascii_case("precache_file")
-        })
-        .filter_map(|node| node.as_str())
-        .collect::<Vec<_>>();
-    if scripts.len() > MAX_SCRIPTS {
-        return Err("Sound manifest exceeds 128 scripts".into());
-    }
     let mut bytes = manifest.bytes().len();
     let mut seen = BTreeSet::new();
     let mut cue_count = 0;
-    for path in scripts {
-        let path = match asset_relative(path) {
+    for script in scripts {
+        let path = script.path;
+        let path = match asset_relative(&path) {
             Ok(path) if path.starts_with("scripts/") && path.ends_with(".txt") => path,
             _ => {
                 catalog

@@ -427,8 +427,10 @@ pub struct MountedPath {
     pub mount: Mount,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GameFs {
+    map_asset_dirs: Vec<std::sync::Arc<tempfile::TempDir>>,
+    map_assets_digest: Option<String>,
     /// The folder containing `gameinfo.txt` (e.g. `.../cstrike`).
     pub game_dir: PathBuf,
     /// The install root that relative search paths start from.
@@ -449,6 +451,104 @@ struct SearchPath {
 }
 
 impl GameFs {
+    pub fn validate_case_identity(&self, path: &str) -> io::Result<()> {
+        let relative = asset_relative(path)?;
+        for mounted in &self.mounts {
+            let Mount::Directory(root) = &mounted.mount else {
+                continue;
+            };
+            if self.map_asset_dirs.iter().any(|owner| owner.path() == root) {
+                continue;
+            }
+            let mut directory = root.clone();
+            for component in relative.split('/') {
+                let entries = match fs::read_dir(&directory) {
+                    Ok(entries) => entries,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let mut matched = None;
+                for entry in entries {
+                    let entry = entry?;
+                    if entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(component))
+                    {
+                        if matched.is_some() {
+                            return Err(io::Error::other(format!(
+                                "Case-colliding asset identity in {}: {component}",
+                                directory.display()
+                            )));
+                        }
+                        matched = Some(entry.path());
+                    }
+                }
+                let Some(next) = matched else {
+                    break;
+                };
+                directory = next;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn map_assets_digest(&self) -> Option<&str> {
+        self.map_assets_digest.as_deref()
+    }
+
+    pub fn with_map_assets(
+        &self,
+        assets: Option<&crate::vmf::portable::MapAssets>,
+        cache: &Path,
+    ) -> io::Result<Self> {
+        let mut result = Self {
+            game_dir: self.game_dir.clone(),
+            base_dir: self.base_dir.clone(),
+            ..Self::default()
+        };
+        if let Some(assets) = assets {
+            std::fs::create_dir_all(cache)?;
+            let directory = std::sync::Arc::new(
+                tempfile::Builder::new()
+                    .prefix("vmf-assets-")
+                    .tempdir_in(cache)?,
+            );
+            assets.extract(directory.path())?;
+            result.mounts.push(MountedPath {
+                ids: vec!["game".into(), "mod".into()],
+                mount: Mount::Directory(directory.path().to_owned()),
+            });
+            result.map_asset_dirs.push(directory);
+            result.map_assets_digest = Some(assets.digest().into());
+        }
+        for mounted in &self.mounts {
+            if self
+                .map_asset_dirs
+                .iter()
+                .any(|directory| directory.path() == mounted.mount.location())
+            {
+                continue;
+            }
+            let mount = match &mounted.mount {
+                Mount::Directory(path) => Mount::Directory(path.clone()),
+                Mount::Pak(pak) => Mount::Pak(Vpk::open(pak.path())?),
+            };
+            result.mounts.push(MountedPath {
+                ids: mounted.ids.clone(),
+                mount,
+            });
+        }
+        Ok(result)
+    }
+
     pub fn from_gameinfo(gameinfo: impl AsRef<Path>) -> Result<Self, Error> {
         let gameinfo = gameinfo.as_ref();
         let io_err = |path: &Path| {
@@ -467,6 +567,8 @@ impl GameFs {
             game_dir,
             base_dir,
             mounts: Vec::new(),
+            map_asset_dirs: Vec::new(),
+            map_assets_digest: None,
         };
         for path in gamefs.resolved_search_paths(gameinfo, &text)? {
             gamefs.mount_search_path(path)?;

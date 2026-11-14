@@ -29,7 +29,7 @@ const MAX_PATH_BYTES: usize = 512;
 const MAX_ISSUE_CHARACTERS: usize = 1024;
 const MAX_ISSUES: usize = 16;
 const MAX_SHADER_CHARACTERS: usize = 128;
-const SUFFIXES: [&str; 6] = ["rt", "bk", "lf", "ft", "up", "dn"];
+pub const SUFFIXES: [&str; 6] = ["rt", "bk", "lf", "ft", "up", "dn"];
 const HDR_PARAMETERS: [&str; 5] = [
     "$hdrbasetexture",
     "$hdrcompressedtexture",

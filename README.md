@@ -161,4 +161,9 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![A directed path loop with a node move handle](docs/images/linked-path-handles.png) | ![Directed logic with prepared instance lights](docs/images/entity-graph-canvas.png) |
 | Edit path nodes, configure trains and duplicate linked assemblies. | Trace logic, arrange nodes and inspect instance sources. |
 
+| [Portable VMFs](docs/portable-maps.md) |
+| --- |
+| ![Custom brick walls restored from one shared VMF](docs/images/portable-map-assets.png) |
+| Share one VMF with compressed custom assets that mount on Open. |
+
 Counter-Strike: Source and its assets are not included.

@@ -1,0 +1,64 @@
+import { Button, ComboBox, LineEdit, TextEdit } from "widgets.slint";
+import { Theme, FieldRow } from "kit.slint";
+
+export component PortableMapWindow inherits Window {
+    title: "Portable map - HammeRR";
+    background: Theme.panel;
+    default-font-size: Theme.font;
+    preferred-width: 720px;
+    preferred-height: 620px;
+    min-width: 560px;
+    min-height: 540px;
+    in-out property <int> action-index;
+    in-out property <string> source-vmf;
+    in-out property <string> destination;
+    in-out property <string> companion-bsp;
+    in-out property <string> content-roots;
+    in property <string> status;
+    in property <string> message;
+    in property <bool> failed;
+    in property <bool> busy;
+    callback apply();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape && !root.busy { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Portable map"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: "Carry custom assets inside one VMF. The recipient still needs the base game."; color: Theme.text-muted; wrap: word-wrap; }
+            if root.status != "": Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
+            FieldRow { inset: false; label-width: 120px; label: "Operation";
+                ComboBox { model: ["Attach assets to current map", "Save portable VMF copy", "Export plain VMF", "Export assets ZIP"]; current-index <=> root.action-index; enabled: !root.busy; }
+            }
+            if root.action-index != 0: FieldRow { inset: false; label-width: 120px; label: "Source VMF";
+                LineEdit { text <=> root.source-vmf; placeholder-text: "Blank uses the open map"; enabled: !root.busy; }
+            }
+            if root.action-index != 0: FieldRow { inset: false; label-width: 120px; label: "Destination";
+                LineEdit { text <=> root.destination; placeholder-text: root.action-index == 3 ? "Full path to a new .zip file" : "Full path to a different .vmf file"; enabled: !root.busy; }
+            }
+            if root.action-index < 2: FieldRow { inset: false; label-width: 120px; label: "Companion BSP";
+                LineEdit { text <=> root.companion-bsp; placeholder-text: "Optional · only this explicit BSP is imported"; enabled: !root.busy; }
+            }
+            if root.action-index < 2: VerticalLayout {
+                spacing: Theme.space;
+                Text { text: "Content folders · one full path per line, first wins"; color: Theme.text; }
+                TextEdit { text <=> root.content-roots; enabled: !root.busy; preferred-height: 88px; }
+                Text { text: "Optional. Mounted custom content is also included when required by the map."; color: Theme.text-muted; wrap: word-wrap; }
+            }
+            if root.action-index == 0: Text { text: "Attach changes the map's content attachment. Save writes it into the VMF. Undo keeps attached assets."; color: Theme.text-muted; wrap: word-wrap; }
+            if root.action-index >= 2: Text { text: "Hammer and external compilers need the plain VMF and the ZIP extracted into their content paths. They do not mount the VMF package."; color: Theme.text-muted; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: root.failed ? Theme.danger : Theme.text; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; background: transparent; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Cancel"; enabled: !root.busy; clicked => {root.close-dialog();} }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: root.busy ? "Working…" : root.action-index == 0 ? "Attach assets" : root.action-index == 1 ? "Save portable copy" : "Export"; primary: true; enabled: !root.busy; clicked => {root.apply();} }
+            }
+        }
+    }
+}

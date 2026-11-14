@@ -74,10 +74,12 @@ impl PreparedMap {
         control.checkpoint()?;
         let path = destination.authored_path();
         let recovery = super::recovery::PathMetadata::from_destination(&destination)?;
-        let bytes = destination
-            .read_existing()
-            .map_err(|error| format!("{}: {error}", path.display()))?
-            .ok_or_else(|| format!("{}: source map does not exist", path.display()))?;
+        let bytes = crate::bounded_file::Source::capture(
+            destination.physical_path(),
+            source_formats::vmf::portable::MAX_VMF_BYTES as u64,
+        )
+        .and_then(crate::bounded_file::Source::read)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
         control.checkpoint()?;
         let text =
             String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -569,6 +571,17 @@ impl Session {
                         "legacy content differs; kept current build settings"
                     },
                 );
+                let game = self.prepare_map_asset_game(
+                    prepared
+                        .content
+                        .as_ref()
+                        .map_or(&self.game, |content| &content.game),
+                    prepared.map.document.vmf().assets.as_deref(),
+                )?;
+                let mut prepared = prepared;
+                if let Some(content) = &mut prepared.content {
+                    content.game = game.clone();
+                }
                 authority.use_entry(&request.entry.path, Some(request.serial), |entry, _| {
                     if entry != request.entry {
                         return Err(
@@ -580,7 +593,7 @@ impl Session {
                     if let Some(content) = &prepared.content {
                         content.verify()?;
                     }
-                    self.adopt_document(prepared.map.document, Some(path.clone()), camera);
+                    self.adopt_document(prepared.map.document, Some(path.clone()), camera, game);
                     if let (Some(content), Some(config)) = (prepared.content, entry.content) {
                         self.adopt_prepared_content(content, config, None);
                     } else if let Some(options) = legacy_options

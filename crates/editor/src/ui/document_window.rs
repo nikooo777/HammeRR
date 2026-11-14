@@ -338,6 +338,7 @@ impl Ui {
             preview_defaults,
             content_profiles,
             content_refresh,
+            portable_map,
             workspace_defaults,
             selection_defaults,
             navigation_defaults,

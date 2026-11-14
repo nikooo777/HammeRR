@@ -143,7 +143,7 @@ impl Directory {
 }
 
 pub(super) struct Candidate {
-    game: Arc<GameFs>,
+    pub(super) game: Arc<GameFs>,
     catalog: Catalog,
     options: compiler::Options,
     install: game::Install,
@@ -658,6 +658,11 @@ impl Session {
                             );
                         }
                         candidate.verify()?;
+                        let mut candidate = candidate;
+                        candidate.game = self.prepare_map_asset_game(
+                            &candidate.game,
+                            self.document.vmf().assets.as_deref(),
+                        )?;
                         self.adopt_content_profile(candidate, profile.clone());
                         Ok((profile, snapshot))
                     })?;

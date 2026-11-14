@@ -139,10 +139,15 @@ impl Session {
         let camera = snapshot.views.cameras[snapshot.views.active_pane].camera()?;
         let camera = self.replacement_camera(&prepared.document, Some(camera))?;
         control.checkpoint()?;
+        let game =
+            self.prepare_map_asset_game(&content.game, prepared.document.vmf().assets.as_deref())?;
+        let mut content = content;
+        content.game = game.clone();
         self.adopt_document(
             prepared.document,
             Some(guard.map.authored_path().to_owned()),
             camera,
+            game,
         );
         self.adopt_prepared_content(content, config.clone(), None);
         self.update_recovery_path(prepared.recovery);

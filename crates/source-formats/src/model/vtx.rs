@@ -188,6 +188,18 @@ fn replacements(reader: &Reader<'_>, lods: usize, budget: &mut Budget<'_>) -> io
     Ok(())
 }
 
+pub(super) fn validate_material_dependencies(data: &[u8], checksum: i32) -> io::Result<()> {
+    let reader = Reader::new(data, 36)?;
+    if reader.int(0)? != 7 || reader.int(16)? != checksum {
+        return Err(invalid("VTX version or model checksum does not match"));
+    }
+    let lods = reader.count(20, MAX_LODS)?;
+    if lods == 0 {
+        return Err(invalid("VTX requires at least one LOD"));
+    }
+    replacements(&reader, lods, &mut Budget::ordinary())
+}
+
 pub fn parse(
     data: &[u8],
     checksum: i32,

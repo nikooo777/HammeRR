@@ -40,6 +40,7 @@ mod particles;
 mod partitions;
 mod pivot_preferences;
 mod placement;
+mod portable_maps;
 mod visibility_rules;
 
 mod preview_preferences;

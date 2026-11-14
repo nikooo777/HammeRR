@@ -1722,6 +1722,15 @@ fn build(
     );
     control.checkpoint()?;
     let mut bsp = emission.bsp;
+    if let Some(assets) = &vmf.assets {
+        let archive = bsp::PakArchive {
+            entries: assets.entries().to_vec(),
+        };
+        bsp.set_pak_data_controlled(&archive, bsp::PakLimits::default(), &mut || {
+            control.checkpoint().map_err(io::Error::other)
+        })
+        .map_err(|error| format!("Portable map assets: {error}"))?;
+    }
     if let Some(data) = bsp.occlusion().map_err(|error| error.to_string())? {
         output.stats.occluders = data.occluders.len();
         output.stats.occluder_polygons = data.polygons.len();
@@ -2266,3 +2275,5 @@ pub fn compile_with_resources_controlled(
     output.stats.elapsed = start.elapsed();
     output
 }
+
+pub use physics::surface_data::definition_paths as surface_property_definition_paths;

@@ -183,6 +183,7 @@ impl Document {
             Properties(pairs.iter().map(|&(k, v)| (k.into(), v.into())).collect())
         };
         let vmf = Vmf {
+            assets: None,
             version_info: Some(props(&[
                 ("editorversion", "400"),
                 ("editorbuild", "8872"),
@@ -289,6 +290,16 @@ impl Document {
 
     pub fn mark_unsaved(&mut self) {
         self.saved_revision = u64::MAX;
+    }
+
+    pub fn set_map_assets(
+        &mut self,
+        assets: Option<std::sync::Arc<source_formats::vmf::portable::MapAssets>>,
+    ) {
+        if self.vmf.assets != assets {
+            self.vmf.assets = assets;
+            self.revision += 1;
+        }
     }
 
     pub fn snapshot_for_save(&self) -> Vmf {

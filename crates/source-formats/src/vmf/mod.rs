@@ -4,6 +4,7 @@
 //! and written back after the known ones, so files from other Hammer versions
 //! (including Hammer++) survive a load/save cycle.
 
+pub mod portable;
 mod precise_vertices;
 mod values;
 
@@ -113,6 +114,7 @@ impl Properties {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vmf {
+    pub assets: Option<std::sync::Arc<portable::MapAssets>>,
     pub version_info: Option<Properties>,
     pub visgroups: Option<Vec<VisGroup>>,
     pub visgroups_extra: Vec<Node>,
@@ -127,6 +129,9 @@ pub struct Vmf {
 
 impl Vmf {
     pub fn parse(src: &str) -> Result<Self, Error> {
+        if src.len() > portable::MAX_VMF_BYTES {
+            return Err(invalid("(root)", "VMF exceeds 160 MiB"));
+        }
         Self::from_nodes(&keyvalues::parse(src)?)
     }
 
@@ -141,8 +146,19 @@ impl Vmf {
         let mut cameras = None;
         let mut cordon = None;
         let mut extra = Vec::new();
+        let mut assets = None;
 
         for node in nodes {
+            if node.key.eq_ignore_ascii_case(portable::BLOCK) {
+                if assets.is_some() {
+                    return Err(invalid(portable::BLOCK, "duplicate asset package"));
+                }
+                assets = Some(std::sync::Arc::new(
+                    portable::MapAssets::from_node(node)
+                        .map_err(|error| invalid(portable::BLOCK, error.to_string()))?,
+                ));
+                continue;
+            }
             let Some(children) = node.children() else {
                 extra.push(node.clone());
                 continue;
@@ -182,6 +198,7 @@ impl Vmf {
         }
 
         Ok(Self {
+            assets,
             version_info,
             visgroups,
             visgroups_extra,
@@ -218,6 +235,9 @@ impl Vmf {
         out.extend(self.cameras.iter().cloned());
         out.extend(self.cordon.iter().cloned());
         out.extend(self.extra.iter().cloned());
+        if let Some(assets) = &self.assets {
+            out.push(assets.to_node());
+        }
         out
     }
 

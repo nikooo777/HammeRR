@@ -175,6 +175,7 @@ pub(super) fn admit(vmf: &Vmf) -> Result<usize, String> {
 pub(super) fn capture(vmf: &Vmf) -> Result<(Vmf, usize), String> {
     let bytes = admit(vmf)?;
     let mut snapshot = Vmf {
+        assets: None,
         version_info: vmf.version_info.clone(),
         visgroups: vmf.visgroups.clone(),
         visgroups_extra: vmf.visgroups_extra.clone(),

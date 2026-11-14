@@ -20,7 +20,7 @@ pub(crate) mod damping;
 mod failure;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod native;
-mod surface_data;
+pub(super) mod surface_data;
 mod terrain;
 mod topology;
 mod world_keys;

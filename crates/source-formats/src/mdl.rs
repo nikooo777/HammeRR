@@ -75,7 +75,11 @@ impl ModelHeader {
     }
 }
 
-pub fn validate_physics(data: &[u8], checksum: i32) -> io::Result<usize> {
+fn physics_parts(
+    data: &[u8],
+    checksum: i32,
+    mut inspect: impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<(usize, &[u8])> {
     if data.len() < 16 || data.len() > crate::bsp::MAX_PHYSICS_BYTES {
         return Err(invalid("model physics file size is invalid"));
     }
@@ -99,12 +103,7 @@ pub fn validate_physics(data: &[u8], checksum: i32) -> io::Result<usize> {
         let (solid, tail) = tail
             .split_at_checked(size as usize)
             .ok_or_else(|| invalid("model physics solid is truncated"))?;
-        if !matches!(
-            crate::bsp::PhysicsSolid::parse(solid)?.header(),
-            crate::bsp::CollisionHeader::Convex { .. }
-        ) {
-            return Err(invalid("model physics needs a supported convex solid"));
-        }
+        inspect(solid)?;
         payload = tail;
     }
     if payload.len() > crate::bsp::MAX_PHYSICS_KEY_BYTES
@@ -114,5 +113,26 @@ pub fn validate_physics(data: &[u8], checksum: i32) -> io::Result<usize> {
             "model physics keys need bounded, singly terminated text",
         ));
     }
-    Ok(count as usize)
+    Ok((count as usize, payload))
+}
+
+pub fn validate_physics(data: &[u8], checksum: i32) -> io::Result<usize> {
+    let (count, _) = physics_parts(data, checksum, |solid| {
+        if !matches!(
+            crate::bsp::PhysicsSolid::parse(solid)?.header(),
+            crate::bsp::CollisionHeader::Convex { .. }
+        ) {
+            return Err(invalid("model physics needs a supported convex solid"));
+        }
+        Ok(())
+    })?;
+    Ok(count)
+}
+
+pub fn physics_keyvalues(data: &[u8], checksum: i32) -> io::Result<&str> {
+    let (_, text) = physics_parts(data, checksum, |_| Ok(()))?;
+    CStr::from_bytes_with_nul(text)
+        .map_err(|_| invalid("model physics keys need terminated text"))?
+        .to_str()
+        .map_err(|_| invalid("model physics keys must be UTF-8"))
 }

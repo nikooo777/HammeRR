@@ -54,6 +54,7 @@ struct Job {
 }
 
 pub struct CompileRequest {
+    portable: Option<portable_maps::Prepared>,
     native_plan: Option<NativeCapturePlan>,
     output_claims: crate::path_claims::OutputClaims,
     token: u64,
@@ -100,6 +101,7 @@ pub struct CompileResult {
 }
 
 struct Publication {
+    portable: Option<portable_maps::Prepared>,
     pending: Option<compiler::PreparedWrite>,
     claims: Option<crate::path_claims::OutputClaims>,
     artifact: Option<crate::path_claims::Claim>,
@@ -302,7 +304,8 @@ impl CompileRequest {
             None
         };
         let instances = compiler::instances::requires_source(&self.vmf);
-        let guarded = self.options.requires_guarded_publication_for(&self.vmf);
+        let guarded =
+            self.options.requires_guarded_publication_for(&self.vmf) || self.portable.is_some();
         let mut lease = None;
         let mut source = None;
         let mut pointfile_lease = None;
@@ -542,6 +545,7 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
+                portable: self.portable,
                 claims,
                 artifact,
                 warning,
@@ -589,6 +593,7 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
+                portable: self.portable,
                 pending: None,
                 claims: None,
                 artifact: None,
@@ -1365,11 +1370,15 @@ impl Session {
             })?;
         }
         let control = compiler::Control::default();
+        let mut vmf = self.document.vmf().clone();
+        let portable = self.refresh_portable_map(&mut vmf)?;
+        let game = self.prepare_map_asset_game(&self.game, vmf.assets.as_deref())?;
         let instances = compiler::instances::requires_source(self.document.vmf());
         let guarded = self
             .compilation
             .options
-            .requires_guarded_publication_for(self.document.vmf());
+            .requires_guarded_publication_for(self.document.vmf())
+            || portable.is_some();
         if instances && self.path.is_none() {
             return Err("Save the parent VMF before compiling instances; the BSP output path is not a source directory".into());
         }
@@ -1457,6 +1466,12 @@ impl Session {
                 format!("Map source binding changed; reopen or Save As before compiling: {error}")
             })?;
         }
+        self.document.set_map_assets(vmf.assets.clone());
+        if !Arc::ptr_eq(&self.game, &game) {
+            self.game = game;
+            self.reset_mounted_content_assets();
+            self.content_sources_changed(None);
+        }
         self.compilation.serial += 1;
         let inspection_source = if let Some(source) = &instance_source {
             Ok(Some(source.root_identity().clone()))
@@ -1503,6 +1518,7 @@ impl Session {
             guarded,
         });
         let request = CompileRequest {
+            portable,
             native_plan,
             output_claims,
             token: self.compilation.serial,
@@ -1609,6 +1625,9 @@ impl Session {
             .ok_or("Guarded destination lease missing")?;
             let receipt = pending
                 .commit_checked_with_receipt(lease, &result.control, || {
+                    if let Some(portable) = &publication.portable {
+                        portable.verify().map_err(std::io::Error::other)?;
+                    }
                     if let Some(source) = &result.source {
                         source.verify_metadata()?;
                     }
@@ -1649,6 +1668,7 @@ impl Session {
         publication.lease = None;
         publication.pointfile_lease = None;
         publication.sources = None;
+        publication.portable = None;
         if let Err(error) = &outcome {
             publication.pending = None;
             publication.claims = None;

@@ -23,6 +23,7 @@ export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
 export { ContentProfilesWindow, ContentProfileRow } from "content-profiles.slint";
 export { ContentRefreshWindow } from "content-refresh.slint";
+export { PortableMapWindow } from "portable-map.slint";
 export { WorkspaceDefaultsWindow, WorkspaceDefaultRow } from "workspace-defaults.slint";
 export { SelectionDefaultsWindow, SelectionDefaultRow, SelectionProfileRow } from "selection-defaults.slint";
 export { ShortcutsWindow, ShortcutRow, ShortcutStroke, ShortcutBinding } from "shortcuts.slint";
@@ -2547,6 +2548,7 @@ export component AppWindow inherits Window {
     callback recent-maps();
     callback content-profiles();
     callback content-refresh();
+    callback portable-map();
     callback save-map();
     callback save-map-as();
     callback compile-map();
@@ -2743,6 +2745,7 @@ export component AppWindow inherits Window {
         { id: "recent-maps", title: "Recent maps…", group: "File", enabled: true },
         { id: "content-profiles", title: "Content profiles…", group: "File", enabled: true },
         { id: "content-refresh", title: "Content refresh…", group: "File", enabled: true },
+        { id: "portable-map", title: "Portable map…", group: "File", enabled: true },
         { id: "open-documents", title: "Open documents…", group: "File", enabled: true },
         { id: "save-map", title: "Save", group: "File", enabled: true },
         { id: "save-map-as", title: "Save as…", group: "File", enabled: true },
@@ -2928,6 +2931,7 @@ export component AppWindow inherits Window {
         else if id == "recent-maps" { root.recent-maps(); }
         else if id == "content-profiles" { root.content-profiles(); }
         else if id == "content-refresh" { root.content-refresh(); }
+        else if id == "portable-map" { root.portable-map(); }
         else if id == "open-documents" { root.open-documents(); }
         else if id == "save-map" { root.save-map(); }
         else if id == "save-map-as" { root.save-map-as(); }
@@ -3067,6 +3071,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Recent maps…"; activated => { root.recent-maps(); } }
             MenuItem { title: "Content profiles…"; activated => { root.content-profiles(); } }
             MenuItem { title: "Content refresh…"; activated => { root.content-refresh(); } }
+            MenuItem { title: "Portable map…"; activated => { root.portable-map(); } }
             MenuItem { title: "Open documents…"; activated => { root.open-documents(); } }
             MenuSeparator { }
             MenuItem { title: "Save"; activated => { root.save-map(); } }

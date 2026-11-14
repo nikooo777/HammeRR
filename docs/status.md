@@ -8,6 +8,15 @@ The integrated compiler is experimental. Editing, file operations, rendering, BS
 Release tags use `vYYYY.M.PATCH`, such as `v2026.11.0`. The patch counter starts at zero each month.
 Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksums and a complete commit changelog. Windows executables use timestamped, self-signed signatures; Windows trust warnings can remain. See [download instructions](getting-started.md#download-a-build).
 
+## Portable maps
+
+**Works:** one VMF with compressed custom materials, textures, skies and model
+resources; explicit BSP/folder imports; automatic private mounts on Open; atomic
+Save refresh; plain VMF and assets ZIP exports. UI and MCP share these operations.
+
+**Not yet:** portable external instances, arbitrary dynamic resource discovery,
+or automatic mounting by Hammer. See [Portable VMFs](portable-maps.md).
+
 ## Group completion
 
 ![Estimated implementation: 90.65% across 107 equally weighted capability groups](images/roadmap-progress.svg)

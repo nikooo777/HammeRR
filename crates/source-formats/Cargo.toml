@@ -13,12 +13,14 @@ doctest = false
 bench = false
 
 [dependencies]
+base64 = "0.23.1"
 bytemuck.workspace = true
 crc32fast = "1.5.2"
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 glam.workspace = true
 thiserror.workspace = true
 tempfile = "3.27.0"
+sha2 = "0.10.9"
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(unix)'.dependencies]

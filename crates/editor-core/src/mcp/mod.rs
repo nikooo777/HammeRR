@@ -782,6 +782,7 @@ impl EditorServer {
             + Self::components_tools()
             + Self::context_tools()
             + Self::content_profiles_tools()
+            + Self::portable_map_tools()
             + Self::content_refresh_tools()
             + Self::cubemap_bindings_tools()
             + Self::entities_tools()

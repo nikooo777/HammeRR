@@ -136,11 +136,11 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn try_new(mut vmf: Vmf) -> Result<Self, EditError> {
+    pub fn try_new(vmf: Vmf) -> Result<Self, EditError> {
         vmf.validate_ids()
             .map_err(|error| EditError::Invalid(error.to_string()))?;
         instance_order::read(&vmf).map_err(EditError::Invalid)?;
-        crate::brush::normalize_precise_vmf(&mut vmf)?;
+        crate::brush::validate_precise_vmf(&vmf)?;
         Ok(Self::new(vmf))
     }
 
@@ -404,6 +404,7 @@ impl Document {
             ),
             doc: self,
             touched: Vec::new(),
+            precise_mapped: Default::default(),
             removed: HashSet::new(),
             instance_order,
             start_positions: None,
@@ -566,6 +567,7 @@ pub struct Transaction<'a> {
     start_ids: (u64, u64, u64),
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
+    precise_mapped: std::collections::BTreeMap<u32, Vec<(u32, source_formats::vmf::Plane)>>,
     removed: HashSet<ObjectId>,
     instance_order: Option<Ordering>,
     start_positions: Option<std::collections::HashMap<ObjectId, usize>>,
@@ -579,6 +581,35 @@ pub struct Transaction<'a> {
 }
 
 impl Transaction<'_> {
+    pub(crate) fn record_precise_mapping(&mut self, id: ObjectId) -> Result<(), EditError> {
+        let solids = match id {
+            ObjectId::Solid(id) => vec![crate::subobject::solid(self.doc, id)?.1],
+            ObjectId::Entity(id) => self
+                .doc
+                .vmf
+                .entities
+                .iter()
+                .find(|entity| entity.id == id)
+                .ok_or(EditError::NotFound(ObjectId::Entity(id)))?
+                .solids
+                .iter()
+                .collect(),
+        };
+        for solid in solids {
+            if crate::brush::has_precise_vertices(solid) {
+                self.precise_mapped.insert(
+                    solid.id,
+                    solid
+                        .sides
+                        .iter()
+                        .map(|side| (side.id, side.plane))
+                        .collect(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn set_cordon(&mut self, node: Option<Node>) {
         self.cordon
             .get_or_insert_with(|| self.doc.vmf.cordon.clone());
@@ -919,14 +950,22 @@ impl Transaction<'_> {
         for solid in &mut self.doc.vmf.world.solids {
             if owners.contains(&ObjectId::Solid(solid.id)) {
                 let previous = before.get(&solid.id).copied();
-                crate::brush::precise::reconcile(solid, previous)?;
+                crate::brush::precise::reconcile(
+                    solid,
+                    previous,
+                    self.precise_mapped.get(&solid.id).map(Vec::as_slice),
+                )?;
             }
         }
         for entity in &mut self.doc.vmf.entities {
             if owners.contains(&ObjectId::Entity(entity.id)) {
                 for solid in &mut entity.solids {
                     let previous = before.get(&solid.id).copied();
-                    crate::brush::precise::reconcile(solid, previous)?;
+                    crate::brush::precise::reconcile(
+                        solid,
+                        previous,
+                        self.precise_mapped.get(&solid.id).map(Vec::as_slice),
+                    )?;
                 }
             }
         }

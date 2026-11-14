@@ -138,10 +138,6 @@ pub(crate) fn topology_from_geometry(
     topology_with_geometry(solid, geometry, true)
 }
 
-pub(crate) fn validate_geometry(solid: &Solid, geometry: &BrushGeometry) -> Result<(), EditError> {
-    topology_with_geometry(solid, geometry, false).map(|_| ())
-}
-
 fn topology_input(solid: &Solid, identities: bool) -> Result<(), EditError> {
     let fail = |message: &str| invalid(format!("Brush {}: {message}", solid.id));
     if !(4..=MAX_SIDES).contains(&solid.sides.len()) {

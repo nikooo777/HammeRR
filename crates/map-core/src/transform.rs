@@ -254,7 +254,7 @@ impl Mapping {
     }
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
-        crate::brush::canonicalize_precise(solid)?;
+        crate::brush::validate_precise(solid)?;
         if self.translation_only {
             return crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
@@ -440,6 +440,7 @@ pub fn transform(
             ObjectId::Solid(id) => mapping.solid(tx.solid_mut(id)?)?,
             ObjectId::Entity(id) => mapping.entity(tx.entity_mut(id)?, rotate)?,
         }
+        tx.record_precise_mapping(id)?;
         crate::partition_metadata::transfer::transform_saved(tx, saved, transform)?;
         crate::free_partition_metadata::transfer::transform_saved(tx, free_saved, transform)?;
     }

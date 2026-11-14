@@ -578,14 +578,15 @@ pub(crate) fn checked_solid_geometry_controlled(
     control: &Control,
 ) -> Result<BrushGeometry, String> {
     let precise = solid
-        .precise_vertices()
+        .sides
+        .iter()
+        .map(|side| side.precise_vertices())
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
     if solid.sides.len() > MAX_BRUSH_SIDES
         || !solid.extra.is_empty()
         || !solid.extra_properties.0.is_empty()
-        || precise
-            .as_ref()
-            .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
+        || precise.iter().flatten().any(|ring| ring.has_opaque_fields)
     {
         return Err(format!(
             "Child brush {} exceeds {MAX_BRUSH_SIDES} sides or has opaque metadata",
@@ -1228,17 +1229,7 @@ fn prepare_purpose_roots<'a>(
         material_sources: None,
         collapse_order: None,
     };
-    for solid in vmf.solids() {
-        control
-            .checkpoint()
-            .map_err(|message| Diagnostic::error(message, None, None))?;
-        if map_core::brush::has_precise_vertices(solid) {
-            prepared.vmf = Cow::Owned(vmf.clone());
-            normalize_precise(prepared.vmf.to_mut(), control)
-                .map_err(|message| Diagnostic::error(message, None, None))?;
-            break;
-        }
-    }
+    validate_precise(vmf, control).map_err(|message| Diagnostic::error(message, None, None))?;
     let vmf = prepared.vmf.as_ref();
     let mut order_work = 0;
     let order_plan =
@@ -1391,14 +1382,10 @@ fn prepare_purpose_roots<'a>(
     Ok(prepared)
 }
 
-fn normalize_precise(vmf: &mut Vmf, control: &Control) -> Result<(), String> {
-    for solid in vmf.world.solids.iter_mut().chain(
-        vmf.entities
-            .iter_mut()
-            .flat_map(|entity| &mut entity.solids),
-    ) {
+fn validate_precise(vmf: &Vmf, control: &Control) -> Result<(), String> {
+    for solid in vmf.solids() {
         control.checkpoint()?;
-        map_core::brush::canonicalize_precise(solid)
+        map_core::brush::validate_precise(solid)
             .map_err(|error| format!("Brush {}: {error}", solid.id))?;
     }
     Ok(())

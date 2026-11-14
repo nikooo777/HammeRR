@@ -120,8 +120,12 @@ pub fn vertex(
             "VVD reference weights or transformed position exceed bounds",
         ));
     }
-    let direction = direction
-        .try_normalize()
-        .ok_or_else(|| invalid("VVD reference normal is degenerate"))?;
+    let direction = if direction == DVec3::ZERO {
+        direction
+    } else {
+        direction
+            .try_normalize()
+            .ok_or_else(|| invalid("VVD reference normal is degenerate"))?
+    };
     Ok((point.as_vec3().to_array(), direction.as_vec3().to_array()))
 }

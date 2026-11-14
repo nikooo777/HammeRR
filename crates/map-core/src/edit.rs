@@ -246,7 +246,7 @@ pub fn translate_solid(
     if !delta.is_finite() {
         return Err(EditError::Invalid("Translation must be finite".into()));
     }
-    crate::brush::canonicalize_precise(solid)?;
+    crate::brush::validate_precise(solid)?;
     for side in &mut solid.sides {
         for p in &mut side.plane.0 {
             *p += delta;
@@ -324,6 +324,7 @@ pub fn translate(
             ObjectId::Solid(id) => translate_solid(tx.solid_mut(id)?, delta, texture_lock)?,
             ObjectId::Entity(id) => translate_entity(tx.entity_mut(id)?, delta, texture_lock)?,
         }
+        tx.record_precise_mapping(id)?;
         crate::partition_metadata::transfer::transform_saved(
             tx,
             saved,

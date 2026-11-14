@@ -290,11 +290,8 @@ pub fn plan_with_context(
             .iter()
             .find(|solid| solid.id == face.solid)
             .ok_or_else(|| invalid("Resolved subdivision context lost an original source"))?;
-        let mut canonical = original.clone();
-        crate::brush::canonicalize_precise(&mut canonical)?;
-        if assembled.sides != original.sides && assembled.sides != canonical.sides
-            || assembled.hidden != original.hidden
-        {
+        crate::brush::validate_precise(original)?;
+        if assembled.sides != original.sides || assembled.hidden != original.hidden {
             return Err(invalid(
                 "Resolved subdivision context must preserve original source sides and visibility",
             ));

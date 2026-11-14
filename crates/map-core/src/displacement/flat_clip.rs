@@ -1352,7 +1352,7 @@ fn carrier_grid(
     part.sides[index]
         .set_precise_vertices(&quad)
         .map_err(|error| invalid(error.to_string()))?;
-    crate::brush::canonicalize_precise(&mut part)?;
+    crate::brush::validate_precise(&part)?;
     let mut info = side.displacement.as_ref().unwrap().clone();
     native::reset_allowed_vertex_cache(&mut info).map_err(invalid)?;
     info.power = power;

@@ -1597,19 +1597,13 @@ fn verify_source(
         .position(|side| side.id == source.side)
         .ok_or_else(|| invalid("Terrain context lost an original source face"))?;
     let side = &solid.sides[index];
-    let mut canonical = solid.clone();
-    crate::brush::canonicalize_precise(&mut canonical)?;
-    if !owned
-        || assembled.raw.side.plane != side.plane
-            && assembled.raw.side.plane != canonical.sides[index].plane
-    {
+    crate::brush::validate_precise(solid)?;
+    if !owned || assembled.raw.side.plane != side.plane {
         return Err(invalid(
             "Terrain context changed original source ownership or base planes",
         ));
     }
-    let mut normalized = side.clone();
-    normalized.plane = assembled.raw.side.plane;
-    if normalized != *assembled.raw.side {
+    if side != assembled.raw.side {
         return Err(invalid(
             "Terrain context changed original source fields or texture projections",
         ));

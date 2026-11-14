@@ -1061,18 +1061,13 @@ fn verify_selected_source(
         .position(|side| side.id == replacement.source.side)
         .ok_or_else(|| invalid("Selected terrain source face is missing"))?;
     let side = &solid.sides[side_index];
-    let mut canonical = solid.clone();
-    crate::brush::canonicalize_precise(&mut canonical)?;
-    if assembled.side.plane != side.plane
-        && assembled.side.plane != canonical.sides[side_index].plane
-    {
+    crate::brush::validate_precise(solid)?;
+    if assembled.side.plane != side.plane {
         return Err(invalid(
-            "Resolved terrain context changed a selected source plane beyond precise canonicalization",
+            "Resolved terrain context changed a selected source plane",
         ));
     }
-    let mut normalized = side.clone();
-    normalized.plane = assembled.side.plane;
-    if !owned || normalized != *assembled.side {
+    if !owned || side != assembled.side {
         return Err(invalid(
             "Resolved terrain context changed selected source ownership, UV or terrain fields",
         ));

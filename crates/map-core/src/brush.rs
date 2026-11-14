@@ -5,8 +5,8 @@ use crate::plane::{ON_EPSILON, Plane};
 
 pub(crate) mod precise;
 pub use precise::{
-    canonicalize_precise, has_precise_vertices, normalize_precise_vmf, prepare_precise_edit,
-    refresh_precise, transform_precise,
+    has_precise_vertices, prepare_precise_edit, refresh_precise, transform_precise,
+    validate_precise, validate_precise_vmf,
 };
 
 /// One visible polygon of a brush.
@@ -52,16 +52,8 @@ impl std::fmt::Display for BrushError {
 impl std::error::Error for BrushError {}
 
 impl BrushGeometry {
-    /// Uses complete validated precise rings when present, otherwise intersects
-    /// the solid's half-spaces. Redundant planes produce no face.
+    /// Intersects the VMF plane half-spaces; editor vertex caches do not define the solid.
     pub fn from_solid(solid: &Solid) -> Result<Self, BrushError> {
-        if let Some(geometry) =
-            precise::geometry(solid, false).map_err(|error| BrushError::InvalidPrecision {
-                message: error.to_string(),
-            })?
-        {
-            return Ok(geometry);
-        }
         let planes = solid
             .sides
             .iter()

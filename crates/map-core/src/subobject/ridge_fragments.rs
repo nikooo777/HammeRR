@@ -215,7 +215,7 @@ fn canonical_boundary(
             .map_err(|error| invalid(error.to_string()))?;
         rings.push(ring);
     }
-    crate::brush::canonicalize_precise(&mut boundary)?;
+    crate::brush::validate_precise(&boundary)?;
     topology(&boundary)?;
     Ok(Boundary {
         solid: boundary,

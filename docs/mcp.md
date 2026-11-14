@@ -1578,15 +1578,16 @@ See [Flat partitions](partitions.md).
 
 ## Precise VMF brush geometry
 
-`open_map` accepts complete `vertices_plus` face rings on supported convex
-brushes. `get_brush_components` reports these authoritative coordinates.
-Shared transforms, component edits, clipping, CSG and Save keep the rings and
-plane points consistent. No separate editing API is required.
+`open_map` and Save preserve `vertices_plus` editor caches, including rounded
+points and caches on only some faces. VMF `plane` fields define brush geometry.
+`get_brush_components`, rendering and compilation use those same planes.
+Shared affine transforms map cached vertices; topology edits rebuild the cache.
+No separate editing API is required.
 
-The profile permits 4–64 sides, 3–64 vertices per face and coordinates within
-±65536 units. Partial, malformed, nonplanar, open or ambiguous data rejects.
-Unknown scalar fields survive Open/Save but prevent geometry changes. Identity
-copies retain them. Instance and clipboard placement require the known schema.
+Each cached face permits 3–64 finite vertices within ±65536 units, with up to
+64 sides per cached brush. Malformed data rejects. Unknown scalar fields survive
+Open/Save and identity copies but prevent geometry changes. Component and CSG
+operations enforce their own geometry requirements.
 See [precision and other editors](brushes.md#precision-and-other-editors) for
 Hammer++ rounding and option limits.
 

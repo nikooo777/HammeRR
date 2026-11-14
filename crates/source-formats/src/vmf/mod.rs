@@ -754,7 +754,7 @@ impl Solid {
             extra_properties,
             extra,
         };
-        solid.precise_vertices()?;
+        solid.validate_precise_vertices()?;
         Ok(solid)
     }
 

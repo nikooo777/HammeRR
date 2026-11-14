@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use glam::DVec3;
-use map_core::{BrushGeometry, brush::has_precise_vertices, subobject};
+use map_core::{BrushGeometry, subobject};
 use source_formats::vmf::Solid;
 
 use super::{Budget, Control, stored_vertex};
@@ -210,13 +210,10 @@ impl Brush {
                 point(side.plane.0[2])?,
             ])?);
         }
-        let precise = has_precise_vertices(solid);
         let mut vertices = Vec::with_capacity(topology.vertices.len());
         let mut native_vertices = Vec::with_capacity(topology.vertices.len());
         for vertex in &topology.vertices {
-            let exact = if precise {
-                point(vertex.position)?
-            } else {
+            let exact = {
                 let mut found = None;
                 'triples: for a in 0..vertex.sides.len() - 2 {
                     for b in a + 1..vertex.sides.len() - 1 {
@@ -277,11 +274,6 @@ impl Brush {
                 .map(|&index| native_vertices[index])
                 .collect::<Vec<_>>();
             for ((&source, &stored), &original) in ring.iter().zip(&stored).zip(&face.vertices) {
-                if precise && source != point(original)? {
-                    return Err(
-                        "Exact occluder precise rings contain distinct shared corners".into(),
-                    );
-                }
                 if native(source)? != stored_vertex(original)
                     || stored != point(stored_vertex(original))?
                 {
@@ -650,17 +642,6 @@ fn axis_bound(
     control: &Control,
 ) -> Result<Option<R>, String> {
     let exact_axis = point(axis)?;
-    if has_precise_vertices(solid) {
-        let mut bound = None;
-        for &vertex in geometry.faces.iter().flat_map(|face| &face.vertices) {
-            work(budget, 32, control)?;
-            let value = dot(point(vertex)?, exact_axis)?;
-            if bound.is_none_or(|bound: R| value.compare(bound) == Ordering::Greater) {
-                bound = Some(value);
-            }
-        }
-        return Ok(bound);
-    }
     let mut candidate = None;
     for &vertex in geometry.faces.iter().flat_map(|face| &face.vertices) {
         budget.consume(4, control)?;

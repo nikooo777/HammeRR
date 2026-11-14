@@ -339,11 +339,12 @@ pub(super) fn parsed_side_references(
 
 fn face_metadata(solid: &Solid) -> Result<(), String> {
     let precise = solid
-        .precise_vertices()
+        .sides
+        .iter()
+        .map(|side| side.precise_vertices())
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    if precise
-        .as_ref()
-        .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
+    if precise.iter().flatten().any(|ring| ring.has_opaque_fields)
         || solid.sides.iter().any(|side| {
             !side.extra_properties.0.is_empty()
                 || side

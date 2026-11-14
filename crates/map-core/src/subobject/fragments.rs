@@ -155,7 +155,7 @@ pub fn tetrahedralize(
         }
         let mut solid = source.clone();
         solid.sides = sides;
-        crate::brush::canonicalize_precise(&mut solid)?;
+        crate::brush::validate_precise(&solid)?;
         let shape = topology(&solid)?;
         if shape.vertices.len() != 4 || shape.faces.len() != 4 {
             return Err(invalid("Fragment is not a positive closed tetrahedron"));

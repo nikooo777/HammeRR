@@ -126,6 +126,20 @@ fn coordinates(point: DVec3) -> Result<[u64; 3], String> {
 }
 
 pub fn origin_fingerprint(entity: &Entity, volumes: &[u32]) -> Result<String, String> {
+    let (legacy, planes, _) = origin_fingerprints(entity, volumes)?;
+    Ok(format!("{legacy}{planes}"))
+}
+
+fn origin_matches(entity: &Entity, volumes: &[u32], expected: &str) -> Result<bool, String> {
+    let (legacy, planes, canonical) = origin_fingerprints(entity, volumes)?;
+    Ok(if expected.len() == 16 {
+        canonical && expected == legacy
+    } else {
+        expected == format!("{legacy}{planes}")
+    })
+}
+
+fn origin_fingerprints(entity: &Entity, volumes: &[u32]) -> Result<(String, String, bool), String> {
     let class = entity
         .classname()
         .filter(|class| {
@@ -151,6 +165,8 @@ pub fn origin_fingerprint(entity: &Entity, volumes: &[u32]) -> Result<String, St
         coordinates(origin)?,
         volumes.len()
     ));
+    let mut plane_fingerprint = fingerprint.clone();
+    let mut canonical = true;
     let mut budget = InputBudget::default();
     let mut seen = HashSet::new();
     let solids = entity
@@ -166,15 +182,20 @@ pub fn origin_fingerprint(entity: &Entity, volumes: &[u32]) -> Result<String, St
             return Err("Origin custody repeats or has a zero volume ID".into());
         }
         let solid = solids.get(id).ok_or("Origin custody volume is missing")?;
-        let rings = solid
-            .precise_vertices()
+        solid
+            .validate_precise_vertices()
             .map_err(|error| error.to_string())?;
         fingerprint = crate::context::text_fingerprint(&format!(
             "{fingerprint} {} {}",
             solid.hidden,
             solid.sides.len()
         ));
-        for (index, side) in solid.sides.iter().enumerate() {
+        plane_fingerprint = crate::context::text_fingerprint(&format!(
+            "{plane_fingerprint} {} {}",
+            solid.hidden,
+            solid.sides.len()
+        ));
+        for side in &solid.sides {
             if side.displacement.is_some() {
                 return Err("Origin custody volumes cannot contain terrain".into());
             }
@@ -183,12 +204,10 @@ pub fn origin_fingerprint(entity: &Entity, volumes: &[u32]) -> Result<String, St
                 .map_err(|error| error.to_string())?;
             let material = source_formats::gamefs::asset_relative(&side.material)
                 .map_err(|error| error.to_string())?;
-            let points = if let Some(rings) = &rings {
-                rings[index].vertices.as_slice()
-            } else {
-                side.plane.0.as_slice()
-            };
-            let points = points
+            let ring = side.precise_vertices().map_err(|error| error.to_string())?;
+            let points = ring
+                .as_ref()
+                .map_or(side.plane.0.as_slice(), |ring| ring.vertices.as_slice())
                 .iter()
                 .copied()
                 .map(coordinates)
@@ -196,15 +215,39 @@ pub fn origin_fingerprint(entity: &Entity, volumes: &[u32]) -> Result<String, St
             let geometry = format!(
                 "{}:{material} {} {points:?}",
                 material.len(),
-                rings.is_some()
+                ring.is_some()
             );
             budget
                 .text("geometry", &geometry)
                 .map_err(|error| error.to_string())?;
             fingerprint = crate::context::text_fingerprint(&format!("{fingerprint} {geometry}"));
+            let planes = side
+                .plane
+                .0
+                .into_iter()
+                .map(coordinates)
+                .collect::<Result<Vec<_>, _>>()?;
+            plane_fingerprint = crate::context::text_fingerprint(&format!(
+                "{plane_fingerprint} {}:{material} {planes:?}",
+                material.len()
+            ));
+            if let Some(ring) = &ring {
+                let triple = ring.vertices[1..]
+                    .windows(2)
+                    .map(|pair| [ring.vertices[0], pair[0], pair[1]])
+                    .max_by(|a, b| {
+                        let area = |points: &[DVec3; 3]| {
+                            (points[0] - points[1])
+                                .cross(points[2] - points[1])
+                                .length_squared()
+                        };
+                        area(a).total_cmp(&area(b))
+                    });
+                canonical &= triple.is_some_and(|points| points == side.plane.0);
+            }
         }
     }
-    Ok(fingerprint)
+    Ok((fingerprint, plane_fingerprint, canonical))
 }
 
 impl Ordering {
@@ -306,7 +349,7 @@ impl Ordering {
                 return Err("Origin custody has a zero or duplicate entity ID".into());
             }
             if origin.volumes.is_empty()
-                || origin.fingerprint.len() != 16
+                || !matches!(origin.fingerprint.len(), 16 | 32)
                 || !origin
                     .fingerprint
                     .bytes()
@@ -405,7 +448,7 @@ impl Ordering {
             let entity = entities
                 .get(&origin.entity)
                 .ok_or("Origin custody entity is missing")?;
-            if origin_fingerprint(entity, &origin.volumes)? != origin.fingerprint {
+            if !origin_matches(entity, &origin.volumes, &origin.fingerprint)? {
                 return Err(format!(
                     "Origin custody for entity {} does not match its current origin volumes and pivot",
                     origin.entity
@@ -483,8 +526,8 @@ impl Ordering {
                     .iter()
                     .any(|id| removed.contains(&ObjectId::Solid(*id)))
                 && entities.get(&origin.entity).is_some_and(|entity| {
-                    origin_fingerprint(entity, &origin.volumes)
-                        .is_ok_and(|fingerprint| fingerprint == origin.fingerprint)
+                    origin_matches(entity, &origin.volumes, &origin.fingerprint)
+                        .is_ok_and(|matches| matches)
                 })
         });
     }

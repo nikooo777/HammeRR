@@ -369,11 +369,18 @@ impl Model {
             triangles += part.indices.len() / 3;
             for (work, &index) in part.indices.iter().enumerate() {
                 budget.checkpoint(work)?;
+                validate_normal(&vertices[index as usize], index)?;
                 let point = vertices[index as usize].position;
                 for axis in 0..3 {
                     mins[axis] = mins[axis].min(point[axis]);
                     maxs[axis] = maxs[axis].max(point[axis]);
                 }
+            }
+        }
+        if let Some(layout) = &geometry.hardware {
+            for (work, &index) in layout.vertices.iter().enumerate() {
+                budget.checkpoint(work)?;
+                validate_normal(&vertices[index as usize], index)?;
             }
         }
         if triangles == 0 {
@@ -580,4 +587,14 @@ pub fn surface_property_name(mdl: &[u8]) -> io::Result<Option<String>> {
     } else {
         reader.string(offset).map(Some)
     }
+}
+
+fn validate_normal(vertex: &Vertex, index: u32) -> io::Result<()> {
+    let squared = vertex.normal.iter().map(|value| value * value).sum::<f32>();
+    if !squared.is_finite() || squared < 1e-12 {
+        return Err(invalid(&format!(
+            "Referenced model vertex {index} needs a finite nonzero normal"
+        )));
+    }
+    Ok(())
 }

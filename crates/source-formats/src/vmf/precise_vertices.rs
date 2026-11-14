@@ -184,37 +184,23 @@ impl Side {
 }
 
 impl Solid {
-    pub fn precise_vertices(&self) -> Result<Option<Vec<PreciseVertices>>, Error> {
-        if !self.sides.iter().any(|side| {
-            side.extra
-                .iter()
-                .any(|node| is_precise_vertices_key(&node.key))
-                || side
-                    .extra_properties
-                    .iter()
-                    .any(|(key, _)| is_precise_vertices_key(key))
-        }) {
-            return Ok(None);
-        }
+    pub fn validate_precise_vertices(&self) -> Result<(), Error> {
         let path = format!("solid {}/vertices_plus", self.id);
-        if self.sides.len() > MAX_PRECISE_SIDES {
-            return Err(invalid(&path, "precise brushes exceed the 64-side profile"));
-        }
         let mut entries = 0;
-        let mut rings = Vec::with_capacity(self.sides.len());
         for side in &self.sides {
-            let ring = side
-                .precise_vertices()?
-                .ok_or_else(|| invalid(&path, "precise vertices must cover every brush side"))?;
-            entries += ring.vertices.len();
-            if entries > MAX_PRECISE_ENTRIES {
-                return Err(invalid(
-                    &path,
-                    "precise brushes exceed their 4096-entry profile",
-                ));
+            if let Some(ring) = side.precise_vertices()? {
+                if self.sides.len() > MAX_PRECISE_SIDES {
+                    return Err(invalid(&path, "precise brushes exceed the 64-side profile"));
+                }
+                entries += ring.vertices.len();
+                if entries > MAX_PRECISE_ENTRIES {
+                    return Err(invalid(
+                        &path,
+                        "precise brushes exceed their 4096-entry profile",
+                    ));
+                }
             }
-            rings.push(ring);
         }
-        Ok(Some(rings))
+        Ok(())
     }
 }

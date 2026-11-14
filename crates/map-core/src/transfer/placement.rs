@@ -2,13 +2,14 @@ use super::*;
 
 pub(crate) fn placement_solid(solid: &Solid) -> std::result::Result<(), EditError> {
     let precise = solid
-        .precise_vertices()
+        .sides
+        .iter()
+        .map(|side| side.precise_vertices())
+        .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|error| invalid(error.to_string()))?;
     if !solid.extra_properties.0.is_empty()
         || !solid.extra.is_empty()
-        || precise
-            .as_ref()
-            .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
+        || precise.iter().flatten().any(|ring| ring.has_opaque_fields)
         || solid.sides.iter().any(|side| {
             !side.extra_properties.0.is_empty()
                 || side

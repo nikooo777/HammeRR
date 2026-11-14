@@ -96,10 +96,6 @@ pub fn parse(
             return Err(invalid("model vertices must fit ±65536 units"));
         }
         let normal = reader.vector(offset + 28)?;
-        let length = normal.iter().map(|value| value * value).sum::<f32>();
-        if !length.is_finite() || length < 1e-12 {
-            return Err(invalid("model vertex normals must be nonzero"));
-        }
         let (position, normal) = match reference {
             Some(transforms) => {
                 super::bones::vertex(&reader, offset, transforms, position, normal)?

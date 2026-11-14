@@ -213,15 +213,7 @@ pub(super) fn cut_plane(
     if source.solid != solid.id || source.side != side.id {
         return Err(invalid("Terrain cutter lost its original face identity"));
     }
-    let precise = side
-        .precise_vertices()
-        .map_err(|error| invalid(error.to_string()))?
-        .is_some();
-    let vertices = if precise {
-        face.vertices.as_slice()
-    } else {
-        side.plane.0.as_slice()
-    };
+    let vertices = side.plane.0.as_slice();
     if vertices.len() < 3 {
         return Err(invalid("Terrain cutter has no effective planar winding"));
     }

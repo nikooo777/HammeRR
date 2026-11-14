@@ -246,19 +246,21 @@ See the [MCP catalog](mcp.md#numeric-reflection-and-shear) for exact classes.
 
 ## Precision and other editors
 
-HammeRR keeps supported brush coordinates at double precision through edits and
-VMF saves. Compatible precise face windings stay consistent with the brush's
-plane data.
-
-Precise data must cover every side of a closed, convex brush with planar faces:
-at most 64 sides, with 3–64 vertices per face, inside ±65536 units.
-Unknown scalar fields inside a precise block are preserved on save. They block
-geometry edits.
+HammeRR keeps brush coordinates at double precision. The VMF's **plane** fields
+define the solid, as they do in Source compilers. **vertices_plus** stores a
+separate editor vertex cache. Open and Save retain that cache without changing
+planes, including rounded points or caches present on only some faces.
 
 1. Click **Open…** and choose the VMF.
-2. Edit the brush using **Transform**.
-3. Click **Save** to retain the geometry and its compatible precise vertex data.
-4. Use **Open…** to continue working from the saved VMF.
+2. Use **Transform** to move, rotate or scale the brush and its cached vertices.
+3. Click **Save** to retain the map.
+4. Use **Open…** to continue from the saved VMF.
+
+Topology edits rebuild the cache from the resulting planes. Each cached face
+allows 3–64 finite vertices inside ±65536 units; a cached brush allows up to
+64 sides. Malformed cache data rejects. Unknown scalar fields survive Save but
+block geometry changes. Component and CSG tools also check their own geometry
+requirements when you use them.
 
 > [!WARNING]
 > In Hammer++, enable **Use precise vertex data** before opening the map and

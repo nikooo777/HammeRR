@@ -63,6 +63,12 @@ The same preparation preserves sample positions and sizes; manual bindings
 follow the fresh authored side IDs. This conversion does not capture reflections.
 Supported samples and ordinary world/detail bindings can also come from [referenced assemblies](instances.md).
 
+## Native warnings
+
+CS:S loads unused BSP material records too. It can warn about their original
+`env_cubemap` values after generated surface bindings pass verification.
+This warning alone does not identify an unbound drawn surface.
+
 ## Limits
 
 - Fullbright cannot generate reflections.

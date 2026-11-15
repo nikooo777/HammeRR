@@ -7,6 +7,7 @@ use super::transport::Coverage;
 const MAX_OCCLUDERS: usize = 65_536;
 const LEAF_SIZE: usize = 4;
 const STACK_SIZE: usize = usize::BITS as usize;
+const SPLIT_BINS: usize = 16;
 pub(super) const TRIANGLE_EPSILON: f64 = 1e-9;
 pub(super) const CONTACT_EPSILON: f64 = 1e-6;
 
@@ -63,6 +64,7 @@ fn ray_box(start: DVec3, delta: DVec3, mins: DVec3, maxs: DVec3, limit: f64) -> 
 
 pub(super) trait ShadowObject {
     const MAX_OBJECTS: usize;
+    const SPATIAL_SPLITS: bool = false;
     fn bounds(&self) -> (DVec3, DVec3);
     fn work(&self) -> usize;
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String>;
@@ -291,6 +293,37 @@ impl ShadowObject for Triangle {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Bin {
+    mins: DVec3,
+    maxs: DVec3,
+    count: usize,
+}
+
+impl Bin {
+    fn empty() -> Self {
+        Self {
+            mins: DVec3::splat(f64::INFINITY),
+            maxs: DVec3::splat(f64::NEG_INFINITY),
+            count: 0,
+        }
+    }
+
+    fn include(&mut self, other: Self) {
+        self.mins = self.mins.min(other.mins);
+        self.maxs = self.maxs.max(other.maxs);
+        self.count += other.count;
+    }
+
+    fn cost(self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+        let extent = self.maxs - self.mins;
+        (extent.x * extent.y + extent.y * extent.z + extent.z * extent.x) * self.count as f64
+    }
+}
+
 struct Node {
     mins: DVec3,
     maxs: DVec3,
@@ -357,31 +390,111 @@ impl<T: ShadowObject> ShadowIndex<T> {
             children: None,
         });
         if range.len() > LEAF_SIZE {
-            let extent = maxs - mins;
-            let axis = if extent.x >= extent.y && extent.x >= extent.z {
-                0
-            } else if extent.y >= extent.z {
-                1
+            let middle = if T::SPATIAL_SPLITS {
+                self.spatial_split(range.clone(), consume)?
             } else {
-                2
+                None
             };
-            let levels = range.len().ilog2() as usize + 1;
-            consume(range.len() * levels)?;
-            self.order[range.clone()].sort_unstable_by(|&a, &b| {
-                let center = |hull: &T| {
-                    let (mins, maxs) = hull.bounds();
-                    mins[axis] * 0.5 + maxs[axis] * 0.5
-                };
-                center(&self.hulls[a])
-                    .total_cmp(&center(&self.hulls[b]))
-                    .then(a.cmp(&b))
-            });
-            let middle = range.start + range.len() / 2;
+            let middle = match middle {
+                Some(middle) => middle,
+                None => {
+                    let extent = maxs - mins;
+                    let axis = if extent.x >= extent.y && extent.x >= extent.z {
+                        0
+                    } else if extent.y >= extent.z {
+                        1
+                    } else {
+                        2
+                    };
+                    let levels = range.len().ilog2() as usize + 1;
+                    consume(range.len() * levels)?;
+                    self.order[range.clone()].sort_unstable_by(|&a, &b| {
+                        let center = |hull: &T| {
+                            let (mins, maxs) = hull.bounds();
+                            mins[axis] * 0.5 + maxs[axis] * 0.5
+                        };
+                        center(&self.hulls[a])
+                            .total_cmp(&center(&self.hulls[b]))
+                            .then(a.cmp(&b))
+                    });
+                    range.start + range.len() / 2
+                }
+            };
             let left = self.build(range.start..middle, consume)?;
             let right = self.build(middle..range.end, consume)?;
             self.nodes[node].children = Some([left, right]);
         }
         Ok(node)
+    }
+
+    fn spatial_split(
+        &mut self,
+        range: Range<usize>,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<Option<usize>, String> {
+        consume(range.len() * 3)?;
+        let center = |slot: usize| {
+            let (mins, maxs) = self.hulls[slot].bounds();
+            mins * 0.5 + maxs * 0.5
+        };
+        let mut low = DVec3::splat(f64::INFINITY);
+        let mut high = DVec3::splat(f64::NEG_INFINITY);
+        for &slot in &self.order[range.clone()] {
+            let center = center(slot);
+            low = low.min(center);
+            high = high.max(center);
+        }
+        let bin_for = |slot: usize, axis: usize| {
+            (((center(slot)[axis] - low[axis]) / (high[axis] - low[axis]) * SPLIT_BINS as f64)
+                as usize)
+                .min(SPLIT_BINS - 1)
+        };
+        let minimum = (range.len() / 4).max(1);
+        let mut best: Option<(f64, usize, usize)> = None;
+        for axis in 0..3 {
+            if low[axis] == high[axis] {
+                continue;
+            }
+            consume(range.len() * 8 + SPLIT_BINS * 8)?;
+            let mut bins = [Bin::empty(); SPLIT_BINS];
+            for &slot in &self.order[range.clone()] {
+                let (mins, maxs) = self.hulls[slot].bounds();
+                bins[bin_for(slot, axis)].include(Bin {
+                    mins,
+                    maxs,
+                    count: 1,
+                });
+            }
+            let mut prefix = bins;
+            for index in 1..SPLIT_BINS {
+                let previous = prefix[index - 1];
+                prefix[index].include(previous);
+            }
+            let mut suffix = Bin::empty();
+            for split in (1..SPLIT_BINS).rev() {
+                suffix.include(bins[split]);
+                let left = prefix[split - 1];
+                if left.count < minimum || suffix.count < minimum {
+                    continue;
+                }
+                let cost = left.cost() + suffix.cost();
+                if best.is_none_or(|candidate| cost < candidate.0) {
+                    best = Some((cost, axis, split));
+                }
+            }
+        }
+        let Some((_, axis, split)) = best else {
+            return Ok(None);
+        };
+        consume(range.len() * 3)?;
+        let mut middle = range.start;
+        for index in range.clone() {
+            if bin_for(self.order[index], axis) < split {
+                self.order.swap(middle, index);
+                middle += 1;
+            }
+        }
+        Ok(Some(middle))
     }
 
     pub(super) fn blocked(

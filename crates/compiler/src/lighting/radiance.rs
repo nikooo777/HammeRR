@@ -570,6 +570,7 @@ pub(super) struct SurfaceIndex {
 
 impl ShadowObject for Surface {
     const MAX_OBJECTS: usize = Triangle::MAX_OBJECTS;
+    const SPATIAL_SPLITS: bool = true;
     fn bounds(&self) -> (DVec3, DVec3) {
         (self.mins, self.maxs)
     }

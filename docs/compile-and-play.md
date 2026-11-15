@@ -294,7 +294,9 @@ sample the final output.
 ![A stationary green brush model reflects light onto the floor and a separate brush](images/stationary-model-reflection.png)
 Moving, parented and unrequested brush-model sources remain unavailable.
 Other MDL source families remain unsupported.
-More bounces increase work. Unsupported material effects report diagnostics rather than fabricated reflectance.
+Direct and bounced light share **Lighting work limit (millions)**.
+Exceeding it stops the build and preserves the previous BSP.
+Unsupported material effects report diagnostics rather than fabricated reflectance.
 
 ### Normal-map lighting
 

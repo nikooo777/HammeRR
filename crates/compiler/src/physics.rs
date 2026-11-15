@@ -197,27 +197,59 @@ fn surface_index(name: &str, names: &mut Vec<String>) -> Result<u8, String> {
     Ok(names.len() as u8)
 }
 
-fn hull<'a>(
+fn hull(
     map: &Map,
     tag: usize,
-    sides: impl Clone + Iterator<Item = (usize, &'a crate::winding::Winding)>,
+    sides: impl Iterator<Item = usize>,
     budget: &mut topology::Budget,
-) -> Result<Shape, String> {
+) -> Result<(Shape, Vec<usize>), String> {
     let brush = tag
         .try_into()
         .map_err(|_| "Physics brush index exceeds native bounds")?;
-    topology::build(
-        brush,
-        sides.map(|(index, winding)| {
+    let source = sides.collect::<Vec<_>>();
+    if !(4..=MAX_PLANES).contains(&source.len()) {
+        return Err(format!(
+            "Physics brush {brush} requires 4–256 source planes"
+        ));
+    }
+    budget.charge(0, source.len() * source.len() * (source.len() + 4))?;
+    let native = source
+        .iter()
+        .map(|&index| {
             let plane = map.planes.get(index);
             let normal = plane.normal.as_vec3();
-            (
-                [normal.x, normal.y, normal.z, plane.dist as f32],
-                winding.0.as_slice(),
-            )
-        }),
+            [normal.x, normal.y, normal.z, plane.dist as f32]
+        })
+        .collect::<Vec<_>>();
+    let planes = native
+        .iter()
+        .map(|plane| {
+            let normal = DVec3::new(
+                f64::from(plane[0]),
+                f64::from(plane[1]),
+                f64::from(plane[2]),
+            );
+            let length = normal.length();
+            if !length.is_finite() || length == 0.0 || !plane[3].is_finite() {
+                return Err(format!("Physics brush {brush} has an invalid native plane"));
+            }
+            Ok(map_core::Plane {
+                normal: normal / length,
+                dist: f64::from(plane[3]) / length,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let geometry = map_core::BrushGeometry::from_planes_strict(&planes)
+        .map_err(|error| format!("Physics brush {brush}: {error}"))?;
+    let shape = topology::build(
+        brush,
+        geometry
+            .faces
+            .iter()
+            .map(|face| (native[face.side], face.vertices.as_slice())),
         budget,
-    )
+    )?;
+    Ok((shape, geometry.faces.iter().map(|face| face.side).collect()))
 }
 
 fn shape(
@@ -228,38 +260,24 @@ fn shape(
     report: &mut Report,
 ) -> Result<Shape, String> {
     let brush = &map.brushes[index];
-    let mut result = hull(
-        map,
-        index,
-        brush
-            .sides
-            .iter()
-            .filter(|side| !side.bevel)
-            .filter_map(|side| {
-                let winding = side.winding.as_ref()?;
-                (!winding.0.is_empty()).then_some((side.plane, winding))
-            }),
-        budget,
-    )
-    .inspect_err(|message| {
-        let origin = map.entities[brush.entity].origin.unwrap_or(DVec3::ZERO);
-        report.diagnostics.push(Diagnostic::error(
-            message.clone(),
-            Some(format!("solid:{}", brush.id)),
-            Some((brush.mins + brush.maxs) * 0.5 + origin),
-        ));
-    })?;
+    let sides = brush
+        .sides
+        .iter()
+        .filter(|side| !side.bevel)
+        .collect::<Vec<_>>();
+    let (mut result, sources) = hull(map, index, sides.iter().map(|side| side.plane), budget)
+        .inspect_err(|message| {
+            let origin = map.entities[brush.entity].origin.unwrap_or(DVec3::ZERO);
+            report.diagnostics.push(Diagnostic::error(
+                message.clone(),
+                Some(format!("solid:{}", brush.id)),
+                Some((brush.mins + brush.maxs) * 0.5 + origin),
+            ));
+        })?;
     if let Some(names) = materials {
-        result.materials = brush
-            .sides
+        result.materials = sources
             .iter()
-            .filter(|side| !side.bevel)
-            .filter(|side| {
-                side.winding
-                    .as_ref()
-                    .is_some_and(|winding| !winding.0.is_empty())
-            })
-            .map(|side| material_index(map, side.material, names))
+            .map(|&index| material_index(map, sides[index].material, names))
             .collect::<Result<_, _>>()?;
     }
     Ok(result)
@@ -464,13 +482,10 @@ fn plan(
                         hull(
                             map,
                             map.brushes.len() + index,
-                            node.volume
-                                .sides
-                                .iter()
-                                .filter(|side| !side.winding.0.is_empty())
-                                .map(|side| (side.plane, &side.winding)),
+                            node.volume.sides.iter().map(|side| side.plane),
                             &mut topology_budget,
                         )
+                        .map(|(shape, _)| shape)
                         .map_err(|message| {
                             let (mins, maxs) = node.volume.bounds();
                             let message = format!(

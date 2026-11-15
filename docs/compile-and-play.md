@@ -195,11 +195,16 @@ Visibility-limit errors include refused work and input geometry counts.
 Repeated unsupported-material warnings show affected brush/side totals and
 bounded source examples.
 
-Materials with `%compilepassbullets` compile as **GRATE** contents while retaining
-their authored drawing and alpha settings. They do not seal the map. Player
-collision and shots follow engine masks; CS:S bullets use grate penetration
-logic. Conflicting special contents reject. Existing texture-shadow limits
-still apply.
+On ordinary materials, `%compilepassbullets` produces **GRATE** contents and
+retains the authored drawing and alpha settings. GRATE does not seal the map;
+CS:S shots use grate penetration logic.
+
+Clip flags take precedence over `%compilepassbullets`, as in Valve's stock
+**toolsplayerclip** material. Player clips block players and pass bullets;
+NPC clips block NPCs. They stay invisible, do not split visibility and retain
+their dedicated collision contents in BSP and engine physics. Other unsupported
+special-content combinations reject. Existing texture-shadow limits apply.
+`%compilenochop` retains the native surface flag.
 
 ## Lighting
 

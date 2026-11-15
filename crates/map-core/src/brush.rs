@@ -66,6 +66,15 @@ impl BrushGeometry {
     }
 
     pub fn from_planes(planes: &[Plane]) -> Result<Self, BrushError> {
+        Self::from_planes_with_epsilon(planes, ON_EPSILON)
+    }
+
+    /// Uses strict sidedness and exact duplicate suppression for collision geometry.
+    pub fn from_planes_strict(planes: &[Plane]) -> Result<Self, BrushError> {
+        Self::from_planes_with_epsilon(planes, 0.0)
+    }
+
+    fn from_planes_with_epsilon(planes: &[Plane], epsilon: f64) -> Result<Self, BrushError> {
         let mut faces = Vec::with_capacity(planes.len());
         'faces: for (i, plane) in planes.iter().enumerate() {
             let mut winding = plane.base_winding();
@@ -73,19 +82,19 @@ impl BrushGeometry {
                 if i == j {
                     continue;
                 }
-                if other.approx_eq(plane) {
+                if other == plane || (epsilon != 0.0 && other.approx_eq(plane)) {
                     // A duplicated plane: the first occurrence owns the face.
                     if j < i {
                         continue 'faces;
                     }
                     continue;
                 }
-                winding = other.clip_behind(&winding);
+                winding = other.clip_behind_with_epsilon(&winding, epsilon);
                 if winding.is_empty() {
                     continue 'faces;
                 }
             }
-            let vertices = dedup_ring(winding);
+            let vertices = dedup_ring(winding, epsilon);
             if vertices.len() >= 3 {
                 faces.push(Face {
                     side: i,
@@ -112,12 +121,13 @@ impl BrushGeometry {
     }
 }
 
-/// Drops consecutive vertices closer than `ON_EPSILON`, including the
+/// Drops consecutive vertices within the chosen tolerance, including the
 /// wrap-around pair.
-fn dedup_ring(mut points: Vec<DVec3>) -> Vec<DVec3> {
-    points.dedup_by(|a, b| a.distance_squared(*b) < ON_EPSILON * ON_EPSILON);
+fn dedup_ring(mut points: Vec<DVec3>, epsilon: f64) -> Vec<DVec3> {
+    points.dedup_by(|a, b| a == b || a.distance_squared(*b) < epsilon * epsilon);
     while points.len() > 1
-        && points[0].distance_squared(points[points.len() - 1]) < ON_EPSILON * ON_EPSILON
+        && (points[0] == points[points.len() - 1]
+            || points[0].distance_squared(points[points.len() - 1]) < epsilon * epsilon)
     {
         points.pop();
     }

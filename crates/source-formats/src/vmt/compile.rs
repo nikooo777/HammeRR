@@ -48,12 +48,9 @@ impl CompileSemantics {
     pub fn checked_from_material(material: &Material) -> Result<Self, String> {
         if material.compile_flag("%compilepassbullets") {
             const CONFLICTS: &[&str] = &[
-                "%compileclip",
-                "%playerclip",
-                "%compileplayerclip",
-                "%compilenpcclip",
                 "%compiletrigger",
                 "%compilenolight",
+                "%compilenochop",
                 "%compilesky",
                 "%compile2dsky",
                 "%compilehint",
@@ -96,24 +93,26 @@ impl CompileSemantics {
             semantics.surface |= surf::NODRAW | surf::NOLIGHT;
         };
 
+        if flag("%compilenochop") {
+            semantics.surface |= surf::NOCHOP;
+        }
         if flag("%compilenodraw") {
             hide(&mut semantics);
         }
         if flag("%compilepassbullets") {
             semantics.contents = contents::GRATE;
         }
-        let mut clip = 0;
-        if flag("%compileclip") {
-            clip |= contents::PLAYERCLIP | contents::MONSTERCLIP;
-        }
-        if flag("%playerclip") || flag("%compileplayerclip") {
-            clip |= contents::PLAYERCLIP;
-        }
-        if flag("%compilenpcclip") {
-            clip |= contents::MONSTERCLIP;
-        }
+        let clip = if flag("%compileclip") {
+            contents::PLAYERCLIP | contents::MONSTERCLIP
+        } else if flag("%playerclip") || flag("%compileplayerclip") {
+            contents::PLAYERCLIP
+        } else if flag("%compilenpcclip") {
+            contents::MONSTERCLIP
+        } else {
+            0
+        };
         if clip != 0 {
-            semantics.contents = clip;
+            semantics.contents = clip | contents::DETAIL;
             hide(&mut semantics);
         }
         if flag("%compiletrigger") {
@@ -195,6 +194,7 @@ impl CompileSemantics {
         }
         const HANDLED: &[&str] = &[
             "%compilenodraw",
+            "%compilenochop",
             "%compilepassbullets",
             "%compileclip",
             "%compileplayerclip",

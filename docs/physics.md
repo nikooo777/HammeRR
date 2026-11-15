@@ -18,6 +18,14 @@ A valid material without that field uses the defined `default` surface property.
 Missing or malformed required definitions fail the build.
 Changes to the consumed surface manifest or definition files require a new build.
 
+Collision hulls use the emitted BSP planes. Viewport clipping tolerances do not
+define collision. Corners with identical native float coordinates share one
+vertex; collapsed faces or invalid hulls fail the build. Ordinary hulls use the
+native collision plane builder and 0.01-unit vertex merge. Tiny facets use
+explicit topology to preserve their geometry. Construction errors stop the build;
+there is no retry with another constructor. Geometry, contact materials and
+serialization remain checked.
+
 ## Brush-model mass
 
 The material with the greatest emitted face area determines base mass.

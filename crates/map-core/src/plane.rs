@@ -64,11 +64,15 @@ impl Plane {
 
     /// Clips a convex polygon to the part behind this plane.
     pub fn clip_behind(&self, points: &[DVec3]) -> Vec<DVec3> {
+        self.clip_behind_with_epsilon(points, ON_EPSILON)
+    }
+
+    pub(crate) fn clip_behind_with_epsilon(&self, points: &[DVec3], epsilon: f64) -> Vec<DVec3> {
         let dists: Vec<f64> = points.iter().map(|&p| self.distance_to(p)).collect();
-        if dists.iter().all(|&d| d <= ON_EPSILON) {
+        if dists.iter().all(|&d| d <= epsilon) {
             return points.to_vec();
         }
-        if dists.iter().all(|&d| d >= -ON_EPSILON) {
+        if dists.iter().all(|&d| d >= -epsilon) {
             return Vec::new();
         }
 
@@ -77,11 +81,10 @@ impl Plane {
             let j = (i + 1) % points.len();
             let (p, q) = (points[i], points[j]);
             let (dp, dq) = (dists[i], dists[j]);
-            if dp <= ON_EPSILON {
+            if dp <= epsilon {
                 out.push(p);
             }
-            let crosses =
-                (dp > ON_EPSILON && dq < -ON_EPSILON) || (dp < -ON_EPSILON && dq > ON_EPSILON);
+            let crosses = (dp > epsilon && dq < -epsilon) || (dp < -epsilon && dq > epsilon);
             if crosses {
                 let mut mid = p + (q - p) * (dp / (dp - dq));
                 // Axis-aligned planes are exact; avoid accumulating error there.

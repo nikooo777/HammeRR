@@ -24,10 +24,13 @@ mod soup;
 
 const GUARD_BYTES: usize = 64;
 const GEOMETRY_EPSILON: f64 = 0.02;
+const NATIVE_VERTEX_MERGE: f32 = 0.01;
+const MIN_PLANE_FACE_WIDTH: f64 = 0.005 / 0.0254;
 const MAX_TRIANGLES: i32 = 512;
 const MAX_GEOMETRY_WORK: usize = 50_000_000;
 type Pointer = *mut c_void;
 type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> Pointer;
+type FromPlanes = unsafe extern "C" fn(Pointer, *const f32, i32, f32) -> Pointer;
 type SetGameData = unsafe extern "C" fn(Pointer, Pointer, u32);
 type Release = unsafe extern "C" fn(Pointer, Pointer);
 type Convert = unsafe extern "C" fn(Pointer, *const Pointer, i32) -> Pointer;
@@ -54,6 +57,7 @@ struct Vector([f32; 3]);
 struct Api {
     pointer: Pointer,
     base: usize,
+    from_planes: FromPlanes,
     from_polyhedron: polyhedron::Constructor,
     set_game_data: SetGameData,
     convex_free: Release,
@@ -129,6 +133,7 @@ impl Api {
         Ok(Self {
             pointer,
             base,
+            from_planes: unsafe { member(pointer, base, 3, 0x20d00)? },
             from_polyhedron: unsafe { member(pointer, base, 9, 0x20e00)? },
             set_game_data: unsafe { member(pointer, base, 6, 0x20aa0)? },
             convex_free: unsafe { member(pointer, base, 7, 0x20c90)? },
@@ -150,16 +155,37 @@ impl Api {
     }
 
     fn convex(&self, shape: &Shape) -> Result<Convex<'_>, Failure> {
-        let (pointer, status) = polyhedron::construct(self.from_polyhedron, self.pointer, shape)
-            .map_err(|message| Failure::shape(Stage::ConvexConstruction, shape.brush, message))?;
-        let convex = Convex { api: self, pointer };
-        polyhedron::check_status(status)
-            .map_err(|message| Failure::shape(Stage::ConvexConstruction, shape.brush, message))?;
-        if pointer.is_null() {
+        let explicit = requires_explicit_topology(shape);
+        let convex = if explicit {
+            let (pointer, status) =
+                polyhedron::construct(self.from_polyhedron, self.pointer, shape).map_err(
+                    |message| Failure::shape(Stage::ConvexConstruction, shape.brush, message),
+                )?;
+            let convex = Convex { api: self, pointer };
+            polyhedron::check_status(status).map_err(|message| {
+                Failure::shape(Stage::ConvexConstruction, shape.brush, message)
+            })?;
+            convex
+        } else {
+            let pointer = unsafe {
+                (self.from_planes)(
+                    self.pointer,
+                    shape.planes.as_ptr().cast(),
+                    shape.planes.len() as i32,
+                    NATIVE_VERTEX_MERGE,
+                )
+            };
+            Convex { api: self, pointer }
+        };
+        if convex.pointer.is_null() {
             return Err(Failure::shape(
                 Stage::ConvexConstruction,
                 shape.brush,
-                "Native physics rejected the requested convex hull",
+                if explicit {
+                    "Native physics rejected the explicit compact-facet hull"
+                } else {
+                    "Native physics rejected the plane-cooked convex hull"
+                },
             ));
         }
         unsafe {
@@ -197,6 +223,27 @@ impl Api {
         }
         Ok(Collide { api: self, pointer })
     }
+}
+
+fn requires_explicit_topology(shape: &Shape) -> bool {
+    shape.faces.iter().any(|face| {
+        let first = point(Vector(shape.corners[usize::from(face[0])]));
+        let mut area = DVec3::ZERO;
+        for pair in face[1..].windows(2) {
+            let a = point(Vector(shape.corners[usize::from(pair[0])])) - first;
+            let b = point(Vector(shape.corners[usize::from(pair[1])])) - first;
+            area += a.cross(b);
+        }
+        let perimeter = face
+            .iter()
+            .zip(face.iter().cycle().skip(1))
+            .map(|(&a, &b)| {
+                point(Vector(shape.corners[usize::from(a)]))
+                    .distance(point(Vector(shape.corners[usize::from(b)])))
+            })
+            .sum::<f64>();
+        area.length() < MIN_PLANE_FACE_WIDTH * perimeter
+    })
 }
 
 struct Convex<'a> {

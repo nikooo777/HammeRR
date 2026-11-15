@@ -110,25 +110,34 @@ pub(super) fn build<'a>(
         for &point in winding.iter().rev() {
             let key = source_key(point);
             let incident = incident_faces[&key];
-            let existing = source_indices.get(&key).copied().or_else(|| {
-                source_corners
-                    .iter()
-                    .enumerate()
-                    .filter(|&(index, &candidate)| {
-                        point == candidate
-                            || ((point - candidate).abs().max_element() <= SOURCE_CORNER_ROUNDOFF
-                                && incident
-                                    .iter()
-                                    .zip(corner_faces[index])
-                                    .all(|(a, b)| a & b == 0))
-                    })
-                    .min_by(|(_, a), (_, b)| {
-                        point
-                            .distance_squared(**a)
-                            .total_cmp(&point.distance_squared(**b))
-                    })
-                    .map(|(index, _)| index)
-            });
+            let stored = point
+                .as_vec3()
+                .to_array()
+                .map(|value| if value == 0.0 { 0.0 } else { value });
+            let existing = source_indices
+                .get(&key)
+                .copied()
+                .or_else(|| shape.corners.iter().position(|corner| *corner == stored))
+                .or_else(|| {
+                    source_corners
+                        .iter()
+                        .enumerate()
+                        .filter(|&(index, &candidate)| {
+                            point == candidate
+                                || ((point - candidate).abs().max_element()
+                                    <= SOURCE_CORNER_ROUNDOFF
+                                    && incident
+                                        .iter()
+                                        .zip(corner_faces[index])
+                                        .all(|(a, b)| a & b == 0))
+                        })
+                        .min_by(|(_, a), (_, b)| {
+                            point
+                                .distance_squared(**a)
+                                .total_cmp(&point.distance_squared(**b))
+                        })
+                        .map(|(index, _)| index)
+                });
             let index = if let Some(index) = existing {
                 for (faces, incident) in corner_faces[index].iter_mut().zip(incident) {
                     *faces |= incident;
@@ -138,16 +147,6 @@ pub(super) fn build<'a>(
                 if source_corners.len() == MAX_CORNERS {
                     return Err(error(brush, "source corner count exceeds 256"));
                 }
-                let stored = point
-                    .as_vec3()
-                    .to_array()
-                    .map(|value| if value == 0.0 { 0.0 } else { value });
-                if shape.corners.contains(&stored) {
-                    return Err(error(
-                        brush,
-                        "distinct source corners collapse in Source f32 coordinates",
-                    ));
-                }
                 let index = source_corners.len();
                 source_corners.push(point);
                 corner_faces.push(incident);
@@ -155,7 +154,18 @@ pub(super) fn build<'a>(
                 index
             };
             source_indices.insert(key, index);
-            face.push(index as u16);
+            if face.last() != Some(&(index as u16)) {
+                face.push(index as u16);
+            }
+        }
+        if face.len() > 1 && face.first() == face.last() {
+            face.pop();
+        }
+        if face.len() < 3 {
+            return Err(error(
+                brush,
+                "a source face collapses in native coordinates",
+            ));
         }
         shape.planes.push(plane);
         shape.faces.push(face);

@@ -133,10 +133,9 @@ fn live_steam_root() -> io::Result<PathBuf> {
         let Some(parent) = executable.parent() else {
             continue;
         };
-        if !parent
-            .file_name()
-            .is_some_and(|name| name == "ubuntu12_32" || name == "ubuntu12_64")
-        {
+        if !parent.file_name().is_some_and(|name| {
+            name == "ubuntu12_32" || name == "ubuntu12_64" || name == "steamrt64"
+        }) {
             continue;
         }
         if let Some(root) = parent.parent() {

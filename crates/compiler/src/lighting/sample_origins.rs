@@ -40,14 +40,20 @@ struct Clearance {
 }
 
 #[derive(Clone, Copy)]
-struct HullLimit {
-    slot: usize,
-    fraction: f64,
+enum HullLimit {
+    Boundary { slot: usize, fraction: f64 },
+    SourcePlane(DVec3),
 }
 
 enum Placement {
     Placed(DVec3),
-    NoPlacement { hint: Option<DVec3> },
+    Covered,
+    Blocked { hint: Option<DVec3> },
+}
+
+pub(super) enum Origin {
+    Open(DVec3),
+    Covered,
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +91,7 @@ fn exit_clearance(plane: Plane, point: DVec3, end: DVec3, distance: f64, slope: 
 fn source_contact_plane(
     source: &Source<'_>,
     hull: &Occluder,
+    opposite: bool,
     consume: &mut impl FnMut(usize) -> Result<(), String>,
 ) -> Result<Option<usize>, String> {
     let Source::Plane {
@@ -105,15 +112,26 @@ fn source_contact_plane(
         return Ok(None);
     }
     let lookup = sides.len().checked_ilog2().unwrap_or(0) as usize + 1;
+    let (plane, equation) = if opposite {
+        (
+            *plane ^ 1,
+            Plane {
+                normal: -equation.normal,
+                dist: -equation.dist,
+            },
+        )
+    } else {
+        (*plane, *equation)
+    };
     let mut coincident = None;
     for (index, (side, actual)) in identity.sides.iter().zip(&hull.planes).enumerate() {
         consume(lookup + 2)?;
-        if side.plane == *plane
+        if side.plane == plane
             && actual.normal == equation.normal
             && actual.dist == equation.dist
             && let Some(side) = side.side
         {
-            if sides.binary_search(&side).is_ok() {
+            if !opposite && sides.binary_search(&side).is_ok() {
                 return Ok(Some(index));
             }
             consume(2)?;
@@ -121,6 +139,68 @@ fn source_contact_plane(
         }
     }
     Ok(coincident)
+}
+
+fn covered_source(
+    scene: &Scene<'_>,
+    source: &Source<'_>,
+    point: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    let Source::Plane { equation, .. } = source else {
+        return Ok(false);
+    };
+    budget.consume(ORIGIN_WORK)?;
+    let reach = equation.normal
+        * ((equation.distance_to(point).abs() + rounding(*equation, point))
+            / equation.normal.length_squared());
+    let start = point - reach;
+    let end = point + reach;
+    if !start.is_finite() || !end.is_finite() {
+        return Err("Covered sample source query must be finite".into());
+    }
+    let budget = RefCell::new(budget);
+    let mut covered = [false; 2];
+    for hulls in std::iter::once(scene.shadows).chain(scene.model) {
+        hulls.visit(
+            start,
+            end,
+            &mut |work| budget.borrow_mut().consume(work),
+            &mut |hull| {
+                let mut consume = |work| budget.borrow_mut().consume(work);
+                consume(hull.plane_count())?;
+                if hull.optical.is_some() || hull.sky.iter().any(|&sky| sky) {
+                    return Ok(Visit::Continue(1.0));
+                }
+                for (opposite, covered) in covered.iter_mut().enumerate() {
+                    if *covered {
+                        continue;
+                    }
+                    let Some(contact) =
+                        source_contact_plane(source, hull, opposite != 0, &mut consume)?
+                    else {
+                        continue;
+                    };
+                    consume(hull.plane_count() * PLANE_WORK)?;
+                    // Opposite caps with strict side support enclose the sample in solid space.
+                    if hull.planes.iter().enumerate().all(|(index, &plane)| {
+                        index == contact || plane.distance_to(point) < -rounding(plane, point)
+                    }) {
+                        *covered = true;
+                    }
+                }
+                Ok(if covered == [true; 2] {
+                    Visit::Stop
+                } else {
+                    Visit::Continue(1.0)
+                })
+            },
+        )?;
+        if covered == [true; 2] {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn hull_clearance(
@@ -140,7 +220,7 @@ fn hull_clearance(
         &mut |work| budget.borrow_mut().consume(work),
         &mut |slot, hull| {
             let mut consume = |work| budget.borrow_mut().consume(work);
-            let contact = source_contact_plane(source, hull, &mut consume)?;
+            let contact = source_contact_plane(source, hull, false, &mut consume)?;
             consume(hull.plane_count() * PLANE_WORK)?;
             let Some(interval) = hull.interval(point, full_end)? else {
                 return Ok(Visit::Continue(clearance.limit()));
@@ -150,6 +230,11 @@ fn hull_clearance(
                 && let Some(index) = contact
             {
                 let plane = hull.planes[index];
+                if interval.leaving == 1.0 {
+                    clearance.first = Some(0.0);
+                    limiting = Some(HullLimit::SourcePlane(plane.normal));
+                    return Ok(Visit::Continue(clearance.limit()));
+                }
                 let distance = plane.distance_to(point);
                 let slope = plane.normal.dot(direction);
                 if slope > 0.0 {
@@ -198,7 +283,7 @@ fn hull_clearance(
                 if fraction > 0.0 && fraction < 1.0 && Some(fraction) != exempt {
                     consume(BOUNDARY_TRACKING_WORK)?;
                     if clearance.constrain(fraction) {
-                        limiting = Some(HullLimit { slot, fraction });
+                        limiting = Some(HullLimit::Boundary { slot, fraction });
                     }
                 }
             }
@@ -213,6 +298,7 @@ fn boundary_hint(
     fraction: f64,
     point: DVec3,
     end: DVec3,
+    source_normal: DVec3,
     budget: &mut Budget<'_>,
 ) -> Result<DVec3, String> {
     for &plane in &hull.planes {
@@ -231,6 +317,17 @@ fn boundary_hint(
             if crossing == fraction {
                 budget.consume(ORIGIN_WORK)?;
                 let safe = if a > 0.0 { plane.normal } else { -plane.normal };
+                if safe == -source_normal {
+                    for &edge in &hull.planes {
+                        budget.consume(2 * PLANE_WORK)?;
+                        if edge.normal != safe
+                            && edge.distance_to(point) >= -rounding(edge, point)
+                            && source_normal.dot(source_normal + edge.normal) > 0.0
+                        {
+                            return Ok(edge.normal);
+                        }
+                    }
+                }
                 return safe
                     .try_normalize()
                     .ok_or_else(|| "Sample origin limiting plane has an invalid normal".into());
@@ -253,7 +350,7 @@ fn certify_source_hulls(
         &mut |work| budget.borrow_mut().consume(work),
         &mut |hull| {
             let mut consume = |work| budget.borrow_mut().consume(work);
-            if source_contact_plane(source, hull, &mut consume)?.is_none() {
+            if source_contact_plane(source, hull, false, &mut consume)?.is_none() {
                 return Ok(Visit::Continue(1.0));
             }
             consume(hull.plane_count() * PLANE_WORK)?;
@@ -318,6 +415,9 @@ fn placement(
         {
             return Err("Sample origin does not match its certified native source plane".into());
         }
+    }
+    if covered_source(scene, source, point, budget)? {
+        return Ok(Placement::Covered);
     }
     let numerical =
         (point.abs().max_element() + maximum + 1.0) * (ROUNDING_OPERATIONS * f64::EPSILON);
@@ -392,24 +492,23 @@ fn placement(
         return Err("Sample origin clearance bounds must be finite".into());
     }
     if clearance.required >= upper {
-        let hint = if matches!(source, Source::Plane { .. })
+        let hint = if let Source::Plane { equation, .. } = source
             && let Some((hulls, limit)) = limiting_hull
         {
-            let hull = hulls
-                .objects()
-                .get(limit.slot)
-                .ok_or("Sample origin limiting hull is unavailable")?;
-            Some(boundary_hint(
-                hull,
-                limit.fraction,
-                point,
-                full_end,
-                budget,
-            )?)
+            Some(match limit {
+                HullLimit::SourcePlane(normal) => normal,
+                HullLimit::Boundary { slot, fraction } => {
+                    let hull = hulls
+                        .objects()
+                        .get(slot)
+                        .ok_or("Sample origin limiting hull is unavailable")?;
+                    boundary_hint(hull, fraction, point, full_end, equation.normal, budget)?
+                }
+            })
         } else {
             None
         };
-        return Ok(Placement::NoPlacement { hint });
+        return Ok(Placement::Blocked { hint });
     }
     let distance = if clearance.first.is_some() {
         clearance.required + (upper - clearance.required) * 0.5
@@ -472,10 +571,11 @@ pub(super) fn origin(
     bias: DVec3,
     maximum: f64,
     budget: &mut Budget<'_>,
-) -> Result<DVec3, String> {
+) -> Result<Origin, String> {
     let mut hint = match placement(scene, source, point, bias, maximum, budget)? {
-        Placement::Placed(origin) => return Ok(origin),
-        Placement::NoPlacement { hint } => hint,
+        Placement::Placed(origin) => return Ok(Origin::Open(origin)),
+        Placement::Covered => return Ok(Origin::Covered),
+        Placement::Blocked { hint } => hint,
     };
     let Source::Plane { equation, .. } = source else {
         return Err(
@@ -524,8 +624,9 @@ pub(super) fn origin(
         next += 1;
         current = candidate.direction;
         match placement(scene, source, point, candidate.bias, maximum, budget)? {
-            Placement::Placed(origin) => return Ok(origin),
-            Placement::NoPlacement { hint: blocked } => hint = blocked,
+            Placement::Placed(origin) => return Ok(Origin::Open(origin)),
+            Placement::Covered => return Ok(Origin::Covered),
+            Placement::Blocked { hint: blocked } => hint = blocked,
         }
     }
 }

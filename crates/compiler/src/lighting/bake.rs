@@ -214,7 +214,7 @@ impl Plan {
         point: DVec3,
         normal: DVec3,
         budget: &mut Budget<'_>,
-    ) -> Result<DVec3, String> {
+    ) -> Result<super::sample_origins::Origin, String> {
         let (source, bias) = match &self.surface {
             Surface::Plane {
                 world_normal,
@@ -1839,6 +1839,15 @@ fn bake_channel(
                             report,
                         )
                     })?;
+                let super::sample_origins::Origin::Open(origin) = origin else {
+                    channels.finish_sample(
+                        t * width + s,
+                        &[[DVec3::ZERO; super::bump::MAPS]; 4],
+                        budget,
+                    )?;
+                    budget.finish_sample();
+                    continue;
+                };
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut color = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 let add_channel = |channels: &mut super::styles::Channels,

@@ -261,6 +261,10 @@ checks within a 0.5-unit radius. Separate blockers stay active. Invalid geometry
 unsupported arithmetic, exhausted search and resource limits remain errors; cancellation
 stops the build.
 
+Buried samples receive no direct or bounced light only when same-owner opaque
+shadow hulls with exact opposite cap planes enclose them. Exposed edges still
+need a certified origin. Texture-transmitting and sky hulls do not qualify.
+
 ### Bounced light
 
 Choose one to four diffuse bounces under **Indirect light**.

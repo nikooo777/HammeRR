@@ -235,6 +235,15 @@ pub(super) fn bake(
                             ctx.report,
                         )
                     })?;
+                let super::sample_origins::Origin::Open(origin) = origin else {
+                    channels.finish_bounce_sample(
+                        t * width + s,
+                        &[[DVec3::ZERO; super::bump::MAPS]; 4],
+                        budget,
+                    )?;
+                    budget.finish_sample();
+                    continue;
+                };
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut colors = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 for (map, &normal) in normals.iter().enumerate().take(plan.map_count()) {

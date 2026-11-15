@@ -396,7 +396,7 @@ records! {
     TexData => TEXDATA,
     Node => NODES,
     TexInfo => TEXINFO,
-    Face => FACES,
+    Face => FACES v 1,
     Leaf => LEAFS v 1,
     Edge => EDGES,
     Model => MODELS,
@@ -443,10 +443,20 @@ impl Default for Bsp {
 impl Bsp {
     /// An empty version 20 map.
     pub fn new() -> Self {
+        let mut lumps = vec![Lump::default(); LUMP_COUNT];
+        for index in [lump::FACES, lump::FACES_HDR] {
+            lumps[index].version = Face::VERSION;
+        }
+        for index in [lump::LIGHTING, lump::LIGHTING_HDR] {
+            lumps[index].version = RgbExp32::VERSION;
+        }
+        for index in [lump::LEAF_AMBIENT_LIGHTING, lump::LEAF_AMBIENT_LIGHTING_HDR] {
+            lumps[index].version = LeafAmbientSample::VERSION;
+        }
         Self {
             version: 20,
             map_revision: 0,
-            lumps: vec![Lump::default(); LUMP_COUNT],
+            lumps,
             game_lumps: Vec::new(),
         }
     }

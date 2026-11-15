@@ -11,6 +11,20 @@ use crate::asset_sources::BuildMaterialSources;
 
 const DEPENDENCIES: [&str; 3] = ["$bottommaterial", "$crackmaterial", "$fallbackmaterial"];
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ModelUse {
+    Static,
+    Detail,
+    Dynamic,
+    Physics,
+}
+
+impl ModelUse {
+    fn breakable(self) -> bool {
+        matches!(self, Self::Dynamic | Self::Physics)
+    }
+}
+
 pub(super) fn self_bottom(name: &str, key: &str, value: &str) -> bool {
     crate::water_dependencies::native_self_bottom(name, key, value)
 }
@@ -89,6 +103,7 @@ pub(super) struct Graph<'a> {
     pub missing_sources: BTreeSet<String>,
     source_bytes: usize,
     work: usize,
+    models: BTreeSet<(String, ModelUse)>,
     pub entries: BTreeMap<String, Vec<u8>>,
     pub aliases: BTreeMap<String, CubemapAliasAsset>,
 }
@@ -106,6 +121,7 @@ impl<'a> Graph<'a> {
             missing_sources: BTreeSet::new(),
             source_bytes: 0,
             work: 0,
+            models: BTreeSet::new(),
             entries: BTreeMap::new(),
             aliases: BTreeMap::new(),
         }
@@ -114,6 +130,13 @@ impl<'a> Graph<'a> {
     pub fn record_scene(&mut self, vmf: &source_formats::vmf::Vmf) -> Result<(), String> {
         for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
             self.checkpoint()?;
+            let class = entity.classname().unwrap_or_default().to_ascii_lowercase();
+            if matches!(class.as_str(), "move_rope" | "keyframe_rope") {
+                let material = source_formats::entity_resources::rope_material(entity)
+                    .map_err(|error| format!("entity:{}: {error}", entity.id))?;
+                self.needs_alias(&material_name(&material)?)
+                    .map_err(|error| format!("entity:{}: {error}", entity.id))?;
+            }
             let Some(model) = entity
                 .properties
                 .get("model")
@@ -121,20 +144,31 @@ impl<'a> Graph<'a> {
             else {
                 continue;
             };
-            let class = entity.classname().unwrap_or_default();
-            if ["prop_detail", "detail_prop"]
-                .iter()
-                .any(|name| class.eq_ignore_ascii_case(name))
-            {
+            if matches!(class.as_str(), "prop_detail" | "detail_prop") {
                 continue;
             }
-            if !class.eq_ignore_ascii_case("prop_static") {
-                return Err(format!(
-                    "entity:{}: native reflection capture supports external models only on prop_static or supported compiled details; remove this model from the capture scene",
-                    entity.id
-                ));
+            if matches!(
+                class.as_str(),
+                "env_sprite" | "env_sprite_oriented" | "env_glow"
+            ) {
+                let path = source_formats::entity_resources::material_path(model)
+                    .map_err(|error| format!("entity:{}: {error}", entity.id))?;
+                self.needs_alias(&material_name(&path)?)
+                    .map_err(|error| format!("entity:{}: {error}", entity.id))?;
+                continue;
             }
-            self.record_model(model, false)
+            let usage = match class.as_str() {
+                "prop_static" => ModelUse::Static,
+                "prop_physics" | "prop_physics_override" => ModelUse::Physics,
+                "prop_dynamic" | "prop_dynamic_override" => ModelUse::Dynamic,
+                _ => {
+                    return Err(format!(
+                        "entity:{}: native reflection capture does not support the external model resource on {class}",
+                        entity.id
+                    ));
+                }
+            };
+            self.record_model(model, usage)
                 .map_err(|error| format!("entity:{}: {error}", entity.id))?;
         }
         if let Some(sky) = vmf
@@ -157,15 +191,25 @@ impl<'a> Graph<'a> {
         bsp: &source_formats::bsp::Bsp,
     ) -> Result<(), String> {
         self.checkpoint()?;
-        if let Some(details) = bsp.detail_props().map_err(|error| error.to_string())? {
-            for index in 0..details.models.len() {
-                self.checkpoint()?;
-                let model = details
-                    .model_name(index)
-                    .map_err(|error| error.to_string())?;
-                self.record_model(model, true)
-                    .map_err(|error| format!("Reflection detail model {model}: {error}"))?;
-            }
+        let Some(details) = bsp.detail_props().map_err(|error| error.to_string())? else {
+            return Ok(());
+        };
+        let models = details
+            .props
+            .iter()
+            .filter(|prop| prop.kind == 0)
+            .map(|prop| usize::from(prop.model))
+            .collect::<BTreeSet<_>>();
+        for index in models {
+            self.checkpoint()?;
+            let model = details
+                .model_name(index)
+                .map_err(|error| error.to_string())?;
+            self.record_model(model, ModelUse::Detail)
+                .map_err(|error| format!("Reflection detail model {model}: {error}"))?;
+        }
+        if !details.props.iter().any(|prop| prop.kind != 0) {
+            return Ok(());
         }
         let atlas = source_formats::bsp::DetailProps::sprite_material_name(
             vmf.world.properties.get("detailmaterial"),
@@ -189,14 +233,35 @@ impl<'a> Graph<'a> {
             .map_err(|error| format!("Reflection detail atlas {atlas}: {error}"))
     }
 
-    fn record_model(&mut self, model: &str, detail: bool) -> Result<(), String> {
+    fn record_model(&mut self, model: &str, usage: ModelUse) -> Result<(), String> {
+        self.record_model_depth(model, usage, 0)
+    }
+
+    fn record_model_depth(
+        &mut self,
+        model: &str,
+        usage: ModelUse,
+        depth: usize,
+    ) -> Result<(), String> {
         self.checkpoint()?;
+        if depth > 32 {
+            return Err("Reflection break-model dependency depth exceeds 32".into());
+        }
         let path = asset_relative(model).map_err(|error| error.to_string())?;
         let stem = path
             .strip_suffix(".mdl")
             .filter(|_| path.starts_with("models/"))
             .ok_or("Reflection model must use a relative models/*.mdl path")?;
+        if !self.models.insert((path.clone(), usage)) {
+            return Ok(());
+        }
         let mdl = self.record(&path, source_formats::mdl::MAX_MODEL_BYTES)?;
+        (if usage.breakable() {
+            source_formats::model::capture_material_resources(&mdl)
+        } else {
+            source_formats::model::material_resources(&mdl)
+        })
+        .map_err(|error| format!("Reflection model {path}: {error}"))?;
         let vvd = self.record(&format!("{stem}.vvd"), source_formats::mdl::MAX_MODEL_BYTES)?;
         let vtx = self.record(
             &format!("{stem}.dx90.vtx"),
@@ -204,9 +269,81 @@ impl<'a> Graph<'a> {
         )?;
         let parsed = source_formats::model::Model::parse(&mdl, &vvd, &vtx)
             .map_err(|error| format!("Reflection model {path}: {error}"))?;
+        source_formats::model::validate_vtx_material_dependencies(&vtx, parsed.header.checksum)
+            .map_err(|error| format!("Reflection model {path}: {error}"))?;
+        for suffix in [".dx80.vtx", ".sw.vtx", ".phy"] {
+            let companion = format!("{stem}{suffix}");
+            let data = if suffix == ".phy" && usage == ModelUse::Physics {
+                Some(self.record(&companion, source_formats::mdl::MAX_MODEL_BYTES)?)
+            } else {
+                self.read_source(&companion, source_formats::mdl::MAX_MODEL_BYTES)?
+            };
+            if let Some(data) = data {
+                if suffix == ".phy" {
+                    source_formats::mdl::validate_physics(&data, parsed.header.checksum).map_err(
+                        |error| format!("Reflection model companion {companion}: {error}"),
+                    )?;
+                    if !usage.breakable() {
+                        continue;
+                    }
+                    let text =
+                        source_formats::mdl::physics_keyvalues(&data, parsed.header.checksum)
+                            .map_err(|error| {
+                                format!("Reflection model companion {companion}: {error}")
+                            })?;
+                    let nodes =
+                        keyvalues::parse_lenient_bounded(text, 32, 16384).map_err(|error| {
+                            format!("Reflection model companion {companion}: {error}")
+                        })?;
+                    for block in nodes
+                        .iter()
+                        .filter(|node| node.key.eq_ignore_ascii_case("break"))
+                    {
+                        let fields = block.children().ok_or_else(|| {
+                            format!("Reflection break-model block must contain fields: {companion}")
+                        })?;
+                        let references = fields
+                            .iter()
+                            .filter(|node| {
+                                node.key.eq_ignore_ascii_case("model")
+                                    || node.key.eq_ignore_ascii_case("ragdoll")
+                            })
+                            .collect::<Vec<_>>();
+                        let [reference] = references.as_slice() else {
+                            return Err(format!(
+                                "Reflection break block requires exactly one model or ragdoll: {companion}"
+                            ));
+                        };
+                        let value = reference.as_str().filter(|value| !value.is_empty())
+                            .ok_or_else(|| format!("Reflection break-model reference must be a nonempty path: {companion}"))?;
+                        let mut child = asset_relative(value).map_err(|error| error.to_string())?;
+                        if !child.starts_with("models/") {
+                            child.insert_str(0, "models/");
+                        }
+                        if !child.ends_with(".mdl") {
+                            child.push_str(".mdl");
+                        }
+                        self.record_model_depth(&child, ModelUse::Physics, depth + 1)
+                            .map_err(|error| {
+                                format!("Reflection break model in {companion}: {error}")
+                            })?;
+                    }
+                } else {
+                    source_formats::model::validate_vtx_material_dependencies(
+                        &data,
+                        parsed.header.checksum,
+                    )
+                    .map_err(|error| format!("Reflection model companion {companion}: {error}"))?;
+                }
+            }
+        }
         for name in &parsed.materials {
             self.checkpoint()?;
-            if !self.record_model_material(name, &parsed.material_directories, detail)? {
+            if !self.record_model_material(
+                name,
+                &parsed.material_directories,
+                usage == ModelUse::Detail,
+            )? {
                 return Err(format!(
                     "Reflection model {path} material was not found: {name}"
                 ));

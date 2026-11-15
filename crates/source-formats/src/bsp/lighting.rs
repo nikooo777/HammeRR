@@ -122,13 +122,17 @@ impl Bsp {
         Ok(bytemuck::pod_collect_to_vec(bytes))
     }
 
-    /// Writes native version 1 faces without changing the other channel.
+    /// Writes native faces; an absent HDR face channel retains version zero.
     pub fn set_lighting_faces(&mut self, kind: LightingKind, faces: &[Face]) -> io::Result<()> {
         if faces.len() > MAX_LIGHTING_FACES {
             return Err(invalid("lighting-face count exceeds the allocation budget"));
         }
         self.lumps[kind.faces()] = Lump {
-            version: Face::VERSION,
+            version: if kind == LightingKind::Hdr && faces.is_empty() {
+                0
+            } else {
+                Face::VERSION
+            },
             fourcc: [0; 4],
             data: bytemuck::cast_slice(faces).to_vec(),
         };

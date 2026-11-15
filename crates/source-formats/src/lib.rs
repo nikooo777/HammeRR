@@ -1,6 +1,7 @@
 //! Readers and writers for Source engine file formats.
 
 pub mod bsp;
+pub mod entity_resources;
 pub mod fgd;
 pub mod file_publication;
 pub mod gamefs;

@@ -579,6 +579,20 @@ pub fn validate_vtx_material_dependencies(data: &[u8], checksum: i32) -> io::Res
     vtx::validate_material_dependencies(data, checksum)
 }
 
+pub fn capture_material_resources(mdl: &[u8]) -> io::Result<(Vec<String>, Vec<String>)> {
+    let resources = material_resources(mdl)?;
+    let reader = reader::Reader::new(mdl, 408)?;
+    let sequences = reader.table(0, 188, 192, 212, 4096)?;
+    for index in 0..sequences.len {
+        if reader.int(sequences.at(index)? + 24)? != 0 {
+            return Err(invalid(
+                "Reflection capture cannot collect resources from local animation events",
+            ));
+        }
+    }
+    Ok(resources)
+}
+
 pub fn surface_property_name(mdl: &[u8]) -> io::Result<Option<String>> {
     let reader = reader::Reader::new(mdl, 408)?;
     let offset = reader.count(308, mdl.len())?;

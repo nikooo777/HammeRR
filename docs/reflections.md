@@ -29,6 +29,12 @@ The BSP is published only after all required captures and verification succeed.
 
 Captures include supported [final detail models, cards and shapes](material-detail-scattering.md#capture-details-in-reflections).
 Their original assets must stay mounted; reflection generation does not pack them.
+Capture also includes native physics and dynamic props, sprites and ropes.
+Model companions, break models and material dependencies must resolve.
+The private client runs the authored scene through its normal startup and warmup;
+physics, animation and map I/O stay active. Props keep their original classes.
+The capture does not represent a later gameplay state.
+Unused detail models and sprite atlases are not required.
 
 ## Configure the capture runtime
 
@@ -63,6 +69,8 @@ Supported samples and ordinary world/detail bindings can also come from [referen
 - Steam, the supported CS:S runtime and the private capture dependencies must be available.
 - Capture uses private clients with `-insecure` and `sv_lan 1`.
 - Missing channels, unsupported capture scenes, failed verification or cleanup errors stop publication.
+- Included model references, external animation files and local animation events stop capture.
+- Authored scripts and console-command entities cannot run in private capture.
 - Incomplete records and replaced or rewritten Cloud logs stop capture. Audit limits are 64 MiB total and 8 MiB added during capture.
 - **Cancel build** waits for owned capture cleanup.
 - Generation captures one reflection bounce, not repeated recursive reflection builds.

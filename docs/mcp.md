@@ -2477,10 +2477,15 @@ The same eligible stationary request also makes the model's baked maps reflected
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 
-With `generate_reflections:true`, capture checks final compiled detail model
-assets and the World's `detailmaterial` atlas, defaulting to
-`detail/detailsprites`. The atlas is required even for model-only scenes or
-when no details are emitted. Detail model materials require supported static
+With `generate_reflections:true`, capture checks used final detail models and,
+when cards or shapes are emitted, the World's `detailmaterial` atlas (default
+`detail/detailsprites`). Unused definitions do not require assets.
+Native physics/dynamic props retain their authored classes and simulation.
+Their model companions, break models and materials use the same guarded sources.
+Sprites and ropes use shared material-resource rules. The private client captures
+the initialized native scene after its normal warmup; this is not a later gameplay
+snapshot. Included model references, external animation files, local animation events, authored scripts and console-command entities remain unsupported.
+Detail model materials require supported static
 `UnlitGeneric` with an explicit static base texture; animated inputs, proxies
 and other runtime effects reject. Original assets remain mounted. Missing or
 unsupported inputs stop before lighting or capture; changed consumed assets

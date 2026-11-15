@@ -444,9 +444,7 @@ impl Bsp {
     /// An empty version 20 map.
     pub fn new() -> Self {
         let mut lumps = vec![Lump::default(); LUMP_COUNT];
-        for index in [lump::FACES, lump::FACES_HDR] {
-            lumps[index].version = Face::VERSION;
-        }
+        lumps[lump::FACES].version = Face::VERSION;
         for index in [lump::LIGHTING, lump::LIGHTING_HDR] {
             lumps[index].version = RgbExp32::VERSION;
         }

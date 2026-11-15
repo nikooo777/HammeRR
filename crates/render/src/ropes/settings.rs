@@ -1,8 +1,7 @@
 use source_formats::vmf::Entity;
 
 use super::{
-    MAX_IDENTIFIER_BYTES, MAX_SLACK, MAX_WIDTH, MIN_SLACK, SpanSettings, identifier, number,
-    property,
+    MAX_IDENTIFIER_BYTES, MAX_SLACK, MAX_WIDTH, MIN_SLACK, SpanSettings, number, property,
 };
 
 fn integer(entity: &Entity, key: &str, default: i32) -> Result<i32, String> {
@@ -51,16 +50,7 @@ impl SpanSettings {
     }
 }
 
-pub(super) fn material_name(entity: &Entity) -> Result<String, String> {
-    let material = identifier(entity, "RopeMaterial")?.filter(|name| !name.is_empty());
-    let legacy = integer(entity, "RopeShader", 0)?;
-    let material = material.unwrap_or(match legacy {
-        0 => "cable/cable",
-        1 => "cable/rope",
-        _ => "cable/chain",
-    });
-    Ok(material.to_owned())
-}
+pub(super) use source_formats::entity_resources::rope_material as material_name;
 
 pub(super) fn parse(entity: &Entity) -> Result<SpanSettings, String> {
     let nodes = match property(entity, "Type")? {

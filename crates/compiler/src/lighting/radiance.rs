@@ -16,6 +16,7 @@ const LOCAL_FILTER_START: f64 = 20.0;
 const LOCAL_FILTER_END: f64 = 40.0;
 const SOURCE_ROUNDING_OPERATIONS: f64 = 64.0;
 const SOURCE_INTERSECTION_WORK: usize = 48;
+const SOURCE_CROSSING_WORK: usize = 32;
 const SOURCE_TRANSPORT_WORK: usize = 24;
 const SOURCE_SAMPLE_WORK: usize = 30;
 const SOURCE_PLANE_WORK: usize = 8;
@@ -139,6 +140,7 @@ struct Radiance {
     frame: Arc<Frame>,
     average: DVec3,
     reflectivity: DVec3,
+    has_radiance: bool,
     samples: Vec<RgbExp32>,
     dimensions: [usize; 2],
     projection: [[f32; 4]; 2],
@@ -512,6 +514,26 @@ struct Layer {
     samples: Vec<RgbExp32>,
 }
 
+fn layer_has_radiance(
+    samples: &[RgbExp32],
+    average: DVec3,
+    reflectivity: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    budget.consume(1)?;
+    if average != DVec3::ZERO {
+        return Ok(true);
+    }
+    budget.consume(samples.len() * 3)?;
+    Ok(samples.iter().any(|sample| {
+        sample
+            .rgb
+            .iter()
+            .zip(reflectivity.to_array())
+            .any(|(&value, reflectivity)| value != 0 && reflectivity != 0.0)
+    }))
+}
+
 impl Radiance {
     fn at(&self, point: DVec3, uv: Option<DVec2>, distance: f64, cone: f64) -> DVec3 {
         self.at_layer(&self.samples, self.average, point, uv, distance, cone)
@@ -577,10 +599,10 @@ impl ShadowObject for Surface {
     fn work(&self) -> usize {
         match &self.geometry {
             Geometry::Brush { fan, .. } => {
-                SOURCE_INTERSECTION_WORK + 32 + 3 * fan.frame.transform_work()
+                SOURCE_INTERSECTION_WORK + 2 * fan.frame.transform_work()
             }
-            Geometry::Terrain(triangle) => triangle.work() + 32,
-            Geometry::Prop { sources, index } => sources.triangles()[*index].triangle.work() + 32,
+            Geometry::Terrain(triangle) => triangle.work(),
+            Geometry::Prop { sources, index } => sources.triangles()[*index].triangle.work(),
         }
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
@@ -994,6 +1016,7 @@ fn build_with_styles(
                 &[]
             };
             budget.consume(samples.len())?;
+            let mut has_radiance = layer_has_radiance(samples, average, reflectivity, budget)?;
             let mut extras = Vec::with_capacity(3);
             if styled
                 && !sky
@@ -1007,9 +1030,13 @@ fn build_with_styles(
                     let average = light
                         .average(index)
                         .ok_or("Styled radiance average is missing")?;
+                    let average = DVec3::from_array(average.linear()) * reflectivity;
+                    if !has_radiance {
+                        has_radiance = layer_has_radiance(samples, average, reflectivity, budget)?;
+                    }
                     extras.push(Layer {
                         style,
-                        average: DVec3::from_array(average.linear()) * reflectivity,
+                        average,
                         samples: samples.to_vec(),
                     });
                 }
@@ -1166,6 +1193,7 @@ fn build_with_styles(
                 contributors,
                 average,
                 reflectivity,
+                has_radiance,
                 samples: samples.to_vec(),
                 dimensions: light.as_ref().map_or([0; 2], |light| light.dimensions()),
                 projection: info.lightmap_vecs,
@@ -1274,6 +1302,7 @@ fn build_with_styles(
             frame,
             average: DVec3::ZERO,
             reflectivity: DVec3::ONE,
+            has_radiance: true,
             samples: Vec::new(),
             dimensions: [0; 2],
             projection: [[0.0; 4]; 2],
@@ -1363,6 +1392,14 @@ pub(super) struct Hit {
     visibility: DVec3,
 }
 
+struct Candidate {
+    fraction: f64,
+    sky: bool,
+    ordinal: usize,
+    weights: [f64; 3],
+    crossing: Option<Crossing>,
+}
+
 struct Crossing {
     fraction: f64,
     ordinal: usize,
@@ -1411,6 +1448,10 @@ impl SurfaceIndex {
         pending: &Cell<usize>,
     ) -> Result<Crossing, String> {
         let radiance = &self.radiance[surface.source];
+        pending_work(
+            pending,
+            SOURCE_CROSSING_WORK + radiance.frame.transform_work(),
+        )?;
         let prop = if let Geometry::Prop { sources, index } = &surface.geometry {
             Some((sources, &sources.triangles()[*index]))
         } else {
@@ -1945,7 +1986,7 @@ impl SurfaceIndex {
         previous: Option<(f64, bool, usize)>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<Crossing>, String> {
-        let mut first: Option<Crossing> = None;
+        let mut first: Option<Candidate> = None;
         let pending_alpha = Cell::new(0usize);
         let result = self.geometry.visit(
             point,
@@ -1967,31 +2008,60 @@ impl SurfaceIndex {
                 let sky = self.radiance[surface.source].sky;
                 let key = (fraction, sky, surface.ordinal);
                 if previous.is_some_and(|previous| key <= previous)
-                    || first.as_ref().is_some_and(|hit| {
-                        key >= (hit.fraction, self.radiance[hit.source].sky, hit.ordinal)
-                    })
+                    || first
+                        .as_ref()
+                        .is_some_and(|hit| key >= (hit.fraction, hit.sky, hit.ordinal))
                 {
                     return Ok(Visit::Continue(
                         first.as_ref().map_or(1.0, |hit| hit.fraction),
                     ));
                 }
-                let crossing =
-                    self.crossing(surface, fraction, weights, end - point, &pending_alpha)?;
                 let radiance = &self.radiance[surface.source];
-                if crossing.coverage.clear()
-                    && (radiance.sky || radiance.alpha.is_none() || radiance.boundary.is_none())
+                let crossing = if radiance.alpha.is_some()
+                    || matches!(surface.geometry, Geometry::Prop { .. })
                 {
-                    return Ok(Visit::Continue(
-                        first.as_ref().map_or(1.0, |hit| hit.fraction),
-                    ));
-                }
-                first = Some(crossing);
+                    let crossing =
+                        self.crossing(surface, fraction, weights, end - point, &pending_alpha)?;
+                    if crossing.coverage.clear()
+                        && (radiance.sky || radiance.alpha.is_none() || radiance.boundary.is_none())
+                    {
+                        return Ok(Visit::Continue(
+                            first.as_ref().map_or(1.0, |hit| hit.fraction),
+                        ));
+                    }
+                    Some(crossing)
+                } else {
+                    None
+                };
+                first = Some(Candidate {
+                    fraction,
+                    sky,
+                    ordinal: surface.ordinal,
+                    weights,
+                    crossing,
+                });
                 Ok(Visit::Continue(fraction))
             },
         );
         budget.consume(pending_alpha.replace(0))?;
         result?;
-        Ok(first)
+        let result = match first {
+            None => Ok(None),
+            Some(candidate) => match candidate.crossing {
+                Some(crossing) => Ok(Some(crossing)),
+                None => self
+                    .crossing(
+                        &self.geometry.objects()[candidate.ordinal],
+                        candidate.fraction,
+                        candidate.weights,
+                        end - point,
+                        &pending_alpha,
+                    )
+                    .map(Some),
+            },
+        };
+        budget.consume(pending_alpha.replace(0))?;
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2046,6 +2116,9 @@ impl SurfaceIndex {
             previous = Some((crossing.fraction, radiance.sky, crossing.ordinal));
             if !self.partitioned_sources {
                 if radiance.sky {
+                    if !radiance.has_radiance {
+                        break;
+                    }
                     let Some(fraction) =
                         scene
                             .shadows
@@ -2067,6 +2140,9 @@ impl SurfaceIndex {
                     let amount = self.binary_coverage(&ray, &crossing, budget)?;
                     if amount.clear() {
                         continue;
+                    }
+                    if !crossing.front || !radiance.has_radiance {
+                        break;
                     }
                     let visibility = scene.visibility_to_source(
                         point,
@@ -2092,6 +2168,9 @@ impl SurfaceIndex {
                     continue;
                 }
                 emitted_sky = true;
+                if !radiance.has_radiance {
+                    continue;
+                }
                 let Some(fraction) = sky else {
                     continue;
                 };
@@ -2117,6 +2196,7 @@ impl SurfaceIndex {
                 continue;
             }
             if !crossing.front
+                || !radiance.has_radiance
                 || radiance.reflectivity == DVec3::ZERO
                 || crossing.prop_color == Some(DVec3::ZERO)
             {

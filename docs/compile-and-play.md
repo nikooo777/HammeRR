@@ -89,7 +89,7 @@ the heading to see each object and its **Frame recorded position** action.
 | **Generate reflections** | Capture and pack scene cubemaps with private CS:S clients. |
 | **Pack sky assets**, **Pack liquid assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
 
-**Lighting work limit (millions)** bounds lighting work. Click **Apply work limit** after editing it.
+**Lighting work limit (millions)** bounds lighting preparation, ray searches and shading. Click **Apply work limit** after editing it.
 Exceeding the allowance fails explicitly. Increase it only when the intended map and settings justify more work.
 Use [build recipes](build-recipes.md) to retain settings.
 
@@ -269,6 +269,7 @@ need a certified origin. Texture-transmitting and sky hulls do not qualify.
 
 Choose one to four diffuse bounces under **Indirect light**.
 World and terrain surfaces reflect light using their material properties.
+Unlit surfaces keep the shadow behavior of their materials.
 Eligible stationary **Shadows → Yes** `func_brush` models also reflect their
 baked maps into world, terrain, same/other brush models, ambient, details and
 opted-in static-prop vertices. Root models and assembled children use their

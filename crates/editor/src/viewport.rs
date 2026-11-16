@@ -524,8 +524,7 @@ impl Viewport {
     ) -> Vec<PaneFrame> {
         let visible = session.visible_view_panes();
         let mut frames = Vec::new();
-        for index in 0..MAX_PANES {
-            let pane = &mut self.panes[index];
+        for (index, pane) in self.panes.iter_mut().enumerate() {
             if !visible.iter().any(|visible| visible.index == index) && pane.visible {
                 *pane = PaneState::default();
                 frames.push(PaneFrame {

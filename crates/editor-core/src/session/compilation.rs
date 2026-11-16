@@ -1695,7 +1695,7 @@ impl Session {
         origin: &CompileOrigin,
         result: &Result<CompileResult, String>,
     ) -> bool {
-        if self.compilation.job.as_ref().is_none_or(|job| {
+        !(self.compilation.job.as_ref().is_none_or(|job| {
             !job.origin.same(origin)
                 || job.finished.is_some()
                 || result
@@ -1703,11 +1703,7 @@ impl Session {
                     .is_ok_and(|result| job.token != result.token)
         }) || result
             .as_ref()
-            .is_ok_and(|result| !result.origin.same(origin))
-        {
-            return false;
-        }
-        true
+            .is_ok_and(|result| !result.origin.same(origin)))
     }
 
     pub fn finish_compile(&mut self, actor: Actor, result: &Result<CompileResult, String>) {

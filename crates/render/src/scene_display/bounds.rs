@@ -211,7 +211,7 @@ fn ordinary_bound(mesh: &SceneMesh, batch: &Batch) -> Result<[f64; 3], String> {
         let vertex = &mesh.vertices[index as usize];
         validate_vertex(vertex)?;
         match vertex.lighting_receiver & LIGHTING_RECEIVER_KIND_MASK {
-            0..=2 => {}
+            0..=2 | crate::scene::projected_overlays::UNLIT_RECEIVER => {}
             BAKED_RADIANCE_RECEIVER => {
                 let ordinal = vertex.lighting_receiver >> LIGHTING_RECEIVER_KIND_BITS;
                 let table = mesh.compiled_detail_hdr.as_ref().ok_or_else(|| {

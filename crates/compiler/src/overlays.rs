@@ -44,8 +44,27 @@ impl Plan {
         let mut data = OverlayData::default();
         for definition in &self.definitions {
             control.checkpoint()?;
+            let (emitted, missing): (Vec<_>, Vec<_>) = definition
+                .sides
+                .iter()
+                .copied()
+                .partition(|side| bindings.faces.contains_key(side));
+            if emitted.is_empty() {
+                let error = format!(
+                    "Overlay sides {missing:?} have no exposed world, detail or terrain faces"
+                );
+                helper_error(report, definition, &error);
+                return Err(error);
+            }
+            if !missing.is_empty() {
+                report.diagnostics.push(Diagnostic::warning(
+                    format!("Overlay sides {missing:?} produced no exposed final faces; the projection uses its remaining faces"),
+                    Some(format!("entity:{}", definition.entity)),
+                    Some(DVec3::from_array(definition.record.origin.map(f64::from))),
+                ));
+            }
             let targets = bindings
-                .targets(&definition.sides, definition.entity, bsp::MAX_OVERLAY_FACES)
+                .targets(&emitted, definition.entity, bsp::MAX_OVERLAY_FACES)
                 .inspect_err(|message| helper_error(report, definition, message))?;
             let mut record = definition
                 .record

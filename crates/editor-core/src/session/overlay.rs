@@ -215,7 +215,10 @@ impl Session {
 
     fn selected_overlay_source(&self) -> Result<(Vec<FaceId>, Definition), String> {
         if !self.face_mode || self.face_selection.is_empty() {
-            return Err("Select coplanar world/detail or isolated planar terrain faces".into());
+            return Err(
+                "Select world/detail faces or terrain patches with a common projection plane"
+                    .into(),
+            );
         }
         self.overlay_context()?;
         source_budget(self.face_selection.len())?;
@@ -382,34 +385,14 @@ impl Session {
             }
             report
         });
-        let multiple = selected_source["source_count"]
-            .as_u64()
-            .is_some_and(|count| count > 1)
-            || selected_overlay["source_count"]
-                .as_u64()
-                .is_some_and(|count| count > 1)
-            || draft.as_ref().is_some_and(|draft| {
-                draft["source_count"]
-                    .as_u64()
-                    .is_some_and(|count| count > 1)
-                    || draft["previous_source_count"]
-                        .as_u64()
-                        .is_some_and(|count| count > 1)
-            });
-        let mut state = json!({
+        json!({
             "snapshot":self.overlay_stamp(),"generation":self.document_generation,
             "revision":self.document.revision(),"selected_source":selected_source,
             "selection_error":selection_error,"draft":draft,
             "selected_overlay":selected_overlay,"refit_error":refit_error,
             "selected_corners":selected_corners,"corners_error":corners_error,
-            "policy":"Create on visible world/detail quads or isolated planar terrain quads, refit an existing overlay, or explicitly rebind it to a different eligible source set. Up to 64 same-facing coplanar sources may combine flat faces and isolated planar terrain; an eligible quad supplies the frame. Every prepared and native terrain sample must lie on the common plane, with four straight convex boundary edges. Each terrain base must have disjoint stored bounds from every other terrain base, including other selected terrain. Touching/joined/overlapping terrain bases, visible instance references and sculpted/nonplanar terrain are unavailable. Refit and rebind preserve the entity ID, authored option strings, connections and metadata. Preview changes no geometry, selection or history. Review transfers ownership; Apply is one Undo step. Corner editing changes four local U/V positions in the existing projection frame while retaining all source bindings, basis and raw settings. Corners must remain convex, native-representable and on the common source plane. Automatic rebinding is unavailable.",
-        });
-        if multiple {
-            state["policy"] = json!(
-                "Create one overlay across up to 64 visible coplanar flat world/detail faces or isolated planar terrain quads facing the same direction. The first eligible quad, including terrain, supplies the projection axes; one U/V rectangle spans all actual source boundaries. Every prepared/native terrain sample must lie on the common plane with straight convex borders. Each terrain base must have disjoint stored bounds from every other terrain base, including other selected terrain; touching/joined/overlapping bases, visible instances and sculpted/nonplanar terrain reject. Refit an existing multi-face overlay only with an explicit eligible reference quad from its unchanged bindings; its current edges set the new projection axes. Numeric and viewport corner editing use the stored projection axes without choosing a new reference and retain every existing binding. Native rendering clips to every bound side, including gaps between faces. Preview changes no map, selection or history; Review transfers ownership and Apply is one Undo step. Explicit rebind replaces valid single or multiple bindings with a different bounded coplanar destination set and its explicit first-quad frame. Brush models and automatic rebinding are unavailable."
-            );
-        }
-        state
+            "policy":"Fit up to 64 visible same-facing world/detail faces, including terrain, using an eligible quad as the reference. Flat and planar terrain can share their actual plane. Sculpted terrain uses the native base plane and can bind with joined terrain or flat faces sharing that plane. Terrain requires an unambiguous native support and finite nonfolded samples. Visible instances, overlapping supports, terrain cage faces and brush models are unavailable. Multi-face refit needs an explicit reference from the existing bindings. Corners edit four convex native-representable local U/V positions in the stored projection frame. Explicit rebind changes the bindings and uses the destination reference. Refit, corners and rebind preserve authored settings, connections and metadata on the same entity. Preview leaves the map, selection and history unchanged. Review transfers ownership and Apply is one Undo step.",
+        })
     }
 
     pub fn preview_overlay(
@@ -736,6 +719,13 @@ impl Session {
         self.view_serial += 1;
         self.log(actor, "Cancel overlay");
         Ok(self.get_overlay_state())
+    }
+
+    pub(super) fn overlay_render_draft(&self) -> Option<(Option<u32>, Definition)> {
+        let draft = self
+            .checked_overlay(self.overlay.draft.as_ref()?.token)
+            .ok()?;
+        Some((draft.operation.entity(), draft.definition.clone()))
     }
 
     pub(super) fn append_overlay_guide(&self, mesh: &mut render::SceneMesh) {

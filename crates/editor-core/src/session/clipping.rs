@@ -533,7 +533,12 @@ impl Session {
         replacements: &BTreeMap<u32, Vec<u32>>,
     ) -> Result<BTreeMap<u32, Vec<u32>>, String> {
         if !terrain_sources.is_empty() {
-            self.check_fragment_references(terrain_sources, &BTreeSet::new(), &BTreeSet::new())?;
+            self.check_fragment_references(
+                terrain_sources,
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+                true,
+            )?;
             for source in terrain_sources {
                 let (_, solid) = map_core::subobject::solid(&self.document, *source)
                     .map_err(|error| error.to_string())?;
@@ -573,6 +578,7 @@ impl Session {
                     .collect(),
                 &BTreeSet::new(),
                 &BTreeSet::new(),
+                true,
             )?;
         }
         let game = self.game.clone();

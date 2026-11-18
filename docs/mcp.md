@@ -1353,20 +1353,25 @@ Save also needs `name`, `material`, `rectangle` and optional `padding`; Choose n
 Use `rename_atlas_region` or `delete_atlas_region` with the latest catalog snapshot and region ID.
 Choose restores fit inputs without editing faces. Preview and apply the fit separately. Changed image identities reject reuse.
 
-For [overlay fitting](overlays.md), `preview_overlay.source` supplies the quad that sets the projection axes.
-Optional `additional_sources` adds same-facing coplanar flat or isolated planar terrain faces from world or `func_detail`, up to 64 sources in total.
-The projection spans their bounds and clips to the exact bound sides. Unbound gaps stay clear.
-Omit `additional_sources` for a single-face fit.
-For multi-face `preview_overlay_refit`, pass `reference: {solid, side}` for an eligible quad in the existing bindings. Its current edges set the new projection axes.
-Refit retains the overlay ID, exact side list and settings.
-For `preview_overlay_rebind`, pass an explicit target quad in `source` and optional coplanar `additional_sources` to replace the bindings with a different set of up to 64 faces.
-Multi-face rebind drafts report `previous_sources`/`previous_source_count` and new `sources`/`source_count`. Apply preserves the same entity and raw settings in one Undo step.
-Unchanged binding sets require Refit. Invalid updates retain the current draft.
-`preview_overlay_corners` and `overlay_corner_handles` accept the complete coplanar binding set and use the stored projection axes. No reference parameter is needed.
-Corner drafts report `sources` and `source_count`; applying changes only `uv0` through `uv3` in one Undo step.
-The same tools accept multiple isolated planar displacements and mixed flat targets. Use displaced faces, not cage faces.
-Every prepared and native sample must lie on the common projection plane, with straight quad borders. Each terrain base must be separate from every other terrain base. Touching or overlapping bounds and visible instance references reject.
-The fit follows actual displaced coordinates. Refit after moving the plane; rebind can switch between eligible flat and terrain sources.
+For [overlay fitting](overlays.md), call `get_overlay_state` for a snapshot.
+Pass a quad in `preview_overlay.source` to set the frame. Use
+`additional_sources` for up to 64 total world/detail faces. Include joined or
+sculpted terrain with same-facing coplanar base quads. Use the displaced side ID.
+Apply the owned draft with `apply_overlay`.
+
+For multi-face `preview_overlay_refit`, pass a bound quad in
+`reference: {solid, side}`. Use `preview_overlay_rebind` with a new source set
+to change the bindings. `preview_overlay_corners` and `overlay_corner_handles`
+use the stored U/V frame. Clip, carve and terrain triangle removal update
+surviving bindings with the geometry in one Undo step.
+
+`render_view` with `surface: "textured"` displays supported draft and applied
+overlay materials. Read `preview_issues` for unavailable projections.
+
+To place an `infodecal`, call `begin_entity_placement` with
+`properties: { "texture": "decals/arrow_left" }`, zero offset and alignment off.
+Use `pick_entity_placement` on a solid world or detail brush face, then
+`apply_entity_placement`. CS:S uses the resulting point origin at runtime.
 
 ## Preview instance props
 

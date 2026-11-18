@@ -765,6 +765,7 @@ pub fn remove(
             ObjectId::Entity(id) => tx.entity_mut(id)?.solids.retain(|solid| solid.id != source),
         }
     }
+    crate::overlay_bindings::remap(tx, &result.side_mapping)?;
     result.objects.sort();
     result.objects.dedup();
     Ok(result)

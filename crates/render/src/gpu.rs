@@ -351,6 +351,7 @@ pub struct SceneKey {
     sprite_resources: bool,
     entity_helpers: bool,
     selection_bounds: bool,
+    textured: bool,
     normal_maps: bool,
     normal_maps_textured: bool,
     lighting_preview: bool,
@@ -398,6 +399,7 @@ impl ViewOptions {
             sprite_resources: self.sprite_resources,
             entity_helpers: self.entity_helpers,
             selection_bounds: self.selection_bounds,
+            textured: self.surface == SurfaceView::Textured,
             normal_maps: self.normal_maps,
             normal_maps_textured: self.normal_maps && self.surface == SurfaceView::Textured,
             lighting_preview: self.lighting_preview,
@@ -491,6 +493,7 @@ pub struct GpuScene {
     sky_fog_background_error: Option<String>,
     sky_channel: crate::sky::Channel,
     opaque: Vec<DrawBatch>,
+    projected_overlays: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
     lines: Option<(wgpu::Buffer, u32)>,
     guide_line_ranges: Vec<std::ops::Range<u32>>,
@@ -1206,7 +1209,8 @@ impl Renderer {
             (lines, mesh.leak_lines.len() as u32)
         });
 
-        let (mut opaque, mut translucent) = (Vec::new(), Vec::new());
+        let (mut opaque, mut projected_overlays, mut translucent) =
+            (Vec::new(), Vec::new(), Vec::new());
         let wire_buffer = |label, lines: &[LineVertex]| {
             (!lines.is_empty()).then(|| {
                 (
@@ -1226,8 +1230,9 @@ impl Renderer {
         let rope_lines = wire_buffer("rope selection", &mesh.rope_lines);
         for (batch_index, &batch) in mesh.batches.iter().enumerate() {
             let baked_surface = mesh.baked_face_batches.contains(&batch_index);
+            let projected = mesh.projected_overlay_batches.contains(&batch_index);
             if !baked_surface {
-                self.ensure_material(ctx, library, batch.material);
+                self.ensure_material(ctx, library, batch.material, projected)?;
             }
             let info = (!baked_surface).then(|| library.get(batch.material));
             let range =
@@ -1248,7 +1253,9 @@ impl Renderer {
                 sky3d_eligible: info.is_some_and(|info| info.sky3d_eligible),
                 helper: !baked_surface && batch.material == MaterialLibrary::EDITOR,
             };
-            if info.is_some_and(|info| info.translucent) || batch.model_translucent {
+            if projected {
+                projected_overlays.push(draw);
+            } else if info.is_some_and(|info| info.translucent) || batch.model_translucent {
                 translucent.push(draw);
             } else {
                 opaque.push(draw);
@@ -1431,6 +1438,7 @@ impl Renderer {
             vertices,
             indices,
             opaque,
+            projected_overlays,
             translucent,
             lines,
             guide_line_ranges: mesh.guide_line_ranges(),
@@ -1557,14 +1565,32 @@ impl Renderer {
         }))
     }
 
-    fn ensure_material(&mut self, ctx: &GpuContext, library: &MaterialLibrary, id: MaterialId) {
+    fn ensure_material(
+        &mut self,
+        ctx: &GpuContext,
+        library: &MaterialLibrary,
+        id: MaterialId,
+        projected: bool,
+    ) -> Result<(), String> {
         if self.materials.len() <= id {
             self.materials.resize(id + 1, None);
         }
         if self.materials[id].is_none() {
-            self.materials[id] =
-                Some(self.material_bind_group(ctx, library.get(id), id == MaterialLibrary::EDITOR));
+            let info = library.get(id);
+            self.materials[id] = Some(if projected {
+                let base = info
+                    .base
+                    .as_ref()
+                    .and_then(|image| upload_vtf(ctx, image))
+                    .ok_or_else(|| {
+                        format!("Overlay material {} could not be uploaded", info.name)
+                    })?;
+                self.material_bind_group_with_base(ctx, info, false, &self.sampler, base, None)
+            } else {
+                self.material_bind_group(ctx, info, id == MaterialLibrary::EDITOR)
+            });
         }
+        Ok(())
     }
 
     fn material_bind_group(
@@ -2020,8 +2046,14 @@ impl Renderer {
         pass.set_vertex_buffer(0, scene.vertices.slice(..));
         pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
         let translucent = translucent_order(&scene.translucent, camera);
+        let projected_overlays = if options.surface == SurfaceView::Textured {
+            scene.projected_overlays.as_slice()
+        } else {
+            &[]
+        };
         for (pipeline, batches) in [
             (&pipelines.opaque_pipeline, scene.opaque.as_slice()),
+            (&pipelines.translucent_pipeline, projected_overlays),
             (&pipelines.translucent_pipeline, translucent.as_ref()),
         ] {
             for draw in batches {

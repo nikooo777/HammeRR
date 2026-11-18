@@ -2,96 +2,67 @@
 
 # Overlays
 
-Project a material onto compiled surfaces. The editor shows the projection outline.
+Project a material across selected map faces. Use a [decal](#place-a-decal) for a mark from one point in CS:S.
 
-## Create a fitted overlay
+## Create an overlay
 
-1. Select visible coplanar world or `func_detail` faces in face mode, including at least one quad. Eligible isolated planar terrain faces may be included.
-2. Open **Overlay…**.
-3. Choose **Material** and optional **Name**.
-4. Set **Render order**, texture ranges and fade distances.
-5. Click **Fit / Preview**.
-6. Inspect the outline and bound-face count, then click **Apply overlay**.
+1. In face mode, select up to 64 world or `func_detail` faces. Include a quad to set the projection axes.
+2. Open **Overlay…**, then choose **Material** and an optional **Name**.
+3. Set **Render order**, texture ranges and fade distances.
+4. Click **Fit / Preview**. Check the projection and face count.
+5. Click **Apply overlay**. Use **Cancel** to discard the draft.
 
-The first eligible quad supplies the projection axes. One overlay spans all selected faces, up to 64 sources. Native rendering clips it to each bound face, leaving unbound gaps clear. Selecting one quad keeps the original fit.
+Select coplanar faces that face the same direction. Joined or sculpted terrain can share an overlay when the base quads have a common plane. On sculpted terrain, the fit uses the base plane and the projection follows the displaced surface.
 
-**Cancel** discards the owned preview. Compile and play to inspect the material projection.
+In **Textured** view, supported materials appear on the bound faces. Unbound gaps stay clear. Preview errors appear in the viewport status. Compile and play to check the game result.
 
 ![One native overlay spans two panels and leaves the unbound gap clear](images/overlay-native.png)
 
 ## Refit or rebind
 
-1. Select an existing eligible overlay and open **Overlay…**.
-2. For multiple bound faces, choose a quad under **Reference face**. Its current edges set the projection axes.
-3. Click **Refit selected overlay** to fit all existing bound faces.
-4. Review the new outline and bound-face count, then click **Apply refit**.
+To fit the same faces again:
 
-The bound faces must remain visible and coplanar. Terrain faces must remain isolated and planar. Refit preserves their exact side IDs. It follows moved geometry only when requested; it does not infer the original reference face or preserve an earlier in-plane orientation. A single-face overlay keeps its original refit behavior.
+1. Select one overlay and open **Overlay…**.
+2. For multiple bound faces, choose a quad under **Reference face**.
+3. Click **Refit selected overlay**, then **Apply refit**.
 
-To change its target:
+To use different faces:
 
-1. Select visible coplanar destination world or `func_detail` faces, including at least one quad. Eligible isolated planar terrain faces may be included.
-2. Open **Overlay…** and choose an existing overlay from the rebind list.
-3. Click **Preview rebind**.
-4. Inspect the old and new binding lists, face counts and projection outline. The first eligible selected quad supplies the new projection axes.
-5. Click **Apply rebind**.
+1. Select the destination faces and open **Overlay…**.
+2. Choose an overlay from the rebind list.
+3. Click **Preview rebind**. Check the old and new face counts.
+4. Click **Apply rebind**.
 
-Refit and rebind preserve the existing overlay identity, settings and connections.
-Rebind can replace single or multiple valid bindings with a different set of up to 64 faces. It changes the projection and bindings in one **Undo** step. Use **Refit selected overlay** to change the frame while keeping the same binding set.
+Both operations keep the overlay identity, settings and connections. Use **Undo** to restore the prior fit.
 
-## Edit projection corners
+**Clip**, **Carve** and terrain triangle removal carry the bindings to surviving source fragments within the projection. New cut faces do not inherit the overlay. An edit that removes all projected coverage fails. Refit after moving the bound faces.
 
-1. Select one eligible `info_overlay`.
-2. Open **Overlay… → Edit selected corners**.
-3. Edit **Corner 0** through **Corner 3** in the displayed local U/V frame.
-4. Click **Preview corners** and inspect the outline and bound-face count.
-5. Click **Apply corners**.
+## Edit corners
 
-This works with one or up to 64 visible coplanar world/detail bindings, including eligible isolated planar terrain and at least one quad. Corner editing uses the stored projection axes and keeps every original side binding; it requires no reference choice. Only the four projection corners change. Moved sources need an explicit refit first.
+1. Select one overlay and open **Overlay… → Edit selected corners**.
+2. Edit **Corner 0** through **Corner 3** in local U/V coordinates.
+3. Click **Preview corners**. To drag a cyan corner, click **Viewport handles**.
+4. Click **Apply corners**. **Cancel handles** restores the draft from before the drag.
 
-After **Preview corners**, choose **Viewport handles** to drag a cyan corner directly. Release to review, then use **Apply corners**. **Cancel handles** restores the exact pre-handle draft. Crossed, collapsed or unsupported corners reject. **Undo** restores the previous projection.
+Corner edits keep the bindings and projection axes. Crossed or collapsed corners fail.
 
-## Compile imported overlays
+## Place a decal
 
-1. Open the map and inspect `info_overlay` properties.
-2. Set material, render order, texture ranges and fades as required.
-3. Compile.
-4. Inspect **Overlays**, **Surface references** and **Diagnostics** in **Build details…**.
-5. Play the built map.
+1. Open **Entity…** and choose `infodecal`.
+2. Click **Pick surface…** and enter **Decal material**, for example `decals/arrow_left`.
+3. Click **Pick surface** and select a solid world or `func_detail` brush face.
+4. Check the point, then click **Apply entity**.
+5. Compile and play to see the decal.
 
-Compiled bindings follow supported face splitting and lightmap subdivision.
-Supported imported water transitions use their own checked native records.
-
-## Referenced assemblies
-
-Supported unnamed child overlays can target direct visible world/detail and displacement faces in the same occurrence.
-The parent contents preview shows target geometry, not the projected material.
-
-## Fit on planar terrain
-
-1. Select one or more isolated planar terrain faces in face mode. Selected surfaces must be coplanar and face the same direction; flat world/detail faces may be included.
-2. Open **Overlay…**. A single terrain source says **isolated planar terrain quad**; multiple sources show the bound-face count.
-3. Choose **Material**, then click **Fit / Preview** and **Apply overlay**.
-4. Use the same corner, refit and rebind controls described above.
-
-The fit uses every actual prepared and native terrain sample, including elevation and offsets. It keeps every original terrain-side binding. A terrain quad may supply the initial projection axes or the explicit multi-face refit reference.
-After moving that plane, use **Refit selected overlay** before editing its corners.
-Rebind can replace complete eligible flat, terrain or mixed target sets.
+The point is the decal's origin. CS:S chooses nearby receivers and can project onto more than one face. A named decal needs activation through entity I/O. Custom materials must be mounted when you play or included in a [portable VMF](portable-maps.md).
 
 ## Limits
 
-- Multi-face creation requires coplanar flat faces or isolated planar terrain quads facing the same direction and an eligible quad to anchor the projection.
-- Multi-face refit requires an explicit eligible quad reference from the existing bindings and the same source limits as creation.
-- Numeric and viewport corners require the same bounded coplanar source set and a valid stored projection on its plane.
-- Rebind requires valid world/detail or isolated planar terrain bindings and a different eligible destination set.
-- Every terrain target requires a planar quad with straight convex borders and valid prepared/native samples on the common projection plane. Sculpted and folded targets reject.
-- Each terrain target's stored base bounds must be separate from every other terrain base, including other selected terrain and corner contacts. Joined, touching or overlapping terrain bases remain unavailable. Visible instance references also reject; hide them in saved map visibility or use an imported overlay. Temporary editor hiding does not qualify.
-- Terrain cage faces and brush-model targets are unavailable for fitted authoring.
-- Compiled imported overlays support broader world/detail and terrain targets.
-- Corners may extend beyond a bound face; native rendering clips the projection to that face.
-- Moving geometry does not automatically refit or rebind an overlay.
-- Compile regions must retain the complete projection and every required target.
-- Unsupported, missing or ambiguous bindings fail explicitly.
+- Fit uses root world and detail faces. A terrain target uses its displaced face. Folded or overlapping terrain and visible saved instance references block terrain fitting.
+- The editor projects plain LightmappedGeneric and UnlitGeneric textures onto opaque surfaces. Terrain preview requires a parallelogram base. Shader effects, distance fades, decals and referenced overlays render in the game when supported.
+- Compile regions must retain the complete overlay and its targets. Imported water transitions keep their native records.
+- A bound side can be fully buried in the built map. Compile reports these sides. If every bound side is buried, compile fails.
+- Decal placement uses planar brush faces and supports static LightmappedGeneric, UnlitGeneric and DecalModulate decal assets.
 
 <!-- page-nav -->
 

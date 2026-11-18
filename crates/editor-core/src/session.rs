@@ -3123,6 +3123,13 @@ impl Session {
         } else {
             references.terrain_normals.as_ref()
         };
+        let overlay_draft = self.overlay_render_draft();
+        let projected_overlays = (!baked_surfaces && view.surface == render::SurfaceView::Textured)
+            .then(|| render::scene::OverlayPreview {
+                draft: overlay_draft
+                    .as_ref()
+                    .map(|(entity, definition)| (*entity, definition)),
+            });
         let mut mesh = match SceneMesh::try_build_with_reference_terrain_filtered(
             document.vmf(),
             &self.game,
@@ -3145,6 +3152,7 @@ impl Session {
             !baked_surfaces,
             view.entity_helpers,
             parent_terrain_normals,
+            projected_overlays,
             |id| evaluation.objects.contains(&id),
         ) {
             Ok(mesh) => mesh,
@@ -3180,7 +3188,11 @@ impl Session {
             lighting.report.admitted_receivers = 0;
             lighting.report.terrain.exclude_admitted();
             lighting.report.models.exclude_admitted();
-            for vertex in &mut mesh.vertices {
+            for vertex in mesh
+                .vertices
+                .iter_mut()
+                .filter(|vertex| vertex.lighting_receiver == 1)
+            {
                 vertex.lighting_receiver = 0;
             }
         }

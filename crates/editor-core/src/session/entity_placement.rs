@@ -1,12 +1,18 @@
 use std::collections::BTreeMap;
 
+use compiler::decals;
 use glam::DVec3;
 use map_core::{
     Document, EditError, ObjectId, edit,
     query::{self, Ray, SurfaceHit},
+    surface::{self, FaceId},
 };
 use serde_json::{Value, json};
-use source_formats::fgd::ClassKind;
+use source_formats::{
+    bsp::{contents, surf},
+    fgd::ClassKind,
+    vmt::Material,
+};
 
 use super::{
     Actor, SelectMode, Session,
@@ -43,7 +49,8 @@ struct Draft {
 struct Placement {
     classname: String,
     properties: Vec<(String, String)>,
-    transform: edit::Transform,
+    origin: DVec3,
+    transform: Option<edit::Transform>,
     surface: SurfaceHit,
     picked: DVec3,
     id: ObjectId,
@@ -100,8 +107,8 @@ impl Session {
         Ok(())
     }
 
-    fn validate_entity_placement_request(&self, request: &Request) -> Result<(), String> {
-        let (classname, _) = self.entity_properties(
+    fn prepare_entity_placement_request(&self, request: &mut Request) -> Result<(), String> {
+        let (classname, properties) = self.entity_properties(
             &request.classname,
             ClassKind::Point,
             request.properties.clone(),
@@ -109,14 +116,84 @@ impl Session {
         if !request.offset.is_finite() || request.offset.abs() > crate::spatial::MAX_EXTENT {
             return Err("Surface offset must be finite and within ±65536 units".into());
         }
-        if classname.trim().eq_ignore_ascii_case("info_overlay")
-            || classname.trim().eq_ignore_ascii_case("infodecal")
-        {
-            return Err(
-                "Use Overlay… for overlays; contextual decal placement is unavailable".into(),
-            );
+        if classname.trim().eq_ignore_ascii_case("info_overlay") {
+            return Err("Use Overlay… to place overlays".into());
+        }
+        if decals::is_class(&classname) {
+            if request.offset != 0.0 || request.align {
+                return Err(
+                    "Decal placement uses the surface point without offset or alignment".into(),
+                );
+            }
+            if request
+                .properties
+                .keys()
+                .any(|key| key.eq_ignore_ascii_case("origin"))
+                || properties.iter().any(|(key, value)| {
+                    key.eq_ignore_ascii_case("parentname") && !value.trim().is_empty()
+                })
+            {
+                return Err("Decal placement derives a world origin from the picked surface; remove origin and parenting overrides".into());
+            }
+            let mut textures = request
+                .properties
+                .keys()
+                .filter(|key| key.eq_ignore_ascii_case(decals::TEXTURE_KEY));
+            if textures.nth(1).is_some() {
+                return Err("Decal placement requires exactly one texture property".into());
+            }
+            let texture = properties
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(decals::TEXTURE_KEY))
+                .map(|(_, value)| value.as_str())
+                .ok_or("Enter a decal material in the texture property")?;
+            let texture = decals::texture_name(texture)?;
+            decals::validate_placement_material(self.game(), &texture)?;
+            request.classname = decals::CLASSNAME.into();
+            request
+                .properties
+                .retain(|key, _| !key.eq_ignore_ascii_case(decals::TEXTURE_KEY));
+            request
+                .properties
+                .insert(decals::TEXTURE_KEY.into(), texture);
         }
         Ok(())
+    }
+
+    fn decal_placement_origin(&self, hit: SurfaceHit) -> Result<DVec3, String> {
+        let unsupported = "Pick a visible solid world or func_detail brush face for this decal";
+        let solid = hit.hit.solid.ok_or(unsupported)?;
+        let side = hit.hit.side.ok_or(unsupported)?;
+        if hit.terrain_vertex.is_some() {
+            return Err(unsupported.into());
+        }
+        if let ObjectId::Entity(id) = hit.hit.object
+            && self
+                .document
+                .entity(id)
+                .and_then(|entity| entity.classname())
+                != Some("func_detail")
+        {
+            return Err(unsupported.into());
+        }
+        let face = surface::side(&self.document, FaceId { solid, side }).ok_or(unsupported)?;
+        let material = Material::load_limited(self.game(), &face.material, 64 * 1024)
+            .map_err(|error| format!("Decal target material {}: {error}", face.material))?
+            .ok_or_else(|| format!("Decal target material {} was not found", face.material))?;
+        let semantics = material.compile_semantics();
+        if material.is_tool()
+            || semantics.surface & (surf::NODRAW | surf::NODECALS) != 0
+            || semantics.contents & (contents::SOLID | contents::WINDOW | contents::GRATE) == 0
+        {
+            return Err(unsupported.into());
+        }
+        let origin = hit.hit.point;
+        if !origin.is_finite()
+            || origin.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT
+        {
+            return Err("Decal origin must remain within Source's compile bounds".into());
+        }
+        Ok(origin)
     }
 
     fn checked_entity_placement(&self, token: u64) -> Result<&Draft, String> {
@@ -156,6 +233,7 @@ impl Session {
                 json!({"entity":crate::identity::id_string(plan.id),"origin":entity.origin().unwrap().to_array(),
                     "properties":entity.properties.0,"angles":entity.properties.get("angles"),
                     "angle":entity.properties.get("angle"),"pitch":entity.properties.get("pitch"),"target":crate::identity::id_string(plan.surface.hit.object),
+                    "decal_texture":decals::is_class(&plan.classname).then(|| entity.properties.get(decals::TEXTURE_KEY)).flatten(),
                     "solid":plan.surface.hit.solid,"side":plan.surface.hit.side,"picked":plan.picked.to_array(),
                     "point":plan.surface.hit.point.to_array(),"normal":plan.surface.normal.to_array(),
                     "bounds":{"mins":plan.bounds.0.to_array(),"maxs":plan.bounds.1.to_array()},
@@ -174,7 +252,7 @@ impl Session {
     pub fn begin_entity_placement(
         &mut self,
         actor: Actor,
-        request: Request,
+        mut request: Request,
         snapshot: &str,
     ) -> Result<Value, String> {
         if snapshot != self.entity_placement_stamp() {
@@ -186,7 +264,7 @@ impl Session {
         {
             return Err("Review the other actor's entity placement before changing it".into());
         }
-        self.validate_entity_placement_request(&request)?;
+        self.prepare_entity_placement_request(&mut request)?;
         self.clear_geometry_previews_except(&[super::previews::Kind::EntityPlacement]);
         self.cancel_block_preview();
         self.cancel_area_selection();
@@ -259,44 +337,65 @@ impl Session {
         if request.snap {
             surface = self.snapped_entity_surface(surface)?;
         }
+        let decal = decals::is_class(&classname);
+        let origin = if decal {
+            self.decal_placement_origin(surface)?
+        } else {
+            DVec3::ZERO
+        };
         let mut document = self.document.preview_snapshot();
         let id = document
             .edit("preview point entity", |tx| {
-                edit::create_entity(tx, &classname, Some(DVec3::ZERO), &properties, Vec::new())
+                edit::create_entity(tx, &classname, Some(origin), &properties, Vec::new())
             })
             .map_err(|error| error.to_string())?;
-        let models = self.model_instances(&document);
-        let supported = models
-            .instances
-            .iter()
-            .any(|instance| instance.id == id && instance.has_geometry());
-        let ObjectId::Entity(number) = id else {
-            unreachable!()
+        let (transform, bounds_source, model_error, support_points, contact) = if decal {
+            (None, "decal_origin", None, 1, 0.0)
+        } else {
+            let models = self.model_instances(&document);
+            let supported = models
+                .instances
+                .iter()
+                .any(|instance| instance.id == id && instance.has_geometry());
+            let ObjectId::Entity(number) = id else {
+                unreachable!()
+            };
+            let model_error = models.issues.get(&number).cloned();
+            let points = self.placement_points_in(&document, &[id])?;
+            let up = query::local_basis(&document, id)
+                .ok_or("Entity has no valid Source orientation")?
+                .z_axis;
+            let plan = placement::contact_plan(
+                points,
+                up,
+                Method::Ray,
+                ray,
+                surface,
+                &Options {
+                    align: request.align,
+                    offset: request.offset,
+                    texture_lock: false,
+                    source_corner: None,
+                },
+                Some(false),
+            )?;
+            document
+                .edit("preview entity contact", |tx| {
+                    edit::transform(tx, &[id], plan.transform)
+                })
+                .map_err(|error| error.to_string())?;
+            (
+                Some(plan.transform),
+                if supported {
+                    "model_mesh"
+                } else {
+                    "editor_helper"
+                },
+                model_error,
+                plan.support_points,
+                plan.contact,
+            )
         };
-        let model_error = models.issues.get(&number).cloned();
-        let points = self.placement_points_in(&document, &[id])?;
-        let up = query::local_basis(&document, id)
-            .ok_or("Entity has no valid Source orientation")?
-            .z_axis;
-        let plan = placement::contact_plan(
-            points,
-            up,
-            Method::Ray,
-            ray,
-            surface,
-            &Options {
-                align: request.align,
-                offset: request.offset,
-                texture_lock: false,
-                source_corner: None,
-            },
-            Some(false),
-        )?;
-        document
-            .edit("preview entity contact", |tx| {
-                edit::transform(tx, &[id], plan.transform)
-            })
-            .map_err(|error| error.to_string())?;
         let bounds = self
             .object_bounds_in(&document, &[id])
             .ok_or("Entity has no finite bounds")?;
@@ -309,20 +408,17 @@ impl Session {
         draft.placement = Some(Placement {
             classname,
             properties,
-            transform: plan.transform,
-            surface: plan.surface,
+            origin,
+            transform,
+            surface,
             picked,
             id,
             document,
             bounds,
-            support_points: plan.support_points,
-            bounds_source: if supported {
-                "model_mesh"
-            } else {
-                "editor_helper"
-            },
+            support_points,
+            bounds_source,
             model_error,
-            contact: plan.contact,
+            contact,
         });
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -354,6 +450,7 @@ impl Session {
             .ok_or("Pick a surface before applying entity placement")?;
         let classname = plan.classname.clone();
         let properties = plan.properties.clone();
+        let origin = plan.origin;
         let transform = plan.transform;
         let expected_id = plan.id;
         let ObjectId::Entity(expected_number) = expected_id else {
@@ -361,9 +458,10 @@ impl Session {
         };
         let expected = plan.document.entity(expected_number).unwrap().clone();
         let id = self.edit(actor, &format!("place {classname} on surface"), |tx| {
-            let id =
-                edit::create_entity(tx, &classname, Some(DVec3::ZERO), &properties, Vec::new())?;
-            edit::transform(tx, &[id], transform)?;
+            let id = edit::create_entity(tx, &classname, Some(origin), &properties, Vec::new())?;
+            if let Some(transform) = transform {
+                edit::transform(tx, &[id], transform)?;
+            }
             if id != expected_id
                 || tx
                     .vmf()

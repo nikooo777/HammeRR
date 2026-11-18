@@ -11,7 +11,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Arm a shared point-entity surface pick using classname, optional FGD properties, offset, align and snap, and latest get_entity_placement.snapshot. Preserves FGD defaults and Source angles/legacy angle/light pitch through existing creation/transform operations. Origins are derived from the picked surface. info_overlay uses Overlay…; contextual infodecal placement is unavailable. Finish competing geometry drafts first. UI: Entity… → Pick surface… → Pick surface. Then pick_entity_placement, inspect/render, and apply_entity_placement or cancel_entity_placement. Foreign drafts require explicit review."
+        description = "Arm a shared point-entity surface pick using classname, optional FGD properties, offset, align and snap, and latest get_entity_placement.snapshot. Preserves FGD defaults and Source angles/legacy angle/light pitch through existing creation/transform operations. For infodecal, provide properties.texture (for example decals/arrow_left). The origin is the picked or snapped point on a visible solid world or func_detail brush face. Leave offset at 0 and align false. info_overlay uses Overlay…. Finish competing geometry drafts first. UI: Entity… → Pick surface… → Pick surface. Then pick_entity_placement, inspect/render, and apply_entity_placement or cancel_entity_placement. Foreign drafts require explicit review."
     )]
     pub(in crate::mcp) fn begin_entity_placement(
         &self,
@@ -35,7 +35,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Pick the first visible brush, terrain triangle or supported model surface for the owned entity-placement token. Finite nonzero ray required. Uses the same support/contact planner as selected-object placement. Optional snapping rounds the two world axes tangent to the normal's dominant axis, then rechecks contact on the same visible face; leaving the surface rejects. Result bounds must stay within ±65536. Misses or invalid input preserve the draft. After a valid pick, begin again to choose another target. UI: click visible surface while picking."
+        description = "Pick the first visible brush, terrain triangle or supported model surface for the owned entity-placement token. Finite nonzero ray required. Ordinary point entities use the selected-object support/contact planner. An infodecal uses the surface point directly and requires a visible solid world or func_detail brush face. Optional snapping rounds the two world axes tangent to the normal's dominant axis, then rechecks the same visible face. Misses or invalid input preserve the draft. After a valid pick, begin again to choose another target. UI: click visible surface while picking."
     )]
     pub(in crate::mcp) fn pick_entity_placement(
         &self,
@@ -67,7 +67,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the owned valid entity-placement preview in one atomic Undo step and select the created entity. Replays existing creation plus Source orientation transform and verifies exact preview identity/properties before commit. Changed maps, selection, scene/grid, missing picks, foreign or replaced tokens reject. UI: Apply entity."
+        description = "Apply the owned valid entity-placement preview in one atomic Undo step and select the created entity. Replays the preview creation, including any Source orientation transform, and verifies exact identity and properties before commit. Changed maps, selection, scene/grid, missing picks, foreign or replaced tokens reject. UI: Apply entity."
     )]
     pub(in crate::mcp) fn apply_entity_placement(
         &self,

@@ -533,6 +533,7 @@ impl Session {
                     .collect(),
                 &BTreeSet::new(),
                 &BTreeSet::new(),
+                true,
             )?;
         }
         let game = self.game.clone();

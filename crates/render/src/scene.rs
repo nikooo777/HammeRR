@@ -11,9 +11,11 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::materials::{MaterialId, MaterialLibrary};
 
 mod model_lighting;
+pub(crate) mod projected_overlays;
 mod rope_mesh;
 
 pub(crate) mod terrain;
+pub use projected_overlays::{Draft as OverlayDraft, Preview as OverlayPreview};
 
 const HELPER_SEGMENTS: usize = 16;
 const MAX_PREVIEW_ISSUES: usize = 64;
@@ -99,6 +101,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub(crate) projected_overlay_batches: std::ops::Range<usize>,
     pub baked_faces: Option<std::sync::Arc<crate::compiled_faces::LightingData>>,
     pub baked_face_materials:
         Vec<Option<std::sync::Arc<crate::compiled_faces::materials::Material>>>,
@@ -142,23 +145,41 @@ pub struct TerrainIssue {
 
 #[derive(Debug, Clone)]
 pub enum SceneIssue {
-    Brush { solid: u32, message: String },
-    Surface { face: FaceId, message: String },
+    Brush {
+        solid: u32,
+        message: String,
+    },
+    Surface {
+        face: FaceId,
+        message: String,
+    },
     Terrain(TerrainIssue),
+    Overlay {
+        entity: Option<u32>,
+        message: String,
+    },
 }
 
 impl SceneIssue {
-    pub fn solid(&self) -> u32 {
+    pub fn solid(&self) -> Option<u32> {
         match self {
-            Self::Brush { solid, .. } => *solid,
-            Self::Surface { face, .. } => face.solid,
-            Self::Terrain(issue) => issue.face.solid,
+            Self::Brush { solid, .. } => Some(*solid),
+            Self::Surface { face, .. } => Some(face.solid),
+            Self::Terrain(issue) => Some(issue.face.solid),
+            Self::Overlay { .. } => None,
+        }
+    }
+
+    pub fn entity(&self) -> Option<u32> {
+        match self {
+            Self::Overlay { entity, .. } => *entity,
+            _ => None,
         }
     }
 
     pub fn face(&self) -> Option<FaceId> {
         match self {
-            Self::Brush { .. } => None,
+            Self::Brush { .. } | Self::Overlay { .. } => None,
             Self::Surface { face, .. } => Some(*face),
             Self::Terrain(issue) => Some(issue.face),
         }
@@ -169,6 +190,7 @@ impl SceneIssue {
             Self::Brush { message, .. } => message,
             Self::Surface { message, .. } => message,
             Self::Terrain(issue) => &issue.message,
+            Self::Overlay { message, .. } => message,
         }
     }
 
@@ -182,6 +204,10 @@ impl SceneIssue {
                 "Terrain face {} on brush {}: {}",
                 issue.face.side, issue.face.solid, issue.message
             ),
+            Self::Overlay { entity, message } => match entity {
+                Some(id) => format!("Overlay {id} preview: {message}"),
+                None => format!("Overlay draft preview: {message}"),
+            },
         }
     }
 }
@@ -254,6 +280,7 @@ struct Builder<'a> {
     models: &'a [crate::models::Instance],
     helpers: &'a BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
     overlays: &'a [FaceOverlay],
+    projections: projected_overlays::Projections,
     selected_faces: &'a HashSet<FaceId>,
     fs: &'a GameFs,
     library: &'a mut MaterialLibrary,
@@ -435,6 +462,15 @@ impl Builder<'_> {
                         tint,
                         (id, side, terrain_owner_supported),
                     );
+                    if terrain_owner_supported {
+                        self.projections.terrain(
+                            side.id,
+                            &mesh,
+                            &normals,
+                            face.plane.normal,
+                            self.library.get(material),
+                        );
+                    }
                     self.push_displacement_wire(&mesh, tool);
                     if selected {
                         self.selection_loop(
@@ -458,7 +494,7 @@ impl Builder<'_> {
                         })
                         .collect::<Vec<_>>();
                     if overlays.is_empty() {
-                        self.add_polygon(
+                        let drawn = self.add_polygon(
                             (id, side),
                             &face.vertices,
                             face.plane.normal,
@@ -466,6 +502,14 @@ impl Builder<'_> {
                             tint,
                             selected,
                         );
+                        if terrain_owner_supported && drawn {
+                            self.projections.flat(
+                                side.id,
+                                &face.vertices,
+                                face.plane.normal,
+                                self.library.get(material),
+                            );
+                        }
                     } else {
                         for overlay in overlays {
                             let mut projected = side.clone();
@@ -533,9 +577,9 @@ impl Builder<'_> {
         name: &str,
         tint: [u8; 3],
         selected: bool,
-    ) {
+    ) -> bool {
         if !self.admit_surface(face, side, normal, points) {
-            return;
+            return false;
         }
         let material = self.material(name);
         let info = self.library.get(material);
@@ -616,6 +660,7 @@ impl Builder<'_> {
         if selected {
             self.selection_loop(points.iter().map(|point| point.as_vec3()));
         }
+        true
     }
 
     fn push_wire_loop(&mut self, points: impl IntoIterator<Item = Vec3>, tool: bool) {
@@ -1685,6 +1730,7 @@ impl SceneMesh {
             authored_surfaces,
             entity_helpers,
             terrain::prepare(vmf),
+            None,
             include,
         )
     }
@@ -1713,6 +1759,7 @@ impl SceneMesh {
         authored_surfaces: bool,
         entity_helpers: bool,
         terrain_normals: &BTreeMap<FaceId, TerrainNormalOverride>,
+        projected_overlays: Option<OverlayPreview<'_>>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Result<Self, String> {
         if !authored_surfaces && !terrain_normals.is_empty() {
@@ -1737,6 +1784,7 @@ impl SceneMesh {
             authored_surfaces,
             entity_helpers,
             terrain,
+            projected_overlays,
             include,
         ))
     }
@@ -1765,6 +1813,7 @@ impl SceneMesh {
         authored_surfaces: bool,
         entity_helpers: bool,
         terrain: terrain::Prepared,
+        projected_overlays: Option<OverlayPreview<'_>>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
         let (icons, model_guides) = guides;
@@ -1777,10 +1826,15 @@ impl SceneMesh {
                 issues
             },
         );
+        let mut issues = SceneIssues::default();
+        let projections =
+            projected_overlays.map_or_else(projected_overlays::Projections::default, |preview| {
+                projected_overlays::Projections::prepare(vmf, preview.draft, &include, &mut issues)
+            });
         let mut builder = Builder {
             authored_surfaces,
             entity_helpers,
-            issues: SceneIssues::default(),
+            issues,
             terrain_issues,
             tool_textures,
             selection_tint,
@@ -1803,6 +1857,7 @@ impl SceneMesh {
             models,
             helpers,
             overlays,
+            projections,
             selected_faces,
             fs,
             library,
@@ -1833,19 +1888,21 @@ impl SceneMesh {
                 targets
             },
         };
-        for solid in vmf
-            .world
-            .solids
-            .iter()
-            .filter(|s| !s.hidden && include(ObjectId::Solid(s.id)))
-        {
-            builder.add_solid(solid, selected.contains(&ObjectId::Solid(solid.id)), true);
+        for solid in &vmf.world.solids {
+            let id = ObjectId::Solid(solid.id);
+            if !solid.hidden && include(id) {
+                builder.add_solid(solid, selected.contains(&id), true);
+            } else {
+                builder.projections.hide_sides(solid);
+            }
         }
-        for entity in vmf
-            .entities
-            .iter()
-            .filter(|e| !e.hidden && include(ObjectId::Entity(e.id)))
-        {
+        for entity in &vmf.entities {
+            if entity.hidden || !include(ObjectId::Entity(entity.id)) {
+                for solid in &entity.solids {
+                    builder.projections.hide_sides(solid);
+                }
+                continue;
+            }
             let is_selected = selected.contains(&ObjectId::Entity(entity.id));
             if entity.solids.is_empty() {
                 let model_guide = model_guides
@@ -1853,7 +1910,11 @@ impl SceneMesh {
                     .any(|guide| guide.id == ObjectId::Entity(entity.id));
                 builder.add_point_entity(entity, is_selected, model_guide);
             }
-            for solid in entity.solids.iter().filter(|s| !s.hidden) {
+            for solid in &entity.solids {
+                if solid.hidden {
+                    builder.projections.hide_sides(solid);
+                    continue;
+                }
                 builder.add_solid(
                     solid,
                     is_selected || selected.contains(&ObjectId::Solid(solid.id)),
@@ -1916,7 +1977,15 @@ impl SceneMesh {
             indices.extend(list);
         }
         stats.missing_materials = missing_materials.len();
+        let first_overlay = batches.len();
+        builder.projections.finish(
+            builder.fs,
+            builder.library,
+            (&mut builder.vertices, &mut indices, &mut batches),
+            &mut builder.issues,
+        );
         Self {
+            projected_overlay_batches: first_overlay..batches.len(),
             baked_faces: None,
             baked_face_materials: Vec::new(),
             baked_face_batches: 0..0,

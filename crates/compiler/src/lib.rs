@@ -8,6 +8,7 @@ mod bsp_size;
 pub mod control;
 mod cordons;
 pub mod cubemap_assets;
+pub mod decals;
 mod detail_props;
 mod emit;
 pub mod entity_origins;
@@ -1226,6 +1227,18 @@ fn build(
                 }
             }),
     );
+    decals::validate(
+        vmf,
+        fs,
+        material_sources
+            .as_ref()
+            .ok_or("Decal material capture is unavailable")?,
+        &mut output.report,
+        control,
+    )?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
     let mut emission_input = lighting::emission::preflight(
         prepared_instances,
         &caster_requests,

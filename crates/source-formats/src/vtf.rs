@@ -181,6 +181,15 @@ pub fn validate_native_mips(dimensions: [u32; 3], flags: u32, stored: u8) -> Res
 }
 
 impl Vtf {
+    pub fn encoded_size(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn has_alpha(&self) -> bool {
+        const ALPHA_FLAGS: u32 = 0x0000_1000 | 0x0000_2000;
+        self.flags & ALPHA_FLAGS != 0
+    }
+
     pub fn validate_native_mips(&self) -> Result<(), Error> {
         validate_native_mips(
             [self.width, self.height, self.depth],

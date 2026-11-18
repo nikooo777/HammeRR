@@ -27,6 +27,8 @@ pub mod measurements;
 pub mod merge;
 mod metadata;
 pub mod overlay;
+mod overlay_bindings;
+pub mod overlay_projection;
 pub mod partition_metadata;
 pub mod picking;
 pub mod plane;

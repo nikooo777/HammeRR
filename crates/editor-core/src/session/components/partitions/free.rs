@@ -245,7 +245,7 @@ impl Session {
             .iter()
             .map(|part| (part.solid, part.side))
             .collect();
-        self.check_fragment_references(&sources, &BTreeSet::new(), &consumed)?;
+        self.check_fragment_references(&sources, &BTreeSet::new(), &consumed, false)?;
         let surfaces = draft.free_surfaces();
         let mut candidate = self.document.preview_snapshot();
         let plan = candidate
@@ -401,7 +401,7 @@ impl Session {
             .iter()
             .map(|part| (part.solid, part.side))
             .collect();
-        self.check_fragment_references(&sources, &BTreeSet::new(), &consumed)?;
+        self.check_fragment_references(&sources, &BTreeSet::new(), &consumed, false)?;
         let expected = free.plan.clone();
         let mapping = exterior_mapping(&expected);
         let writes = free.cubemap_bindings.writes.clone();

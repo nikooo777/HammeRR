@@ -94,6 +94,12 @@ pub fn stored_vertex(point: DVec3) -> DVec3 {
     DVec3::from_array(vertex_position(vertex_key(point)).map(f64::from))
 }
 
+pub fn stored_base_corners(mesh: &DisplacementMesh) -> [DVec3; 4] {
+    let last = mesh.size - 1;
+    [0, last * mesh.size, mesh.size * mesh.size - 1, last]
+        .map(|index| stored_vertex(mesh.base_positions[index]))
+}
+
 pub fn stored_mesh(face: &Face, disp: &DispInfo) -> Result<DisplacementMesh, String> {
     let mut mesh = DisplacementMesh::build(face, disp).map_err(|error| error.to_string())?;
     let base = face

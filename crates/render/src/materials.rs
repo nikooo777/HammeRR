@@ -612,14 +612,34 @@ impl MaterialLibrary {
         name: &str,
         limits: [usize; 2],
     ) -> Result<MaterialId, String> {
+        self.load_validated(fs, name, limits, |material| {
+            if material.missing {
+                if let Some(error) = &material.error {
+                    return Err(error.clone());
+                }
+                return Err(format!(
+                    "Material {} has no usable base texture",
+                    material.name
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn load_validated(
+        &mut self,
+        fs: &GameFs,
+        name: &str,
+        limits: [usize; 2],
+        validate: impl FnOnce(&MaterialInfo) -> Result<(), String>,
+    ) -> Result<MaterialId, String> {
         let key = name.to_ascii_lowercase();
         if let Some(&id) = self.by_name.get(&key) {
+            validate(&self.materials[id])?;
             return Ok(id);
         }
         let material = MaterialInfo::load_checked(fs, &key, Some(limits))?;
-        if material.missing {
-            return Err(format!("Material {key} has no usable base texture"));
-        }
+        validate(&material)?;
         let id = self.materials.len();
         self.materials.push(material);
         self.by_name.insert(key, id);

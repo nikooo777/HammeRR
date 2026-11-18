@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
+use compiler::decals;
 use map_core::query::Ray;
 use serde_json::Value;
 use slint::ComponentHandle;
@@ -56,7 +57,12 @@ fn present(window: &EntityPlacementWindow, report: &Value, dirty: bool) {
             .into(),
     );
     let plan = &draft["plan"];
-    window.set_summary(if plan.is_null() { "".into() } else {
+    window.set_summary(if plan.is_null() { "".into() } else if let Some(texture) = plan["decal_texture"].as_str() {
+        let origin = &plan["origin"];
+        format!("Decal material · {texture}\nOrigin · {:.3}, {:.3}, {:.3}\nTarget · {} · face {}",
+            origin[0].as_f64().unwrap(), origin[1].as_f64().unwrap(), origin[2].as_f64().unwrap(),
+            plan["target"].as_str().unwrap(), plan["side"]).into()
+    } else {
         let origin = &plan["origin"];
         let low = &plan["bounds"]["mins"];
         let high = &plan["bounds"]["maxs"];
@@ -80,6 +86,8 @@ fn present(window: &EntityPlacementWindow, report: &Value, dirty: bool) {
         "Click a visible surface. Escape or Cancel picking abandons this draft.".into()
     } else if let Some(error) = plan["model_error"].as_str() {
         format!("Model unavailable; using editor helper bounds. {error}").into()
+    } else if !plan["decal_texture"].is_null() {
+        "Review the decal position in the viewport. Apply entity adds one Undo step.".into()
     } else if !plan.is_null() {
         "Review the preview bounds in the viewport. Apply entity adds one Undo step.".into()
     } else {
@@ -107,9 +115,18 @@ impl Controller {
             move || {
                 callback(&window, &access, |window, session| {
                     let result = (|| {
+                        let mut properties = form.borrow().properties.clone();
+                        if window.get_decal() {
+                            properties
+                                .retain(|key, _| !key.eq_ignore_ascii_case(decals::TEXTURE_KEY));
+                            properties.insert(
+                                decals::TEXTURE_KEY.into(),
+                                window.get_decal_material().to_string(),
+                            );
+                        }
                         let request = Request {
                             classname: window.get_classname().to_string(),
-                            properties: form.borrow().properties.clone(),
+                            properties,
                             offset: window
                                 .get_offset()
                                 .parse()
@@ -212,8 +229,23 @@ impl Controller {
         form.token = draft["token"].as_u64();
         form.properties = serde_json::from_value(draft["properties"].clone()).unwrap_or_default();
         form.dirty = false;
-        self.window
-            .set_classname(draft["classname"].as_str().unwrap_or(classname).into());
+        let classname = draft["classname"].as_str().unwrap_or(classname);
+        self.window.set_classname(classname.into());
+        self.window.set_decal(decals::is_class(classname));
+        let texture = form
+            .properties
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(decals::TEXTURE_KEY))
+            .map(|(_, value)| value.as_str())
+            .or_else(|| {
+                session
+                    .definitions()
+                    .class(classname)
+                    .and_then(|class| class.property(decals::TEXTURE_KEY))
+                    .and_then(|property| property.default.as_deref())
+            })
+            .unwrap_or_default();
+        self.window.set_decal_material(texture.into());
         self.window.set_offset(
             draft["offset"]
                 .as_f64()

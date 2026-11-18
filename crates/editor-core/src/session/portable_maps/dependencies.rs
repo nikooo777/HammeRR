@@ -706,13 +706,19 @@ pub(super) fn collect(
                 format!("entity {} rope material", entity.id),
             )?;
         }
-        let definition = catalog.class(class).ok_or_else(|| format!("Entity {} class {class}: load its entity definitions before collecting portable dependencies", entity.id))?;
+        let definition = catalog.class(class);
+        if definition.is_none() && !compiler::decals::is_class(class) {
+            return Err(format!(
+                "Entity {} class {class}: load its entity definitions before collecting portable dependencies",
+                entity.id
+            ));
+        }
         for (key, value) in entity.properties.iter() {
             if value.is_empty() {
                 continue;
             }
             let kind = definition
-                .property(key)
+                .and_then(|definition| definition.property(key))
                 .map(|property| property.kind.as_str());
             let from = format!("entity {} {key}", entity.id);
             if key.eq_ignore_ascii_case("vscripts") {
@@ -739,6 +745,8 @@ pub(super) fn collect(
                 }
             } else if matches!(kind, Some("material" | "decal"))
                 || class == "info_overlay" && key.eq_ignore_ascii_case("material")
+                || compiler::decals::is_class(class)
+                    && key.eq_ignore_ascii_case(compiler::decals::TEXTURE_KEY)
             {
                 c.enqueue(vmt::material_path(value), from)?;
             } else if matches!(kind, Some("sound")) {

@@ -40,7 +40,7 @@ T07,Material replacement,100
 T08,Material exploration,100
 T09,Direct UV vectors and skew (++),100
 T10,Atlas-aware texturing (++),100
-T11,Decal and overlay authoring,60
+T11,Decal and overlay authoring,100
 E01,World properties,100
 E02,Multi-entity property editing,100
 E03,Input/output connection authoring,100
@@ -91,7 +91,7 @@ C03,Production collision,75
 C04,Static props,65
 C05,Displacements,76.470588
 C06,Water and related spatial data,60
-C07,Overlay compilation,65
+C07,Overlay compilation,80
 C08,Cubemaps and lighting origins,70
 C09,Visibility controls and areas,100
 C10,Brush entity origins and behavior,60

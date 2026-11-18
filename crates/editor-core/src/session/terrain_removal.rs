@@ -292,6 +292,7 @@ impl Session {
             &preview.result.cuts.iter().map(|cut| cut.source).collect(),
             &BTreeSet::new(),
             &BTreeSet::new(),
+            true,
         )?;
         let game = self.game.clone();
         let result = self.edit(actor, "remove terrain triangles", |tx| {

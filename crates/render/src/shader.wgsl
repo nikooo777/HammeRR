@@ -3,6 +3,7 @@ const FULL_BILLBOARD_TAG: f32 = -2.5;
 const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
 const BAKED_DETAIL_RECEIVER: u32 = 2u;
 const BAKED_RADIANCE_RECEIVER: u32 = 3u;
+const UNLIT_PROJECTED_RECEIVER: u32 = 6u;
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
@@ -199,7 +200,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if globals.surface_view.w != 0u && material.helper.w > 0.5 {
         shade = 0.3 + 0.7 * max(dot(shading_normal, globals.light_dir.xyz), 0.0);
     }
-    if in.lighting_receiver == BAKED_DETAIL_RECEIVER { shade = 1.0; }
+    if in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == UNLIT_PROJECTED_RECEIVER { shade = 1.0; }
     var color = texel.rgb * in.color.rgb * shade;
     if globals.lighting_settings.z > 0.5 && in.lighting_receiver == 1u {
         var irradiance = in.authored_irradiance;

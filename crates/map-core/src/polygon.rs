@@ -19,7 +19,7 @@ fn on_segment(a: DVec2, b: DVec2, point: DVec2) -> bool {
         && point.cmple(a.max(b) + DVec2::splat(EPSILON)).all()
 }
 
-fn intersects(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
+pub(crate) fn intersects(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
     let ab = [turn(a, b, c), turn(a, b, d)];
     let cd = [turn(c, d, a), turn(c, d, b)];
     (ab[0] * ab[1] < 0.0 && cd[0] * cd[1] < 0.0)

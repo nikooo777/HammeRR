@@ -116,7 +116,7 @@ impl RenderedView {
         fog_preview["color_applied"] = json!(color_applied);
         fog_preview["far_clip_applied"] = json!(far_z.is_some());
         fog_preview["far_z"] = json!(far_z);
-        let preview_issues = self.issues.entries.iter().map(|issue| json!({"brush":issue.solid(),"face":issue.face().map(|face|json!({"solid":face.solid,"side":face.side})),"message":issue.message()})).collect::<Vec<_>>();
+        let preview_issues = self.issues.entries.iter().map(|issue| json!({"brush":issue.solid(),"entity":issue.entity(),"face":issue.face().map(|face|json!({"solid":face.solid,"side":face.side})),"message":issue.message()})).collect::<Vec<_>>();
         let mut rendered_view = view_state(view);
         let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,

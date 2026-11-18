@@ -13,6 +13,7 @@ Place game objects, edit their properties and connect outputs to inputs.
 
 For surface placement, choose **Pick surface…**, set **Offset**, and optionally enable **Align local up to surface**.
 Pick the surface, inspect the bounds, then click **Apply entity**.
+For surface marks, see [Place a decal](overlays.md#place-a-decal).
 
 ## Edit properties
 

@@ -1848,6 +1848,7 @@ pub fn clip_with_options(
     if !terrain_fragments.is_empty() {
         crate::subobject::fragments::install(tx, terrain_fragments)?;
     }
+    crate::overlay_bindings::remap(tx, &result.side_mapping)?;
     result.objects.sort();
     result.objects.dedup();
     Ok(result)

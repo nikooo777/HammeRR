@@ -585,13 +585,10 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     window.set_source_label(if let Some(source) = source(display_source) {
         if source_count > 1 {
             if form.corners {
-                format!(
-                    "Bound sources · {source_count} coplanar faces · flat or isolated planar terrain · stored projection axes"
-                )
-                .into()
+                format!("Bound sources · {source_count} faces · stored projection axes").into()
             } else {
                 format!(
-                    "Sources · {source_count} coplanar faces · flat or isolated planar terrain · first quad: brush {} · face {}",
+                    "Sources · {source_count} faces · first quad: brush {} · face {}",
                     source.solid, source.side
                 )
                 .into()
@@ -599,13 +596,22 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         } else {
             format!(
                 "Source · brush {} · face {} · {}",
-                source.solid, source.side,
-                if map_core::overlay::is_terrain(session.document().vmf(), source) { "isolated planar terrain quad" } else { "world / detail quad" }
+                source.solid,
+                source.side,
+                if map_core::overlay::is_terrain(session.document().vmf(), source) {
+                    "terrain patch"
+                } else {
+                    "world / detail quad"
+                }
             )
             .into()
         }
     } else if reference_required {
-        format!("Bound sources · {source_count} coplanar faces · flat or isolated planar terrain · {}", window.get_refit_reference_label()).into()
+        format!(
+            "Bound sources · {source_count} faces · {}",
+            window.get_refit_reference_label()
+        )
+        .into()
     } else {
         state[if session.face_mode() {
             "selection_error"
@@ -613,7 +619,7 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
             "refit_error"
         }]
         .as_str()
-        .unwrap_or("Select coplanar world/detail or isolated planar terrain faces")
+        .unwrap_or("Select world/detail faces or terrain patches with a common projection plane")
         .into()
     });
     let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
@@ -715,7 +721,7 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
             }
             (
                 form.source
-                    .ok_or("Select coplanar world/detail or isolated planar terrain faces, including a quad, and reopen Overlay")?,
+                    .ok_or("Select world/detail faces or terrain patches with a common projection plane, including a quad, and reopen Overlay")?,
                 form.additional_sources.clone(),
                 form.snapshot.clone(),
             )

@@ -146,7 +146,7 @@ impl Session {
             .filter(|_| consume_source_partition)
             .map(|request| (request.solid, request.side))
             .collect();
-        self.check_fragment_references(&objects, &consumed, &BTreeSet::new())
+        self.check_fragment_references(&objects, &consumed, &BTreeSet::new(), false)
     }
 
     pub(in crate::session) fn check_fragment_references(
@@ -154,6 +154,7 @@ impl Session {
         objects: &BTreeSet<u32>,
         consumed_partitions: &BTreeSet<(u32, u32)>,
         consumed_free_partitions: &BTreeSet<(u32, u32)>,
+        overlays: bool,
     ) -> Result<(), String> {
         admit_fragment_snapshot(self.document.vmf())?;
         map_core::groups::Graph::read(&self.document).map_err(|error| error.to_string())?;
@@ -210,7 +211,7 @@ impl Session {
         {
             return Err("A source brush is retained origin-volume custody; it cannot become convex fragments".into());
         }
-        check_side_references(self, &sides, true)?;
+        check_side_references(self, &sides, true, overlays)?;
         map_core::measurements::Measurements::parse(self.document.vmf())?
             .validate_retained_references(objects, &sides)?;
         let context = map_core::context::Metadata::parse(self.document.vmf())?;
@@ -260,7 +261,7 @@ impl Session {
             .iter()
             .map(|change| change.source.side)
             .collect();
-        check_side_references(self, &sides, true)
+        check_side_references(self, &sides, true, false)
     }
 }
 
@@ -268,13 +269,14 @@ pub(in crate::session) fn require_unbound_side_references(
     session: &Session,
     sides: &BTreeSet<u32>,
 ) -> Result<(), String> {
-    check_side_references(session, sides, false)
+    check_side_references(session, sides, false, false)
 }
 
 fn check_side_references(
     session: &Session,
     sides: &BTreeSet<u32>,
     cubemaps: bool,
+    overlays: bool,
 ) -> Result<(), String> {
     let existing = session.document.vmf().side_ids().collect::<BTreeSet<_>>();
     for entity in &session.document.vmf().entities {
@@ -288,11 +290,13 @@ fn check_side_references(
                 continue;
             }
             let ids = parsed_side_references(entity, key, value, &existing)?;
-            if ids.iter().any(|id| sides.contains(id))
-                && !(cubemaps
-                    && key.eq_ignore_ascii_case("sides")
-                    && super::ridge_bindings::is_cubemap(entity))
-            {
+            let remapped = key.eq_ignore_ascii_case("sides")
+                && ((cubemaps && super::ridge_bindings::is_cubemap(entity))
+                    || (overlays
+                        && entity
+                            .classname()
+                            .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))));
+            if !remapped && ids.iter().any(|id| sides.contains(id)) {
                 return Err(format!(
                     "entity:{} {key} binds a selected face; the operation requires one-to-many face rebinding",
                     entity.id

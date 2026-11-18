@@ -33,14 +33,25 @@ pub fn encoded_vertices(
         if active {
             continue;
         }
-        let delta = (patch.positions[vertex] - original_positions[vertex]).as_vec3();
-        let old = vertices[vertex];
-        vertices[vertex] = super::native::offset_vertex(
-            (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array(),
-            old.alpha,
+        vertices[vertex] = encode_snapped_vertex(
+            vertices[vertex],
+            original_positions[vertex],
+            patch.positions[vertex],
         );
     }
     Ok(vertices)
+}
+
+pub(crate) fn encode_snapped_vertex(
+    old: DisplacementVertex,
+    before: DVec3,
+    after: DVec3,
+) -> DisplacementVertex {
+    let delta = (after - before).as_vec3();
+    super::native::offset_vertex(
+        (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array(),
+        old.alpha,
+    )
 }
 
 #[derive(Default)]

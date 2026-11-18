@@ -678,6 +678,7 @@ pub fn carve_many_with_preparation(
             }
         }
     }
+    crate::overlay_bindings::remap(tx, &result.side_mapping)?;
     result.objects.sort();
     result.objects.dedup();
     Ok(result)

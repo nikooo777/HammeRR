@@ -46,6 +46,19 @@ Both operations keep the overlay identity, settings and connections. Use **Undo*
 
 Corner edits keep the bindings and projection axes. Crossed or collapsed corners fail.
 
+## Place a water transition
+
+1. Select the receiver faces, such as a bank beside a pool.
+2. Open **Overlay…** and enable **Water transition**.
+3. Choose **Material** and set the **Texture** U and V ranges.
+4. Click **Fit / Preview**, then **Apply water transition**.
+5. Compile and play to check the transition.
+
+Each new helper stores one projection. Use the same refit, rebind and corner
+controls as for a regular overlay. Clip, carve and terrain triangle removal
+retain the projected bindings. Imported helpers with several projections
+compile with all their records and need a separate tool to edit their layout.
+
 ## Place a decal
 
 1. Open **Entity…** and choose `infodecal`.
@@ -59,9 +72,10 @@ The point is the decal's origin. CS:S chooses nearby receivers and can project o
 ## Limits
 
 - Fit uses root world and detail faces. A terrain target uses its displaced face. Folded or overlapping terrain and visible saved instance references block terrain fitting.
-- The editor projects plain LightmappedGeneric and UnlitGeneric textures onto opaque surfaces. Terrain preview requires a parallelogram base. Shader effects, distance fades, decals and referenced overlays render in the game when supported.
-- Compile regions must retain the complete overlay and its targets. Imported water transitions keep their native records.
-- A bound side can be fully buried in the built map. Compile reports these sides. If every bound side is buried, compile fails.
+- The editor projects plain LightmappedGeneric and UnlitGeneric textures onto opaque authored surfaces. Terrain preview requires a parallelogram base. Use the game for fades, decal projection, and installed shader effects.
+- Water transitions use the selected faces and fixed render order. They have no runtime name or distance fades. Older shoreline helpers with legacy side lists keep their original data.
+- Compile regions must retain the complete overlay and its targets. Compile reports bound sides that are fully buried and requires a surviving projection.
+- Stock CS:S draws overlays on world, detail and terrain surfaces. Brush-model overlays require client support.
 - Decal placement uses planar brush faces and supports static LightmappedGeneric, UnlitGeneric and DecalModulate decal assets.
 
 <!-- page-nav -->

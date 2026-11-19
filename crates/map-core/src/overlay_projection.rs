@@ -67,6 +67,10 @@ impl Frame {
         )
     }
 
+    pub fn origin(&self) -> DVec3 {
+        self.origin
+    }
+
     pub fn direction(&self) -> DVec3 {
         self.normal
     }

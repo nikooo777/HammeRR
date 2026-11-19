@@ -21,7 +21,7 @@ struct Form {
     additional_sources: Vec<FaceId>,
     reference: Option<FaceId>,
     token: Option<u64>,
-    reviewed: Option<Options>,
+    reviewed: Option<(bool, Options)>,
     refit: bool,
     rebind: bool,
     corners: bool,
@@ -56,20 +56,26 @@ fn number(text: &str) -> Result<f32, String> {
         .ok_or("Enter finite texture coordinates and fade distances".into())
 }
 
-fn fields(window: &OverlayWindow) -> Result<Options, String> {
-    let targetname = window.get_targetname();
-    Ok(Options {
+fn fields(window: &OverlayWindow) -> Result<(bool, Options), String> {
+    let water_transition = window.get_water_transition();
+    let mut options = Options {
         material: window.get_material().to_string(),
-        targetname: (!targetname.trim().is_empty()).then(|| targetname.to_string()),
-        render_order: window
-            .get_render_order()
-            .try_into()
-            .map_err(|_| "Render order must be between 0 and 3")?,
         u: [number(&window.get_u_start())?, number(&window.get_u_end())?],
         v: [number(&window.get_v_start())?, number(&window.get_v_end())?],
-        fade_min: number(&window.get_fade_min())?,
-        fade_max: number(&window.get_fade_max())?,
-    })
+        ..Options::default()
+    };
+    if water_transition {
+        return Ok((true, options));
+    }
+    let targetname = window.get_targetname();
+    options.targetname = (!targetname.trim().is_empty()).then(|| targetname.to_string());
+    options.render_order = window
+        .get_render_order()
+        .try_into()
+        .map_err(|_| "Render order must be between 0 and 3")?;
+    options.fade_min = number(&window.get_fade_min())?;
+    options.fade_max = number(&window.get_fade_max())?;
+    Ok((false, options))
 }
 
 fn corner_fields(window: &OverlayWindow) -> Result<[[f64; 2]; 4], String> {
@@ -254,7 +260,11 @@ fn refresh_choices(window: &OverlayWindow, session: &Session, form: &RefCell<For
                         let name = entry["name"]
                             .as_str()
                             .filter(|name| !name.trim().is_empty())
-                            .unwrap_or("Unnamed overlay");
+                            .unwrap_or(if entry["water_transition"] == true {
+                                "Water transition"
+                            } else {
+                                "Unnamed overlay"
+                            });
                         let source = &entry["source"];
                         OverlayTargetRow {
                             entity: entry["entity"].as_str().unwrap().into(),
@@ -334,6 +344,7 @@ fn choose_overlay(window: &OverlayWindow, session: &Session, form: &RefCell<Form
         return;
     };
     load(window, &choice["options"]);
+    window.set_water_transition(choice["water_transition"] == true);
     let mut state = form.borrow_mut();
     state.target = choice["id"].as_u64().and_then(|id| u32::try_from(id).ok());
     state.refit = true;
@@ -654,6 +665,7 @@ fn edited(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
 fn adopt(window: &OverlayWindow, state: &Value, form: &RefCell<Form>) {
     let draft = &state["draft"];
     load(window, &draft["options"]);
+    window.set_water_transition(draft["water_transition"] == true);
     let mut form = form.borrow_mut();
     form.source = source(&draft["source"]);
     form.additional_sources = additional_sources(draft);
@@ -726,11 +738,13 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
                 form.snapshot.clone(),
             )
         };
+        let (water_transition, options) = fields(window)?;
         session.preview_overlay_faces(
             Actor::User,
             Request {
                 source,
-                options: fields(window)?,
+                options,
+                water_transition,
             },
             &additional_sources,
             &snapshot,
@@ -739,9 +753,11 @@ fn preview(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) 
     match result {
         Ok(state) => {
             adopt(window, &state, form);
-            window.set_message(
-                "Review the cyan outline and material thumbnail, then Apply overlay.".into(),
-            );
+            window.set_message(if window.get_water_transition() {
+                "Review the projection, then Apply water transition.".into()
+            } else {
+                "Review the projection, then Apply overlay.".into()
+            });
         }
         Err(error) => {
             form.borrow_mut().reviewed = None;
@@ -795,6 +811,7 @@ fn edit_selected_corners(window: &OverlayWindow, session: &Session, form: &RefCe
         return;
     };
     load(window, &selected["options"]);
+    window.set_water_transition(selected["water_transition"] == true);
     load_corners(window, selected);
     let mut current = form.borrow_mut();
     current.corners = true;
@@ -1174,6 +1191,8 @@ impl Controller {
         );
         refresh_choices(&self.window, session, &self.form);
         load(&self.window, &Value::Null);
+        self.window
+            .set_water_transition(state["selected_overlay"]["water_transition"] == true);
         self.window.set_material(material.into());
         self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Edit selected corners uses the stored projection axes. For Refit selected overlay, choose a reference face whose current edges set the new axes." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
         refresh_material(&self.window, session);

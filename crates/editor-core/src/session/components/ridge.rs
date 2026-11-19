@@ -159,7 +159,7 @@ impl Session {
         admit_fragment_snapshot(self.document.vmf())?;
         map_core::groups::Graph::read(&self.document).map_err(|error| error.to_string())?;
         map_core::layers::Graph::read(&self.document).map_err(|error| error.to_string())?;
-        require_known_face_topology_metadata(self.document.vmf())?;
+        require_topology_metadata(self.document.vmf(), overlays)?;
         let mut sides = BTreeSet::new();
         for &id in objects {
             let (owner, solid) =
@@ -365,6 +365,10 @@ fn face_metadata(solid: &Solid) -> Result<(), String> {
 }
 
 pub(in crate::session) fn require_known_face_topology_metadata(vmf: &Vmf) -> Result<(), String> {
+    require_topology_metadata(vmf, false)
+}
+
+fn require_topology_metadata(vmf: &Vmf, overlays: bool) -> Result<(), String> {
     let views = map_core::saved_views::Views::parse(vmf)?;
     views.validate()?;
     for solid in vmf.solids() {
@@ -392,7 +396,10 @@ pub(in crate::session) fn require_known_face_topology_metadata(vmf: &Vmf) -> Res
                     })
                 })
         })
-        || vmf.entities.iter().any(|entity| !entity.extra.is_empty())
+        || vmf.entities.iter().any(|entity| {
+            !entity.extra.is_empty()
+                && !(overlays && map_core::overlay::water::topology_fields_known(entity))
+        })
         || vmf
             .solids()
             .any(|solid| !solid.extra.is_empty() || !solid.extra_properties.0.is_empty())

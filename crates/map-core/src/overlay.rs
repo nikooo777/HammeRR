@@ -13,6 +13,7 @@ use crate::{
 };
 
 mod terrain;
+pub mod water;
 
 const BASIS_TOLERANCE: f64 = 0.01;
 const QUAD_AREA_EPSILON: f64 = 1e-8;
@@ -555,12 +556,22 @@ fn existing_definition(vmf: &Vmf, id: u32) -> Result<Definition, String> {
         .iter()
         .find(|entity| entity.id == id)
         .ok_or("Overlay entity does not exist")?;
+    parse_editable(entity)
+}
+
+pub fn parse_editable(entity: &Entity) -> Result<Definition, String> {
+    if !entity.hidden && water::is_transition(entity) {
+        if entity.properties.get_all("origin").count() > 1 {
+            return Err("Water overlay editing requires at most one helper origin".into());
+        }
+        return water::editable(entity);
+    }
     if entity.hidden
         || !entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
     {
-        return Err("Refit requires one visible info_overlay entity".into());
+        return Err("Select one visible info_overlay or info_overlay_transition entity".into());
     }
     for key in [
         "origin",
@@ -694,8 +705,7 @@ pub fn editable_corners(vmf: &Vmf, id: u32) -> Result<(FaceId, Definition), Stri
 
 fn single_corner_sources(vmf: &Vmf, id: u32) -> Result<BoundSources, String> {
     let (face, fitted) = fit_existing(vmf, id)?;
-    let entity = vmf.entities.iter().find(|entity| entity.id == id).unwrap();
-    let existing = parse(entity)?;
+    let existing = existing_definition(vmf, id)?;
     validate_editable_projection(&existing, &fitted)?;
     Ok(BoundSources {
         faces: vec![face],
@@ -813,10 +823,13 @@ pub fn edit_corners(
     let (_, definition) =
         with_corners(tx.document().vmf(), id, corners).map_err(EditError::Invalid)?;
     let entity = tx.entity_mut(id)?;
-    for (index, point) in definition.uv_points.iter().enumerate() {
-        entity
-            .properties
-            .set(format!("uv{index}"), format_vec3(DVec3::from_array(*point)));
+    let fields = corner_fields(&definition);
+    if water::is_transition(entity) {
+        water::update(entity, fields).map_err(EditError::Invalid)?;
+    } else {
+        for (key, value) in fields {
+            entity.properties.set(key, value);
+        }
     }
     Ok(ObjectId::Entity(id))
 }
@@ -898,34 +911,47 @@ fn write_projection(
     update_bindings: bool,
 ) -> Result<ObjectId, EditError> {
     let entity = tx.entity_mut(id)?;
-    for (key, value) in [
-        ("origin", definition.basis_origin),
+    let mut fields = [
         ("BasisOrigin", definition.basis_origin),
         ("BasisNormal", definition.basis_normal),
         ("BasisU", definition.basis_u),
         ("BasisV", definition.basis_v),
-    ] {
-        entity
-            .properties
-            .set(key, format_vec3(DVec3::from_array(value)));
-    }
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_owned(), format_vec3(DVec3::from_array(value))))
+    .collect::<Vec<_>>();
     if update_bindings {
-        entity.properties.set(
-            "sides",
+        fields.push((
+            "sides".into(),
             definition
                 .sides
                 .iter()
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(" "),
-        );
+        ));
     }
-    for (index, point) in definition.uv_points.iter().enumerate() {
-        entity
-            .properties
-            .set(format!("uv{index}"), format_vec3(DVec3::from_array(*point)));
+    fields.extend(corner_fields(definition));
+    entity.properties.set(
+        "origin",
+        format_vec3(DVec3::from_array(definition.basis_origin)),
+    );
+    if water::is_transition(entity) {
+        water::update(entity, fields).map_err(EditError::Invalid)?;
+    } else {
+        for (key, value) in fields {
+            entity.properties.set(key, value);
+        }
     }
     Ok(ObjectId::Entity(id))
+}
+
+fn corner_fields(definition: &Definition) -> impl Iterator<Item = (String, String)> + '_ {
+    definition
+        .uv_points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| (format!("uv{index}"), format_vec3(DVec3::from_array(*point))))
 }
 
 pub fn create(
@@ -940,6 +966,24 @@ pub fn create_faces(
     tx: &mut Transaction<'_>,
     faces: &[FaceId],
     options: Options,
+) -> Result<ObjectId, EditError> {
+    create_faces_with_kind(tx, faces, options, false)
+}
+
+pub fn create_water_transition(
+    tx: &mut Transaction<'_>,
+    faces: &[FaceId],
+    options: Options,
+) -> Result<ObjectId, EditError> {
+    water::validate_options(&options).map_err(EditError::Invalid)?;
+    create_faces_with_kind(tx, faces, options, true)
+}
+
+fn create_faces_with_kind(
+    tx: &mut Transaction<'_>,
+    faces: &[FaceId],
+    options: Options,
+    water_transition: bool,
 ) -> Result<ObjectId, EditError> {
     let definition = fit_faces(tx.document().vmf(), faces, options).map_err(EditError::Invalid)?;
     let options = &definition.options;
@@ -972,9 +1016,7 @@ pub fn create_faces(
         ),
         ("RenderOrder".into(), options.render_order.to_string()),
     ];
-    for (index, point) in definition.uv_points.iter().enumerate() {
-        properties.push((format!("uv{index}"), format_vec3(DVec3::from_array(*point))));
-    }
+    properties.extend(corner_fields(&definition));
     for (key, value) in [
         ("StartU", options.u[0]),
         ("EndU", options.u[1]),
@@ -988,11 +1030,16 @@ pub fn create_faces(
     if let Some(name) = &options.targetname {
         properties.push(("targetname".into(), name.clone()));
     }
-    edit::create_entity(
-        tx,
-        "info_overlay",
-        Some(DVec3::from_array(definition.basis_origin)),
-        &properties,
-        Vec::new(),
-    )
+    let origin = Some(DVec3::from_array(definition.basis_origin));
+    if water_transition {
+        let id = edit::create_entity(tx, water::CLASSNAME, origin, &[], Vec::new())?;
+        let ObjectId::Entity(entity) = id else {
+            unreachable!()
+        };
+        let entity = tx.entity_mut(entity)?;
+        entity.extra.push(water::encode(properties));
+        water::editable(entity).map_err(EditError::Invalid)?;
+        return Ok(id);
+    }
+    edit::create_entity(tx, "info_overlay", origin, &properties, Vec::new())
 }

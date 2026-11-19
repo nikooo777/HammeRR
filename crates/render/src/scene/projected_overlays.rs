@@ -24,10 +24,14 @@ const MAX_TRIANGLE_VISITS: usize = 1_000_000;
 const MAX_VERTICES: usize = 262_144;
 const SURFACE_OFFSET: f64 = 0.1;
 
-pub type Draft<'a> = (Option<u32>, &'a overlay::Definition);
+pub struct Draft {
+    pub entity: Option<u32>,
+    pub water_transition: bool,
+    pub definition: overlay::Definition,
+}
 
-pub struct Preview<'a> {
-    pub draft: Option<Draft<'a>>,
+pub struct Preview {
+    pub draft: Option<Draft>,
 }
 
 pub(crate) const UNLIT_RECEIVER: u32 = 6;
@@ -165,73 +169,101 @@ fn load_material(
 impl Projections {
     pub(super) fn prepare(
         vmf: &Vmf,
-        draft: Option<Draft<'_>>,
+        draft: Option<Draft>,
         include: &impl Fn(ObjectId) -> bool,
         issues: &mut SceneIssues,
     ) -> Self {
         let mut projections = Self::default();
-        let replaced = draft.and_then(|(entity, _)| entity);
-        let mut add = |entity, definition: Result<overlay::Definition, String>| {
-            let layer = definition.and_then(|definition| {
-                let frame = Frame::new(&definition)?;
-                for side in &definition.sides {
-                    projections
-                        .by_side
-                        .entry(*side)
-                        .or_default()
-                        .push(projections.layers.len());
-                }
-                Ok(Layer {
-                    entity,
-                    sides_remaining: definition.sides.len(),
-                    order: definition.options.render_order,
-                    material: definition.options.material,
-                    fade: definition.options.fade_max > 0.0,
-                    visible_receiver: false,
-                    frame,
-                    vertices: Vec::new(),
-                    indices: Vec::new(),
-                    issue: None,
-                })
-            });
-            match layer {
-                Ok(layer) => projections.layers.push(layer),
-                Err(message) => issues.push(SceneIssue::Overlay { entity, message }),
+        let new = draft.as_ref().filter(|draft| draft.entity.is_none());
+        let mut limits = [bsp::MAX_OVERLAYS, bsp::MAX_WATER_OVERLAYS];
+        if let Some(draft) = new {
+            limits[usize::from(draft.water_transition)] -= 1;
+        }
+        let mut counts = [0; 2];
+        let mut exhausted = [false; 2];
+        for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
+            let water = overlay::water::is_transition(entity);
+            let family = usize::from(water);
+            if exhausted[family]
+                || (!water
+                    && !entity
+                        .classname()
+                        .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay")))
+                || !include(ObjectId::Entity(entity.id))
+            {
+                continue;
             }
-        };
-        let mut entities = vmf.entities.iter().filter(|entity| {
-            !entity.hidden
-                && entity
-                    .classname()
-                    .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
-                && include(ObjectId::Entity(entity.id))
-        });
-        let new = draft.filter(|(id, _)| id.is_none());
-        for entity in entities
-            .by_ref()
-            .take(bsp::MAX_OVERLAYS - usize::from(new.is_some()))
-        {
-            let definition =
-                if let Some((_, definition)) = draft.filter(|_| replaced == Some(entity.id)) {
-                    Ok(definition.clone())
-                } else {
-                    overlay::parse(entity)
-                };
-            add(Some(entity.id), definition);
+            let definitions = if let Some(draft) = draft
+                .as_ref()
+                .filter(|draft| draft.entity == Some(entity.id))
+            {
+                Ok(vec![draft.definition.clone()])
+            } else if water {
+                overlay::water::parse(entity)
+            } else {
+                overlay::parse(entity).map(|definition| vec![definition])
+            };
+            match definitions {
+                Ok(definitions) if counts[family] + definitions.len() <= limits[family] => {
+                    counts[family] += definitions.len();
+                    for definition in definitions {
+                        projections.add(Some(entity.id), definition, issues);
+                    }
+                }
+                Ok(_) => {
+                    let family_label = if water { "water transition" } else { "overlay" };
+                    let limit = limits[family];
+                    issues.push(SceneIssue::Overlay {
+                        entity: Some(entity.id),
+                        message: format!(
+                            "{family_label} preview exceeds its {limit}-projection limit"
+                        ),
+                    });
+                    exhausted[family] = true;
+                }
+                Err(message) => issues.push(SceneIssue::Overlay {
+                    entity: Some(entity.id),
+                    message,
+                }),
+            }
         }
-        if let Some((_, definition)) = new {
-            add(None, Ok(definition.clone()));
-        }
-        if let Some(entity) = entities.next() {
-            issues.push(SceneIssue::Overlay {
-                entity: Some(entity.id),
-                message: format!(
-                    "overlay preview exceeds its {} projection limit",
-                    bsp::MAX_OVERLAYS
-                ),
-            });
+        if let Some(draft) = draft.filter(|draft| draft.entity.is_none()) {
+            projections.add(None, draft.definition, issues);
         }
         projections
+    }
+
+    fn add(
+        &mut self,
+        entity: Option<u32>,
+        definition: overlay::Definition,
+        issues: &mut SceneIssues,
+    ) {
+        let frame = match Frame::new(&definition) {
+            Ok(frame) => frame,
+            Err(message) => {
+                issues.push(SceneIssue::Overlay { entity, message });
+                return;
+            }
+        };
+        for side in &definition.sides {
+            self.by_side
+                .entry(*side)
+                .or_default()
+                .push(self.layers.len());
+        }
+        self.layers.push(Layer {
+            entity,
+            sides_remaining: definition.sides.len(),
+            order: definition.options.render_order,
+            material: definition.options.material,
+            fade: definition.options.fade_max > 0.0,
+            visible_receiver: false,
+            frame,
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            issue: None,
+        });
     }
 
     pub(super) fn hide_sides(&mut self, solid: &source_formats::vmf::Solid) {

@@ -116,8 +116,11 @@ impl Session {
         if !request.offset.is_finite() || request.offset.abs() > crate::spatial::MAX_EXTENT {
             return Err("Surface offset must be finite and within ±65536 units".into());
         }
-        if classname.trim().eq_ignore_ascii_case("info_overlay") {
-            return Err("Use Overlay… to place overlays".into());
+        if ["info_overlay", map_core::overlay::water::CLASSNAME]
+            .iter()
+            .any(|class| classname.trim().eq_ignore_ascii_case(class))
+        {
+            return Err("Use Overlay… to place overlays and water transitions".into());
         }
         if decals::is_class(&classname) {
             if request.offset != 0.0 || request.align {

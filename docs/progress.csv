@@ -91,7 +91,7 @@ C03,Production collision,75
 C04,Static props,65
 C05,Displacements,76.470588
 C06,Water and related spatial data,60
-C07,Overlay compilation,80
+C07,Overlay compilation,100
 C08,Cubemaps and lighting origins,70
 C09,Visibility controls and areas,100
 C10,Brush entity origins and behavior,60

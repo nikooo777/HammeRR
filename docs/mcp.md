@@ -1368,6 +1368,11 @@ surviving bindings with the geometry in one Undo step.
 `render_view` with `surface: "textured"` displays supported draft and applied
 overlay materials. Read `preview_issues` for unavailable projections.
 
+Set `water_transition: true` in `preview_overlay` to create a native water
+transition on selected receiver faces. Omit the runtime name, render order and
+fade fields. The same tools edit checked single-projection helpers. Imported
+multi-projection records still build.
+
 To place an `infodecal`, call `begin_entity_placement` with
 `properties: { "texture": "decals/arrow_left" }`, zero offset and alignment off.
 Use `pick_entity_placement` on a solid world or detail brush face, then

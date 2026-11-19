@@ -706,8 +706,19 @@ pub(super) fn collect(
                 format!("entity {} rope material", entity.id),
             )?;
         }
+        let water_transition = map_core::overlay::water::is_transition(entity);
+        if water_transition && map_core::overlay::water::has_transition_data(entity) {
+            for projection in map_core::overlay::water::parse(entity)
+                .map_err(|error| format!("Entity {} water transition: {error}", entity.id))?
+            {
+                c.enqueue(
+                    vmt::material_path(&projection.options.material),
+                    format!("entity {} water transition material", entity.id),
+                )?;
+            }
+        }
         let definition = catalog.class(class);
-        if definition.is_none() && !compiler::decals::is_class(class) {
+        if definition.is_none() && !compiler::decals::is_class(class) && !water_transition {
             return Err(format!(
                 "Entity {} class {class}: load its entity definitions before collecting portable dependencies",
                 entity.id
@@ -744,7 +755,8 @@ pub(super) fn collect(
                     c.enqueue(crate::sprite_resource::material_path(value)?, from)?;
                 }
             } else if matches!(kind, Some("material" | "decal"))
-                || class == "info_overlay" && key.eq_ignore_ascii_case("material")
+                || (class == "info_overlay" || water_transition)
+                    && key.eq_ignore_ascii_case("material")
                 || compiler::decals::is_class(class)
                     && key.eq_ignore_ascii_case(compiler::decals::TEXTURE_KEY)
             {

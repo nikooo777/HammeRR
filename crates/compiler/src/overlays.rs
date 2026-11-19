@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use glam::DVec3;
+use map_core::overlay_projection::Frame;
 use source_formats::bsp::{self, Overlay, OverlayData, OverlayFade};
 use source_formats::vmf::{Entity, Vmf, format_vec3};
 
@@ -12,11 +13,16 @@ mod water;
 
 const MAX_SOURCE_REFERENCES: usize = 65_536;
 
-pub(crate) struct Definition {
+pub(crate) struct Source {
     pub entity: u32,
+    sides: Vec<u32>,
+    frame: Frame,
+}
+
+pub(crate) struct Definition {
+    pub source: Source,
     pub record: Overlay,
     pub fade: OverlayFade,
-    pub sides: Vec<u32>,
     pub accessor: Option<Vec<(String, String)>>,
 }
 
@@ -40,32 +46,13 @@ impl Plan {
         bindings: &Bindings,
         report: &mut Report,
         control: &Control,
+        covers: &impl Fn(u16, &Frame) -> bool,
     ) -> Result<OverlayData, String> {
         let mut data = OverlayData::default();
         for definition in &self.definitions {
             control.checkpoint()?;
-            let (emitted, missing): (Vec<_>, Vec<_>) = definition
-                .sides
-                .iter()
-                .copied()
-                .partition(|side| bindings.faces.contains_key(side));
-            if emitted.is_empty() {
-                let error = format!(
-                    "Overlay sides {missing:?} have no exposed world, detail or terrain faces"
-                );
-                helper_error(report, definition, &error);
-                return Err(error);
-            }
-            if !missing.is_empty() {
-                report.diagnostics.push(Diagnostic::warning(
-                    format!("Overlay sides {missing:?} produced no exposed final faces; the projection uses its remaining faces"),
-                    Some(format!("entity:{}", definition.entity)),
-                    Some(DVec3::from_array(definition.record.origin.map(f64::from))),
-                ));
-            }
-            let targets = bindings
-                .targets(&emitted, definition.entity, bsp::MAX_OVERLAY_FACES)
-                .inspect_err(|message| helper_error(report, definition, message))?;
+            let targets =
+                bindings.targets(&definition.source, bsp::MAX_OVERLAY_FACES, report, covers)?;
             let mut record = definition
                 .record
                 .with_face_count(targets.len())
@@ -84,7 +71,7 @@ impl Plan {
 fn helper_error(report: &mut Report, definition: &Definition, message: &str) {
     report.diagnostics.push(Diagnostic::error(
         message,
-        Some(format!("entity:{}", definition.entity)),
+        Some(format!("entity:{}", definition.source.entity)),
         Some(DVec3::from_array(definition.record.origin.map(f64::from))),
     ));
 }
@@ -96,20 +83,58 @@ pub(crate) struct Bindings {
 }
 
 impl Bindings {
-    fn targets(&self, sides: &[u32], entity: u32, maximum: usize) -> Result<BTreeSet<u16>, String> {
+    fn targets(
+        &self,
+        source: &Source,
+        maximum: usize,
+        report: &mut Report,
+        covers: &impl Fn(u16, &Frame) -> bool,
+    ) -> Result<BTreeSet<u16>, String> {
+        let object = || Some(format!("entity:{}", source.entity));
+        let position = Some(source.frame.origin());
         let mut targets = BTreeSet::new();
-        for side in sides {
-            let faces = self.faces.get(side).ok_or_else(|| format!(
-                "entity:{entity}: overlay side {side} has no emitted world face; choose a visible exposed world, detail or terrain surface"
-            ))?;
+        let mut missing = Vec::new();
+        for side in &source.sides {
+            let Some(faces) = self.faces.get(side) else {
+                missing.push(*side);
+                continue;
+            };
             for &face in faces {
                 targets.insert(face);
                 if targets.len() > maximum {
-                    return Err(format!(
-                        "entity:{entity}: overlay exceeds its {maximum} compiled-face budget; use fewer surfaces or a larger lightmap scale"
-                    ));
+                    let error = format!(
+                        "Overlay exceeds its {maximum} compiled-face budget; use fewer surfaces or a larger lightmap scale"
+                    );
+                    report
+                        .diagnostics
+                        .push(Diagnostic::error(&error, object(), position));
+                    return Err(error);
                 }
             }
+        }
+        if targets.is_empty() {
+            let error =
+                format!("Overlay sides {missing:?} have no exposed world, detail or terrain faces");
+            report
+                .diagnostics
+                .push(Diagnostic::error(&error, object(), position));
+            return Err(error);
+        }
+        if !missing.is_empty() {
+            if !targets.iter().any(|&face| covers(face, &source.frame)) {
+                let error = format!(
+                    "Overlay sides {missing:?} have no exposed final faces and its projection misses the remaining faces"
+                );
+                report
+                    .diagnostics
+                    .push(Diagnostic::error(&error, object(), position));
+                return Err(error);
+            }
+            report.diagnostics.push(Diagnostic::warning(
+                format!("Overlay sides {missing:?} produced no exposed final faces; the projection uses its remaining faces"),
+                object(),
+                position,
+            ));
         }
         Ok(targets)
     }
@@ -204,12 +229,12 @@ pub(crate) fn load(
         };
         match definition {
             Ok(definition) => {
-                references += definition.sides.len();
+                references += definition.source.sides.len();
                 if references > MAX_SOURCE_REFERENCES {
                     return Err("Overlay sources exceed their 65,536-reference budget".into());
                 }
                 let index = map.overlays.definitions.len();
-                for side in &definition.sides {
+                for side in &definition.source.sides {
                     membership.entry(*side).or_default().push(index);
                 }
                 map.overlays.definitions.push(definition);
@@ -244,6 +269,16 @@ fn parse(
     id: usize,
 ) -> Result<Definition, String> {
     let projection = map_core::overlay::parse(entity)?;
+    lower_projection(entity.id, projection, map, sources, id)
+}
+
+fn lower_projection(
+    entity: u32,
+    projection: map_core::overlay::Definition,
+    map: &mut Map,
+    sources: &BTreeSet<u32>,
+    id: usize,
+) -> Result<Definition, String> {
     for side in &projection.sides {
         if !sources.contains(side) {
             return Err(format!(
@@ -294,14 +329,17 @@ fn parse(
             ("targetname".into(), name.to_owned()),
             ("origin".into(), format_vec3(origin)),
             ("OverlayID".into(), id.to_string()),
-            ("hammerid".into(), entity.id.to_string()),
+            ("hammerid".into(), entity.to_string()),
         ]
     });
     Ok(Definition {
-        entity: entity.id,
+        source: Source {
+            entity,
+            frame: Frame::new(&projection)?,
+            sides: projection.sides,
+        },
         record,
         fade,
-        sides: projection.sides,
         accessor,
     })
 }

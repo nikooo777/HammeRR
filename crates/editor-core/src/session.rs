@@ -3123,12 +3123,9 @@ impl Session {
         } else {
             references.terrain_normals.as_ref()
         };
-        let overlay_draft = self.overlay_render_draft();
         let projected_overlays = (!baked_surfaces && view.surface == render::SurfaceView::Textured)
             .then(|| render::scene::OverlayPreview {
-                draft: overlay_draft
-                    .as_ref()
-                    .map(|(entity, definition)| (*entity, definition)),
+                draft: self.overlay_render_draft(),
             });
         let mut mesh = match SceneMesh::try_build_with_reference_terrain_filtered(
             document.vmf(),

@@ -14,6 +14,7 @@ mod handles;
 pub struct Request {
     pub source: FaceId,
     pub options: Options,
+    pub water_transition: bool,
 }
 
 #[derive(Default)]
@@ -46,7 +47,7 @@ struct Draft {
 
 #[derive(Clone, Copy)]
 enum Operation {
-    Create,
+    Create { water_transition: bool },
     Corners(u32),
     Refit(u32),
     Rebind { id: u32, previous: FaceId },
@@ -55,7 +56,7 @@ enum Operation {
 impl Operation {
     fn label(self) -> &'static str {
         match self {
-            Self::Create => "create",
+            Self::Create { .. } => "create",
             Self::Corners(_) => "corners",
             Self::Refit(_) => "refit",
             Self::Rebind { .. } => "rebind",
@@ -64,8 +65,17 @@ impl Operation {
 
     fn entity(self) -> Option<u32> {
         match self {
-            Self::Create => None,
+            Self::Create { .. } => None,
             Self::Refit(id) | Self::Corners(id) | Self::Rebind { id, .. } => Some(id),
+        }
+    }
+
+    fn water_transition(self, session: &Session) -> bool {
+        match self {
+            Self::Create { water_transition } => water_transition,
+            _ => self
+                .entity()
+                .is_some_and(|id| session.is_water_transition(id)),
         }
     }
 }
@@ -147,8 +157,12 @@ impl Session {
         )
     }
 
-    fn validate_overlay_sources(&self, sources: &[FaceId]) -> Result<(), String> {
-        if !self.overlay_sources_need_validation(sources) {
+    fn validate_overlay_sources(
+        &self,
+        sources: &[FaceId],
+        water_transition: bool,
+    ) -> Result<(), String> {
+        if !water_transition && !self.overlay_sources_need_validation(sources) {
             return Ok(());
         }
         self.validate_overlay_source_set(sources)
@@ -247,7 +261,7 @@ impl Session {
                 ..Options::default()
             },
         )?;
-        self.validate_overlay_sources(&sources)?;
+        self.validate_overlay_sources(&sources, false)?;
         Ok((sources, definition))
     }
 
@@ -258,7 +272,7 @@ impl Session {
             return Err("Select exactly one visible existing overlay to refit".into());
         };
         let (face, definition) = overlay::fit_existing(self.document.vmf(), *id)?;
-        self.validate_overlay_sources(&[face])?;
+        self.validate_overlay_sources(&[face], self.is_water_transition(*id))?;
         Ok((*id, face, definition))
     }
 
@@ -271,18 +285,19 @@ impl Session {
         let multiple = self
             .document
             .entity(*id)
-            .and_then(|entity| overlay::parse(entity).ok())
+            .map(overlay::parse_editable)
+            .transpose()?
             .is_some_and(|definition| definition.sides.len() > 1);
         if !multiple {
             let (id, source, definition) = self.selected_overlay_refit()?;
             return Ok(
-                json!({"id":id,"entity":format!("entity:{id}"),"source":{"solid":source.solid,"side":source.side},"corners":definition.corners()}),
+                json!({"id":id,"entity":format!("entity:{id}"),"water_transition":self.is_water_transition(id),"source":{"solid":source.solid,"side":source.side},"corners":definition.corners()}),
             );
         }
         let bound = overlay::checked_bound_sources(self.document.vmf(), *id)?;
-        self.validate_overlay_sources(&bound.faces)?;
+        self.validate_overlay_sources(&bound.faces, self.is_water_transition(*id))?;
         Ok(
-            json!({"id":id,"entity":format!("entity:{id}"),"sources":sources_json(&bound.faces),
+            json!({"id":id,"entity":format!("entity:{id}"),"water_transition":self.is_water_transition(*id),"sources":sources_json(&bound.faces),
             "source_count":bound.faces.len(),"reference_required":true,"references":sources_json(&bound.references),"corners":null}),
         )
     }
@@ -294,7 +309,7 @@ impl Session {
             return Err("Select exactly one visible existing overlay to refit".into());
         };
         let (sources, definition) = overlay::editable_corner_faces(self.document.vmf(), *id)?;
-        self.validate_overlay_sources(&sources)?;
+        self.validate_overlay_sources(&sources, self.is_water_transition(*id))?;
         Ok((*id, sources, definition))
     }
 
@@ -318,6 +333,12 @@ impl Session {
         Ok(draft)
     }
 
+    fn is_water_transition(&self, id: u32) -> bool {
+        self.document
+            .entity(id)
+            .is_some_and(overlay::water::is_transition)
+    }
+
     pub fn get_overlay_state(&self) -> Value {
         let (selected_overlay, refit_error) = match self.selected_overlay_refit_report() {
             Ok(report) => (report, Value::Null),
@@ -327,7 +348,7 @@ impl Session {
             Ok((id, sources, definition)) => {
                 let source = sources[0];
                 let mut report = json!({
-                    "id":id,"entity":format!("entity:{id}"),"source":{"solid":source.solid,"side":source.side},
+                    "id":id,"entity":format!("entity:{id}"),"water_transition":self.is_water_transition(id),"source":{"solid":source.solid,"side":source.side},
                     "options":options_json(&definition.options),"corners":definition.corners(),
                     "local_corners":definition.uv_points.map(|point|[point[0],point[1]]),
                     "basis_origin":definition.basis_origin,"basis_u":definition.basis_u,"basis_v":definition.basis_v,
@@ -358,6 +379,7 @@ impl Session {
                 "token":draft.token,"owner":draft.owner.label(),
                 "operation":draft.operation.label(),
                 "entity":draft.operation.entity().map(|id|format!("entity:{id}")),
+                "water_transition":draft.operation.water_transition(self),
                 "previous_source":match draft.operation { Operation::Rebind { previous, .. } => Some(json!({"solid":previous.solid,"side":previous.side})), _ => None },
                 "valid":self.checked_overlay(draft.token).is_ok(),
                 "source":{"solid":draft.source.solid,"side":draft.source.side},
@@ -419,14 +441,19 @@ impl Session {
         let sources = std::iter::once(request.source)
             .chain(additional_sources.iter().copied())
             .collect::<Vec<_>>();
+        if request.water_transition {
+            overlay::water::validate_options(&request.options)?;
+        }
         let definition = overlay::fit_faces(self.document.vmf(), &sources, request.options)?;
-        self.validate_overlay_sources(&sources)?;
+        self.validate_overlay_sources(&sources, request.water_transition)?;
         Ok(self.set_overlay_draft(
             actor,
             request.source,
             additional_sources,
             definition,
-            Operation::Create,
+            Operation::Create {
+                water_transition: request.water_transition,
+            },
             &[],
         ))
     }
@@ -453,7 +480,7 @@ impl Session {
         }
         let (sources, definition) =
             overlay::fit_existing_refit(self.document.vmf(), id, reference)?;
-        self.validate_overlay_sources(&sources)?;
+        self.validate_overlay_sources(&sources, self.is_water_transition(id))?;
         Ok(self.set_overlay_draft(
             actor,
             sources[0],
@@ -476,7 +503,7 @@ impl Session {
             return Err("Map, selection or overlay draft changed; inspect overlays again".into());
         }
         let (sources, definition) = overlay::with_corner_faces(self.document.vmf(), id, corners)?;
-        self.validate_overlay_sources(&sources)?;
+        self.validate_overlay_sources(&sources, self.is_water_transition(id))?;
         Ok(self.set_overlay_draft(
             actor,
             sources[0],
@@ -503,33 +530,52 @@ impl Session {
             .vmf()
             .entities
             .iter()
-            .filter(|entity| {
-                if !entity
-                    .classname()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("info_overlay"))
+            .filter_map(|entity| {
+                let water_transition = overlay::water::is_transition(entity);
+                if !water_transition
+                    && !entity
+                        .classname()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("info_overlay"))
                 {
-                    return false;
+                    return None;
                 }
+                let material = if water_transition {
+                    overlay::water::parse(entity)
+                        .ok()
+                        .and_then(|projections| projections.into_iter().next())
+                        .map(|projection| projection.options.material)
+                        .unwrap_or_default()
+                } else {
+                    entity.properties.get("material").unwrap_or("").to_owned()
+                };
                 let label = format!(
-                    "entity:{} {} {}",
+                    "entity:{} {} {material} {}",
                     entity.id,
                     entity.properties.get("targetname").unwrap_or(""),
-                    entity.properties.get("material").unwrap_or("")
+                    if water_transition {
+                        "water transition"
+                    } else {
+                        ""
+                    }
                 )
                 .to_ascii_lowercase();
-                words.iter().all(|word| label.contains(word))
+                words.iter().all(|word| label.contains(word)).then_some((
+                    entity,
+                    water_transition,
+                    material,
+                ))
             })
             .collect::<Vec<_>>();
-        let entries = matches.iter().skip(offset).take(limit).map(|entity| {
+        let entries = matches.iter().skip(offset).take(limit).map(|(entity, water_transition, material)| {
             let checked = overlay::rebind_sources(self.document.vmf(), entity.id).and_then(|(sources, definition)| {
-                self.validate_overlay_sources(&sources)?;
+                self.validate_overlay_sources(&sources, *water_transition)?;
                 Ok((sources, definition))
             });
             let (sources, options, error) = match checked {
                 Ok((sources, definition)) => (sources, Some(options_json(&definition.options)), None),
                 Err(error) => (Vec::new(), None, Some(error)),
             };
-            let mut report = json!({"id":entity.id,"entity":format!("entity:{}",entity.id),"name":entity.properties.get("targetname").unwrap_or(""),"material":entity.properties.get("material").unwrap_or(""),"source":sources.first().map(|source|json!({"solid":source.solid,"side":source.side})),"options":options,"eligible":error.is_none(),"error":error});
+            let mut report = json!({"id":entity.id,"entity":format!("entity:{}",entity.id),"name":entity.properties.get("targetname").unwrap_or(""),"material":material,"water_transition":water_transition,"source":sources.first().map(|source|json!({"solid":source.solid,"side":source.side})),"options":options,"eligible":error.is_none(),"error":error});
             if sources.len() > 1 { report["sources"] = sources_json(&sources); report["source_count"] = json!(sources.len()); }
             report
         }).collect::<Vec<_>>();
@@ -565,7 +611,8 @@ impl Session {
             .chain(additional_sources.iter().copied())
             .collect::<Vec<_>>();
         let (previous, definition) = overlay::fit_rebind_faces(self.document.vmf(), id, &sources)?;
-        if self.overlay_sources_need_validation(&previous)
+        if self.is_water_transition(id)
+            || self.overlay_sources_need_validation(&previous)
             || self.overlay_sources_need_validation(&sources)
         {
             self.validate_overlay_source_set(&previous)?;
@@ -593,6 +640,7 @@ impl Session {
         operation: Operation,
         previous_sources: &[FaceId],
     ) -> Value {
+        let water_transition = operation.water_transition(self);
         self.overlay.serial += 1;
         self.scene_serial += 1;
         self.overlay.draft = Some(Draft {
@@ -604,7 +652,8 @@ impl Session {
             source,
             additional_sources: additional_sources.to_vec(),
             previous_sources: previous_sources.to_vec(),
-            visibility: (!additional_sources.is_empty()
+            visibility: (water_transition
+                || !additional_sources.is_empty()
                 || self.overlay_sources_need_validation(previous_sources)
                 || overlay::is_terrain(self.document.vmf(), source))
             .then(|| self.overlay_visibility_stamp()),
@@ -616,7 +665,7 @@ impl Session {
         self.log(
             actor,
             match operation {
-                Operation::Create => "Preview overlay creation",
+                Operation::Create { .. } => "Preview overlay creation",
                 Operation::Corners(_) => "Preview overlay corners",
                 Operation::Refit(_) => "Preview overlay refit",
                 Operation::Rebind { .. } => "Preview overlay rebind",
@@ -655,16 +704,18 @@ impl Session {
             .collect::<Vec<_>>();
         let options = draft.definition.options.clone();
         let operation = draft.operation;
+        let water_transition = operation.water_transition(self);
         let previous_sources = draft.previous_sources.clone();
         let corners = draft.definition.uv_points.map(|point| [point[0], point[1]]);
         if !previous_sources.is_empty()
-            && (self.overlay_sources_need_validation(&previous_sources)
+            && (water_transition
+                || self.overlay_sources_need_validation(&previous_sources)
                 || self.overlay_sources_need_validation(&sources))
         {
             self.validate_overlay_source_set(&previous_sources)?;
             self.validate_overlay_source_set(&sources)?;
         } else {
-            self.validate_overlay_sources(&sources)?;
+            self.validate_overlay_sources(&sources, water_transition)?;
         }
         let id = match operation {
             Operation::Corners(id) => self.edit(actor, "Edit overlay corners", |tx| {
@@ -684,7 +735,14 @@ impl Session {
                     overlay::rebind_faces(tx, id, &sources)
                 }
             })?,
-            Operation::Create => self.edit(actor, "Create overlay", |tx| {
+            Operation::Create {
+                water_transition: true,
+            } => self.edit(actor, "Create water transition", |tx| {
+                overlay::create_water_transition(tx, &sources, options)
+            })?,
+            Operation::Create {
+                water_transition: false,
+            } => self.edit(actor, "Create overlay", |tx| {
                 overlay::create_faces(tx, &sources, options)
             })?,
         };
@@ -695,6 +753,7 @@ impl Session {
         self.select(&[id], SelectMode::Replace)?;
         let mut result = self.get_overlay_state();
         result["operation"] = json!(operation.label());
+        result["water_transition"] = json!(water_transition);
         result[if operation.entity().is_some() {
             "updated"
         } else {
@@ -721,11 +780,15 @@ impl Session {
         Ok(self.get_overlay_state())
     }
 
-    pub(super) fn overlay_render_draft(&self) -> Option<(Option<u32>, Definition)> {
+    pub(super) fn overlay_render_draft(&self) -> Option<render::scene::OverlayDraft> {
         let draft = self
             .checked_overlay(self.overlay.draft.as_ref()?.token)
             .ok()?;
-        Some((draft.operation.entity(), draft.definition.clone()))
+        Some(render::scene::OverlayDraft {
+            entity: draft.operation.entity(),
+            water_transition: draft.operation.water_transition(self),
+            definition: draft.definition.clone(),
+        })
     }
 
     pub(super) fn append_overlay_guide(&self, mesh: &mut render::SceneMesh) {

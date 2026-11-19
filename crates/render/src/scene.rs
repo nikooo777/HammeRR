@@ -1759,7 +1759,7 @@ impl SceneMesh {
         authored_surfaces: bool,
         entity_helpers: bool,
         terrain_normals: &BTreeMap<FaceId, TerrainNormalOverride>,
-        projected_overlays: Option<OverlayPreview<'_>>,
+        projected_overlays: Option<OverlayPreview>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Result<Self, String> {
         if !authored_surfaces && !terrain_normals.is_empty() {
@@ -1813,7 +1813,7 @@ impl SceneMesh {
         authored_surfaces: bool,
         entity_helpers: bool,
         terrain: terrain::Prepared,
-        projected_overlays: Option<OverlayPreview<'_>>,
+        projected_overlays: Option<OverlayPreview>,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
         let (icons, model_guides) = guides;

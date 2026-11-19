@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { SelectableRow } from "kit.slint";
-import { Button, LineEdit, ListView, ScrollView, SpinBox } from "widgets.slint";
+import { Button, CheckBox, LineEdit, ListView, ScrollView, SpinBox } from "widgets.slint";
 
 export struct OverlayTargetRow {
     entity: string,
@@ -15,6 +15,7 @@ export component OverlayWindow inherits Window {
     preferred-width: 780px;
     preferred-height: 790px;
     in-out property <string> material;
+    in-out property <bool> water-transition;
     in-out property <string> targetname;
     in-out property <int> render-order;
     in-out property <string> u-start: "0";
@@ -85,7 +86,7 @@ export component OverlayWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 10px;
-            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : root.water-transition ? "Fit a water transition to faces" : "Fit an overlay to faces"; font-size: Theme.font-display; font-weight: 600; }
             if root.source-label != "": Text { text: root.source-label; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: Theme.space;
@@ -220,13 +221,18 @@ export component OverlayWindow inherits Window {
                         Button { text: "Viewport handles"; enabled: root.can-handle-corners; clicked => { root.handle-corners(); } }
                         Text { text: "Preview corners, then drag a cyan corner in the viewport. Release to review with Apply corners. Escape or Cancel handles restores the draft from before the drag. Motion is unsnapped in the fixed projection plane."; wrap: word-wrap; color: Theme.text-muted; }
                     }
+                    if !root.refit-mode: CheckBox {
+                        text: "Water transition";
+                        checked <=> root.water-transition;
+                        toggled => { root.edited(); }
+                    }
                     Text { text: "Material"; font-weight: 600; }
                     HorizontalLayout {
                         spacing: 10px;
                         LineEdit { enabled: !root.refit-mode; text <=> root.material; horizontal-stretch: 1; accessible-label: "Overlay material"; edited => { root.edited(); } }
                         Button { text: "Browse materials…"; enabled: !root.refit-mode; clicked => { root.browse-material(); } }
                     }
-                    HorizontalLayout {
+                    if !root.water-transition: HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Name"; width: 72px; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.targetname; placeholder-text: "Optional runtime name"; accessible-label: "Overlay name"; horizontal-stretch: 1; edited => { root.edited(); } }
@@ -245,8 +251,8 @@ export component OverlayWindow inherits Window {
                         Text { text: "V end"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
                     }
-                    Text { text: root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
-                    HorizontalLayout {
+                    Text { text: root.water-transition ? "Water transitions use render order 0. Projection edits preserve the material and texture ranges." : root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                    if !root.water-transition: HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Fade"; width: 72px; vertical-alignment: center; }
                         Text { text: "Start distance"; vertical-alignment: center; }
@@ -254,9 +260,9 @@ export component OverlayWindow inherits Window {
                         Text { text: "End distance"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
                     }
-                    Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                    if !root.water-transition: Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     if root.draft-label != "": Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
-                    Text { text: "Cyan lines mark the projection corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "Cyan lines mark the projection corners. Textured view shows supported projection materials."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
@@ -267,7 +273,7 @@ export component OverlayWindow inherits Window {
                 Button { text: "Review current draft"; enabled: root.can-review; clicked => { root.review(); } }
                 Button { text: "Fit / Preview"; enabled: root.can-preview; clicked => { root.fit(); } }
                 Button { text: "Preview settings"; enabled: root.can-preview; clicked => { root.preview(); } }
-                Button { text: root.corners-mode ? "Apply corners" : root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : "Apply overlay"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.corners-mode ? "Apply corners" : root.rebind-mode ? "Apply rebind" : root.refit-mode ? "Apply refit" : root.water-transition ? "Apply water transition" : "Apply overlay"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

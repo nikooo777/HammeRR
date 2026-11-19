@@ -7,6 +7,8 @@ pub struct OverlayPreviewArgs {
     pub source: FaceRef,
     pub additional_sources: Option<Vec<FaceRef>>,
     pub material: String,
+    /// Create one native water-transition projection. Defaults to false.
+    pub water_transition: Option<bool>,
     pub targetname: Option<String>,
     pub render_order: Option<u16>,
     pub u: Option<[f32; 2]>,

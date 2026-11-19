@@ -19,6 +19,7 @@ Create horizontal world-liquid volumes with native depth, inward surfaces and op
 
 The material's `$bottommaterial` names its below-water surface material, not the solid pool floor.
 A missing declaration reports a one-sided surface. An unreadable named material stops the build.
+Use [Water transition](overlays.md#place-a-water-transition) to add a projected material along the pool edge.
 
 | Above water | Below water |
 | --- | --- |

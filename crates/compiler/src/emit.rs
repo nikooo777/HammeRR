@@ -187,7 +187,7 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
     }
     for definition in &map.overlays.definitions {
         if let Some(properties) = &definition.accessor {
-            append_entity(&mut text, properties, definition.entity)?;
+            append_entity(&mut text, properties, definition.source.entity)?;
         }
     }
     Ok(text)
@@ -593,10 +593,38 @@ pub fn build(
     bsp.set_records(&nodes);
     bsp.set_records(&leaves);
     bsp.set_records(&faces);
-    bsp.set_overlay_data(&map.overlays.data(&overlay_bindings, report, control)?)
+    let covers = |index: u16, frame: &map_core::overlay_projection::Frame| {
+        let face = &faces[usize::from(index)];
+        let start = face.first_edge as usize;
+        let end = start + face.edge_count as usize;
+        let winding = geometry.surfedges[start..end]
+            .iter()
+            .map(|&edge| {
+                let bsp::Edge(vertices) = geometry.edges[edge.unsigned_abs() as usize];
+                let vertex = vertices[usize::from(edge < 0)];
+                DVec3::from_array(geometry.vertices[usize::from(vertex)].map(f64::from))
+            })
+            .collect::<Vec<_>>();
+        frame.covers(&winding)
+    };
+    let overlay_data = map
+        .overlays
+        .data(&overlay_bindings, report, control, &covers)?;
+    let regular_references = overlay_data
+        .overlays
+        .iter()
+        .map(bsp::Overlay::face_count)
+        .sum();
+    bsp.set_overlay_data(&overlay_data)
         .map_err(|error| error.to_string())?;
-    bsp.set_water_overlay_data(&map.overlays.water_data(&overlay_bindings, control)?)
-        .map_err(|error| error.to_string())?;
+    bsp.set_water_overlay_data(&map.overlays.water_data(
+        &overlay_bindings,
+        regular_references,
+        report,
+        control,
+        &covers,
+    )?)
+    .map_err(|error| error.to_string())?;
     bsp.set_values(lump::ORIGINALFACES, &faces);
     bsp.set_records(&brushes);
     bsp.set_records(&sides);

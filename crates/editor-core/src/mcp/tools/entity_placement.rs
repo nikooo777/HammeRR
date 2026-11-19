@@ -11,7 +11,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Arm a shared point-entity surface pick using classname, optional FGD properties, offset, align and snap, and latest get_entity_placement.snapshot. Preserves FGD defaults and Source angles/legacy angle/light pitch through existing creation/transform operations. For infodecal, provide properties.texture (for example decals/arrow_left). The origin is the picked or snapped point on a visible solid world or func_detail brush face. Leave offset at 0 and align false. info_overlay uses Overlay…. Finish competing geometry drafts first. UI: Entity… → Pick surface… → Pick surface. Then pick_entity_placement, inspect/render, and apply_entity_placement or cancel_entity_placement. Foreign drafts require explicit review."
+        description = "Arm a shared point-entity surface pick using classname, optional FGD properties, offset, align and snap, and latest get_entity_placement.snapshot. Preserves FGD defaults and Source angles/legacy angle/light pitch through existing creation/transform operations. For infodecal, provide properties.texture (for example decals/arrow_left). The origin is the picked or snapped point on a visible solid world or func_detail brush face. Leave offset at 0 and align false. Use preview_overlay for ordinary or water transition overlays. Finish competing geometry drafts first. UI: Entity… → Pick surface… → Pick surface. Then pick_entity_placement, inspect/render, and apply_entity_placement or cancel_entity_placement. Foreign drafts require explicit review."
     )]
     pub(in crate::mcp) fn begin_entity_placement(
         &self,

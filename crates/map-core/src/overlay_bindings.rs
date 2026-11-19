@@ -3,15 +3,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::DVec3;
 use source_formats::{bsp, vmf::Vmf};
 
-use crate::{BrushGeometry, EditError, Transaction, overlay, overlay_projection::Frame};
+use crate::{
+    BrushGeometry, EditError, Transaction,
+    overlay::{self, water},
+    overlay_projection::Frame,
+};
 
 const MAX_BINDINGS: usize = bsp::MAX_OVERLAYS * bsp::MAX_OVERLAY_FACES;
 
 struct Candidate {
     entity: u32,
+    location: Option<water::Location>,
     definition: overlay::Definition,
     branches: BTreeSet<u32>,
     unchanged: BTreeSet<u32>,
+}
+
+struct Write {
+    entity: u32,
+    location: Option<water::Location>,
+    sides: String,
 }
 
 pub(crate) fn remap(
@@ -19,61 +30,100 @@ pub(crate) fn remap(
     sides: &BTreeMap<u32, Vec<u32>>,
 ) -> Result<(), EditError> {
     let writes = plan(tx.vmf(), sides).map_err(EditError::Invalid)?;
-    for (entity, sides) in writes {
-        tx.entity_mut(entity)?.properties.set("sides", sides);
+    for write in writes {
+        let entity = tx.entity_mut(write.entity)?;
+        if let Some(location) = write.location {
+            water::update_at(entity, location, [("sides".to_owned(), write.sides)])
+                .map_err(EditError::Invalid)?;
+        } else {
+            entity.properties.set("sides", write.sides);
+        }
     }
     Ok(())
 }
 
-fn plan(vmf: &Vmf, sides: &BTreeMap<u32, Vec<u32>>) -> Result<Vec<(u32, String)>, String> {
+fn plan(vmf: &Vmf, sides: &BTreeMap<u32, Vec<u32>>) -> Result<Vec<Write>, String> {
     if sides.is_empty() {
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();
     let mut required = BTreeSet::<u32>::new();
     let mut work = 0usize;
+    let mapped = |value: &str| {
+        value
+            .split_whitespace()
+            .filter_map(|token| token.parse::<u32>().ok())
+            .any(|id| sides.contains_key(&id))
+    };
     for entity in &vmf.entities {
-        if !entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
-            || !entity.properties.get_all("sides").any(|value| {
-                value
-                    .split_whitespace()
-                    .filter_map(|token| token.parse::<u32>().ok())
-                    .any(|id| sides.contains_key(&id))
-            })
-        {
-            continue;
-        }
         let entity_id = entity.id;
         let error = |message: &str| format!("entity:{entity_id}: {message}");
-        if entity.properties.get_all("sides").count() != 1 {
-            return Err(error("overlay sides property is ambiguous"));
-        }
-        if candidates.len() >= bsp::MAX_OVERLAYS {
-            return Err(error("overlay rebinding exceeds the native overlay limit"));
-        }
-        let definition = overlay::parse(entity).map_err(|message| error(&message))?;
-        let mut branches = BTreeSet::new();
-        let mut unchanged = BTreeSet::new();
-        for side in &definition.sides {
-            if let Some(replacements) = sides.get(side) {
-                work = work.saturating_add(replacements.len());
-                if work > MAX_BINDINGS {
-                    return Err(error("overlay rebinding exceeds its face reference budget"));
-                }
-                branches.extend(replacements);
-            } else {
-                unchanged.insert(*side);
+        let definitions = if water::is_transition(entity) {
+            if ["sides", "sides2"]
+                .iter()
+                .any(|key| entity.properties.get_all(key).any(mapped))
+            {
+                return Err(error(
+                    "this cut touches legacy shoreline source references; edit the transition first",
+                ));
             }
+            if !water::side_lists(entity).any(mapped) {
+                continue;
+            }
+            water::projections(entity)
+                .map_err(|message| error(&message))?
+                .into_iter()
+                .map(|(location, definition)| (Some(location), definition))
+                .collect::<Vec<_>>()
+        } else if entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("info_overlay"))
+            && entity.properties.get_all("sides").any(mapped)
+        {
+            if entity.properties.get_all("sides").count() != 1 {
+                return Err(error("overlay sides property is ambiguous"));
+            }
+            vec![(
+                None,
+                overlay::parse(entity).map_err(|message| error(&message))?,
+            )]
+        } else {
+            continue;
+        };
+        for (location, definition) in definitions {
+            if !definition.sides.iter().any(|side| sides.contains_key(side)) {
+                continue;
+            }
+            if location.is_some() && !water::topology_fields_known(entity) {
+                return Err(error(
+                    "this cut touches a water transition with unknown nested fields",
+                ));
+            }
+            if candidates.len() >= bsp::MAX_OVERLAYS + bsp::MAX_WATER_OVERLAYS {
+                return Err(error("overlay rebinding exceeds the native overlay limits"));
+            }
+            let mut branches = BTreeSet::new();
+            let mut unchanged = BTreeSet::new();
+            for side in &definition.sides {
+                if let Some(replacements) = sides.get(side) {
+                    work = work.saturating_add(replacements.len());
+                    if work > MAX_BINDINGS {
+                        return Err(error("overlay rebinding exceeds its face reference budget"));
+                    }
+                    branches.extend(replacements);
+                } else {
+                    unchanged.insert(*side);
+                }
+            }
+            required.extend(branches.iter().chain(unchanged.iter()));
+            candidates.push(Candidate {
+                entity: entity_id,
+                location,
+                definition,
+                branches,
+                unchanged,
+            });
         }
-        required.extend(branches.iter().chain(unchanged.iter()));
-        candidates.push(Candidate {
-            entity: entity_id,
-            definition,
-            branches,
-            unchanged,
-        });
     }
     if candidates.is_empty() {
         return Ok(Vec::new());
@@ -123,7 +173,7 @@ fn plan(vmf: &Vmf, sides: &BTreeMap<u32, Vec<u32>>) -> Result<Vec<(u32, String)>
 }
 
 impl Candidate {
-    fn write(self, surfaces: &BTreeMap<u32, Vec<DVec3>>) -> Result<Option<(u32, String)>, String> {
+    fn write(self, surfaces: &BTreeMap<u32, Vec<DVec3>>) -> Result<Option<Write>, String> {
         let frame = Frame::new(&self.definition)?;
         let intersects = |id: &u32| surfaces.get(id).is_some_and(|face| frame.covers(face));
         let descendants = self.branches.into_iter().filter(intersects);
@@ -149,15 +199,14 @@ impl Candidate {
             ));
         }
         Ok(
-            (!output.iter().copied().eq(self.definition.sides)).then(|| {
-                (
-                    self.entity,
-                    output
-                        .into_iter()
-                        .map(|id| id.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
+            (!output.iter().copied().eq(self.definition.sides)).then(|| Write {
+                entity: self.entity,
+                location: self.location,
+                sides: output
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "),
             }),
         )
     }

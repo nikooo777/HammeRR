@@ -632,6 +632,7 @@ impl Renderer {
                 },
                 uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
                 texture_entry(4),
+                texture_entry(5),
             ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1637,6 +1638,8 @@ impl Renderer {
             .unwrap_or_else(|| base.clone());
         let flag = |on: bool| if on { 1.0f32 } else { 0.0 };
         let normal_asset = info.normal.as_ref().filter(|asset| asset.image.is_some());
+        let second_normal = normal_asset.and_then(|asset| asset.secondary_image.as_ref());
+        let normal_layers = flag(normal_asset.is_some()) + flag(second_normal.is_some());
         let transform = normal_asset.map_or([1.0, 1.0, 0.0, 0.0], |asset| asset.report.transform);
         let params = [
             flag(info.alpha_test),
@@ -1645,7 +1648,7 @@ impl Renderer {
             flag(untextured),
             alpha_reference.unwrap_or(0.5),
             flag(editor || info.sky || info.reference),
-            flag(normal_asset.is_some()),
+            normal_layers,
             flag(surface_shading_material(info, editor)),
             transform[0],
             transform[1],
@@ -1661,13 +1664,17 @@ impl Renderer {
             });
         let base_view = base.create_view(&Default::default());
         let blend_view = blend.create_view(&Default::default());
-        let normal = normal_asset
-            .and_then(|asset| asset.image.as_ref())
-            .map(|image| upload_normal(ctx, image));
-        let normal_view = normal
-            .as_ref()
-            .unwrap_or(white)
-            .create_view(&Default::default());
+        let normal_textures = [
+            normal_asset.and_then(|asset| asset.image.as_ref()),
+            second_normal,
+        ]
+        .map(|image| image.map(|image| upload_normal(ctx, image)));
+        let [normal_view, second_normal_view] = normal_textures.each_ref().map(|texture| {
+            texture
+                .as_ref()
+                .unwrap_or(white)
+                .create_view(&Default::default())
+        });
         ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&info.name),
             layout: &self.material_layout,
@@ -1691,6 +1698,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&second_normal_view),
                 },
             ],
         })

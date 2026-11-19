@@ -16,6 +16,7 @@ const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 const MAX_TEXTURE_BYTES: usize = 16 * 1024 * 1024;
 const SSBUMP_FLAG: u32 = 0x0800_0000;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2201_c84d;
+const IDENTITY_TRANSFORM: [f32; 4] = [1.0, 1.0, 0.0, 0.0];
 
 pub(crate) fn ordinary_ldr_format(format: ImageFormat) -> bool {
     matches!(
@@ -45,7 +46,7 @@ pub(crate) fn validate_static_texture(texture: &Vtf, maximum_axis: u32) -> Resul
     }
     Ok(())
 }
-pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain; models, sprites, icons and helpers are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. One bump map; no proxies, fallback blocks, detail/second normals, animated frames or base display overrides. Base texture transform must be identity. Bump transform supports positive axis scale and translation with zero rotation. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
+pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain. Terrain also supports WorldVertexTransition with two exact static ordinary repeat-sampled LDR color textures and checked normal inputs. Models, sprites, icons and helpers are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. Ordinary LightmappedGeneric uses one bump map. WorldVertexTransition uses the first normal for both colors when only one map is declared. Vertex paint blends both normals when a second map is declared. Missing or invalid declared layers reject the whole terrain normal preview. Proxies, fallback blocks, detail, animated frames and base display overrides are excluded. WorldVertexTransition uses identity texture transforms. LightmappedGeneric uses an identity base transform and supports positive axis scale and translation with zero rotation for bump maps. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
 
 #[derive(Serialize)]
 pub struct Limits {
@@ -79,6 +80,9 @@ pub struct AssetReport {
     pub texture_source: Option<crate::icons::Source>,
     pub dimensions: Option<[u32; 2]>,
     pub transform: [f32; 4],
+    pub secondary_texture: Option<String>,
+    pub secondary_texture_source: Option<crate::icons::Source>,
+    pub secondary_dimensions: Option<[u32; 2]>,
     pub error: Option<String>,
 }
 
@@ -87,6 +91,17 @@ pub struct Asset {
     pub retained: bool,
     pub report: AssetReport,
     pub image: Option<RgbaImage>,
+    pub secondary_image: Option<RgbaImage>,
+}
+
+impl Asset {
+    fn decoded_bytes(&self) -> usize {
+        self.image
+            .iter()
+            .chain(&self.secondary_image)
+            .map(|image| image.pixels.len())
+            .sum()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -101,11 +116,35 @@ impl Library {
         self.bytes = 0;
     }
 
+    pub(crate) fn invalidate(&mut self, name: &str) {
+        if let Some(asset) = self.entries.remove(name) {
+            self.bytes -= asset.decoded_bytes();
+        }
+    }
+
     pub fn load(&mut self, fs: &GameFs, name: &str) -> Arc<Asset> {
         self.load_matching(fs, name, None)
     }
 
     pub fn load_matching(&mut self, fs: &GameFs, name: &str, expected: Option<u64>) -> Arc<Asset> {
+        self.load_cached(fs, name, expected, None)
+    }
+
+    pub(crate) fn load_display(
+        &mut self,
+        fs: &GameFs,
+        display: &crate::materials::MaterialInfo,
+    ) -> Arc<Asset> {
+        self.load_cached(fs, &display.name, display.source_identity(), Some(display))
+    }
+
+    fn load_cached(
+        &mut self,
+        fs: &GameFs,
+        name: &str,
+        expected: Option<u64>,
+        display: Option<&crate::materials::MaterialInfo>,
+    ) -> Arc<Asset> {
         if let Some(asset) = self.entries.get(name) {
             return asset.clone();
         }
@@ -116,25 +155,33 @@ impl Library {
             source: None,
             texture_source: None,
             dimensions: None,
-            transform: [1.0, 1.0, 0.0, 0.0],
+            transform: IDENTITY_TRANSFORM,
+            secondary_texture: None,
+            secondary_texture_source: None,
+            secondary_dimensions: None,
             error: None,
         };
         let retained = name.len() <= 256 && self.entries.len() < MAX_ASSETS;
-        let image = if retained {
+        let (image, secondary_image) = if retained {
             match load(
                 fs,
                 name,
                 MAX_CACHE_BYTES.saturating_sub(self.bytes),
                 expected,
+                display,
                 &mut report,
             ) {
-                Ok(image) => {
-                    report.state = if image.is_some() { "ready" } else { "absent" };
-                    image
+                Ok(Some(images)) => {
+                    report.state = "ready";
+                    (Some(images.primary), images.secondary)
+                }
+                Ok(None) => {
+                    report.state = "absent";
+                    (None, None)
                 }
                 Err(error) => {
                     report.error = Some(error.chars().take(512).collect());
-                    None
+                    (None, None)
                 }
             }
         } else {
@@ -146,15 +193,16 @@ impl Library {
                 }
                 .into(),
             );
-            None
+            (None, None)
         };
         let asset = Arc::new(Asset {
             retained,
             report,
             image,
+            secondary_image,
         });
         if retained {
-            self.bytes += asset.image.as_ref().map_or(0, |image| image.pixels.len());
+            self.bytes += asset.decoded_bytes();
             self.entries.insert(name.into(), asset.clone());
         }
         asset
@@ -172,13 +220,25 @@ fn transform(value: Option<&str>) -> Result<[f32; 4], String> {
     Ok(transform)
 }
 
+pub(crate) fn declares_normals(material: &Material) -> bool {
+    material.params.iter().any(|(key, _)| {
+        key.starts_with("$bump") || key.starts_with("$normalmap") || key.starts_with("$ssbump")
+    })
+}
+
+struct Images {
+    primary: RgbaImage,
+    secondary: Option<RgbaImage>,
+}
+
 fn load(
     fs: &GameFs,
     name: &str,
     budget: usize,
     expected: Option<u64>,
+    display: Option<&crate::materials::MaterialInfo>,
     report: &mut AssetReport,
-) -> Result<Option<RgbaImage>, String> {
+) -> Result<Option<Images>, String> {
     if name.len() > 256 {
         return Err("Normal-map material path exceeds 256 bytes".into());
     }
@@ -196,11 +256,82 @@ fn load(
     if expected.is_some_and(|expected| expected != crate::materials::material_identity(&material)) {
         return Err("Material settings changed since its base display was cached; Reload material assets before normal preview".into());
     }
-    if !material.params.iter().any(|(key, _)| {
-        key.starts_with("$bump") || key.starts_with("$normalmap") || key.starts_with("$ssbump")
-    }) {
+    if !declares_normals(&material) {
         return Ok(None);
     }
+    let terrain_only = material.shader == "worldvertextransition";
+    if terrain_only {
+        let display = display
+            .ok_or("Terrain blend normal preview requires both exact base display textures")?;
+        if let Some(error) = &display.error {
+            return Err(error.clone());
+        }
+        if !display.matches_material(&material) {
+            return Err(
+                "Terrain blend normal preview requires both exact base display textures".into(),
+            );
+        }
+        if let Some(error) = &display.terrain_lighting_error {
+            return Err(error.clone());
+        }
+    } else {
+        single_layer_material(&material)?;
+    }
+    let bump = material
+        .get("$bumpmap")
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Normal preview requires one nonempty $bumpmap")?;
+    if material
+        .get("$basetexture")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("Normal preview requires an explicit base texture".into());
+    }
+    if transform(material.get("$basetexturetransform"))? != IDENTITY_TRANSFORM {
+        return Err("Normal preview requires an identity base texture transform".into());
+    }
+    report.transform = transform(material.get("$bumptransform"))?;
+    if terrain_only {
+        if report.transform != IDENTITY_TRANSFORM {
+            return Err(
+                "WorldVertexTransition normal preview requires identity $bumptransform".into(),
+            );
+        }
+        let second_transform = transform(material.get("$bumptransform2"))
+            .map_err(|error| format!("WorldVertexTransition $bumptransform2: {error}"))?;
+        if second_transform != IDENTITY_TRANSFORM {
+            return Err(
+                "WorldVertexTransition normal preview requires identity $bumptransform2".into(),
+            );
+        }
+    }
+    let path = normal_path(bump, terrain_only)?;
+    report.texture = Some(path.clone());
+    let image = read_normal(fs, &path, budget, &mut report.texture_source)?;
+    report.dimensions = Some([image.width, image.height]);
+    let secondary = if terrain_only && let Some(bump) = material.get("$bumpmap2") {
+        let path =
+            normal_path(bump, true).map_err(|error| format!("Second normal layer: {error}"))?;
+        report.secondary_texture = Some(path.clone());
+        let image = read_normal(
+            fs,
+            &path,
+            budget - image.pixels.len(),
+            &mut report.secondary_texture_source,
+        )
+        .map_err(|error| format!("Second normal layer {path}: {error}"))?;
+        report.secondary_dimensions = Some([image.width, image.height]);
+        Some(image)
+    } else {
+        None
+    };
+    Ok(Some(Images {
+        primary: image,
+        secondary,
+    }))
+}
+
+fn single_layer_material(material: &Material) -> Result<(), String> {
     if material.shader != "lightmappedgeneric" {
         return Err(format!(
             "Normal preview does not support shader {}",
@@ -232,30 +363,31 @@ fn load(
             ));
         }
     }
-    let bump = material
-        .get("$bumpmap")
-        .filter(|value| !value.trim().is_empty())
-        .ok_or("Normal preview requires one nonempty $bumpmap")?;
-    if material
-        .get("$basetexture")
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        return Err("Normal preview requires an explicit base texture".into());
+    Ok(())
+}
+
+fn normal_path(value: &str, terrain_only: bool) -> Result<String, String> {
+    if terrain_only {
+        asset_relative(value.trim()).map_err(|error| error.to_string())?;
     }
-    if transform(material.get("$basetexturetransform"))? != [1.0, 1.0, 0.0, 0.0] {
-        return Err("Normal preview requires an identity base texture transform".into());
-    }
-    report.transform = transform(material.get("$bumptransform"))?;
-    let path = asset_relative(&texture_path(bump)).map_err(|error| error.to_string())?;
-    if path.len() > 256 || bump.trim().is_empty() {
+    let path = asset_relative(&texture_path(value)).map_err(|error| error.to_string())?;
+    if path.len() > 256 || value.trim().is_empty() {
         return Err("Normal texture requires a bounded nonempty mounted VTF path".into());
     }
-    report.texture = Some(path.clone());
+    Ok(path)
+}
+
+fn read_normal(
+    fs: &GameFs,
+    path: &str,
+    budget: usize,
+    source: &mut Option<crate::icons::Source>,
+) -> Result<RgbaImage, String> {
     let asset = fs
-        .read_asset_limited(&path, MAX_TEXTURE_BYTES)
+        .read_asset_limited(path, MAX_TEXTURE_BYTES)
         .map_err(|error| error.to_string())?
         .ok_or("Normal texture was not found")?;
-    report.texture_source = Some(asset.origin.into());
+    *source = Some(asset.origin.into());
     let texture = Vtf::parse(asset.data).map_err(|error| error.to_string())?;
     validate_static_texture(&texture, MAX_AXIS).map_err(|_| {
         "Normal preview requires a static single-frame/face/depth VTF with axes 1–1024".to_owned()
@@ -282,8 +414,7 @@ fn load(
     {
         return Err("Normal preview requires RGB normal Z≥128; lower-hemisphere or ambiguous normal encodings are unsupported".into());
     }
-    report.dimensions = Some([image.width, image.height]);
-    Ok(Some(image))
+    Ok(image)
 }
 
 pub fn tangent(

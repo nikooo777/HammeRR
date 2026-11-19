@@ -22,6 +22,7 @@ pub struct MaterialInfo {
     pub(crate) reference: bool,
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
+    pub(crate) terrain_blend_bumped: bool,
     pub model_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
@@ -150,6 +151,10 @@ impl MaterialInfo {
                     )
                 },
             ),
+            terrain_blend_bumped: material.is_some_and(|material| {
+                material.shader == "worldvertextransition"
+                    && crate::normal_maps::declares_normals(material)
+            }),
             model_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
@@ -184,6 +189,7 @@ impl MaterialInfo {
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
+            terrain_blend_bumped: false,
             model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             blend_texture: None,
@@ -281,11 +287,12 @@ fn terrain_blend_lighting_error(
     blend: Option<&Vtf>,
     display_texture: Option<&str>,
 ) -> Option<String> {
+    let bumped = crate::normal_maps::declares_normals(material);
     if let Some(reason) = diffuse_lighting_error(material) {
         return Some(reason);
     }
     if let Some((key, _)) = material.params.iter().find(|(key, _)| {
-        !matches!(
+        !(matches!(
             key.as_str(),
             "$basetexture"
                 | "$basetexture2"
@@ -293,7 +300,15 @@ fn terrain_blend_lighting_error(
                 | "$surfaceprop2"
                 | "$nodecal"
                 | "%keywords"
-        )
+        ) || bumped
+            && matches!(
+                key.as_str(),
+                "$basetexturetransform"
+                    | "$bumpmap"
+                    | "$bumpmap2"
+                    | "$bumptransform"
+                    | "$bumptransform2"
+            ))
     }) {
         let key: String = key.chars().take(256).collect();
         return Some(format!(
@@ -302,17 +317,18 @@ fn terrain_blend_lighting_error(
     }
     let declared = material
         .get("$basetexture")
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| {
+            !value.trim().is_empty() && (!bumped || asset_relative(value.trim()).is_ok())
+        })
         .map(texture_path);
     if declared.as_deref() != display_texture || declared.is_none() {
         return Some(
             "Terrain blend authored lighting requires its exact declared first base texture".into(),
         );
     }
-    if material
-        .get("$basetexture2")
-        .is_none_or(|value| value.trim().is_empty())
-    {
+    if material.get("$basetexture2").is_none_or(|value| {
+        value.trim().is_empty() || bumped && asset_relative(value.trim()).is_err()
+    }) {
         return Some(
             "Terrain blend authored lighting requires a declared second base texture".into(),
         );
@@ -658,6 +674,7 @@ impl MaterialLibrary {
             return Err(format!("Material {key} has no usable base texture"));
         }
         let id = if let Some(&id) = self.by_name.get(&key) {
+            self.normals.invalidate(&key);
             self.materials[id] = material;
             id
         } else {
@@ -707,11 +724,7 @@ impl MaterialLibrary {
         if let Some(asset) = &self.materials[id].normal {
             return asset.clone();
         }
-        let asset = self.normals.load_matching(
-            fs,
-            &self.materials[id].name,
-            self.materials[id].material_identity,
-        );
+        let asset = self.normals.load_display(fs, &self.materials[id]);
         if asset.retained {
             self.materials[id].normal = Some(asset.clone());
             if asset.image.is_some() {

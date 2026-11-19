@@ -638,12 +638,14 @@ See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
 3. For authored lighting, select `lighting_quality:"detail"`. Fixed directional
    shading also supports the effect. Reload material assets after file changes.
 
-Ordinary single-base LightmappedGeneric world/func_detail terrain supports rotated
-and mirrored UVs. Invalid packed geometry, singular UVs and invalid tangent
+Ordinary single-base `LightmappedGeneric` and plain two-base `WorldVertexTransition`
+world/func_detail terrain support rotated and mirrored face UVs. The latter uses
+painted alpha for both color and normal blends. Declared normals must load for
+the effect to apply. Invalid packed geometry, singular UVs and invalid tangent
 frames remain explicit exclusions. Normal assets share the existing cache and
 limits. `report.terrain_vertices` counts expanded triangle vertices against
 `limits.terrain_vertices`; exhausted geometry budgets remain explicit exclusions.
-Models, two-base bump mapping and special encodings remain unsupported.
+Models and special normal encodings remain unsupported.
 
 ## Preview authored lighting
 
@@ -656,10 +658,10 @@ Models, two-base bump mapping and special encodings remain unsupported.
 5. Call `render_view` to inspect the result.
 
 The default lighting channel is `"ldr"`. Inspection reports the selected channel even when the preview is off.
-Plain unbumped two-base `WorldVertexTransition` terrain uses the existing shared
-lighting path after vertex-alpha texture blending. Both exact declared static 2D
-LDR color bases must be available; display overrides, material texture transforms, bump maps,
-detail/blend modulation, proxies and alpha/translucent effects remain excluded.
+Plain two-base `WorldVertexTransition` terrain uses vertex-alpha texture blending.
+Both exact static 2D LDR color bases must load. For bumped blends, enable
+`normal_maps:true` with Detail quality. Display overrides, unsupported transforms,
+detail, blend modulation, proxies and opacity effects remain excluded.
 The channel, lighting exposure and other authored-light preview settings are temporary; they do not edit the map or saved preview defaults.
 `render_view` accepts the same settings as temporary overrides without changing shared state.
 `sky_channel` selects sky content independently. In Legacy display,

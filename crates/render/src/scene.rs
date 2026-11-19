@@ -611,7 +611,7 @@ impl Builder<'_> {
         }
         let mut tangent = [0.0; 4];
         if self.normal_maps.active && !tool {
-            let result = self.normal_asset(material).and_then(|asset| {
+            let result = self.normal_asset(material, false).and_then(|asset| {
                 asset
                     .map(|asset| {
                         crate::normal_maps::tangent(
@@ -721,7 +721,13 @@ impl Builder<'_> {
     fn normal_asset(
         &mut self,
         material: MaterialId,
+        terrain: bool,
     ) -> Result<Option<std::sync::Arc<crate::normal_maps::Asset>>, String> {
+        if !terrain && self.library.get(material).terrain_blend_bumped {
+            return Err(
+                "WorldVertexTransition normal preview requires world or func_detail terrain".into(),
+            );
+        }
         let asset = self.library.normal_map(self.fs, material);
         self.normal_maps.material(&asset.report);
         if let Some(error) = &asset.report.error {
@@ -763,8 +769,9 @@ impl Builder<'_> {
             triangles.len()
         };
         let mut normal_frames = None;
+        let mut normal_error = None;
         if self.normal_maps.active && !tool {
-            let result = self.normal_asset(material).and_then(|asset| {
+            let result = self.normal_asset(material, true).and_then(|asset| {
                 asset
                     .map(|asset| {
                         if !owner_supported {
@@ -804,6 +811,7 @@ impl Builder<'_> {
                 Err(error) => {
                     self.normal_maps
                         .reject_terrain(face, &side.material, drawn_triangles, &error);
+                    normal_error = Some(error);
                 }
             }
         }
@@ -824,6 +832,11 @@ impl Builder<'_> {
             } else {
                 info.terrain_lighting_error
                     .as_deref()
+                    .or_else(|| {
+                        (info.terrain_blend_bumped && normal_frames.is_none()).then(|| {
+                            normal_error.as_deref().unwrap_or("Bumped WorldVertexTransition authored lighting requires Normal maps in Detail quality")
+                        })
+                    })
                     .or_else(|| terrain::receiver_error(mesh, normals))
             };
             if let Some(reason) = reason.map(str::to_owned) {

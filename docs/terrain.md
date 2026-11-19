@@ -269,14 +269,12 @@ Consumed detail helpers contribute world terrain. Runtime brush-model terrain re
 3. Set **Quality** to **Detail · per-fragment** for local light pools.
 
 ![Cyan, orange and pink lights on painted rock-and-sand terrain](images/terrain-blend-lighting.png)
-Supported opaque single-base terrain and plain unbumped two-base
-`WorldVertexTransition` terrain receive this preview. Both declared static 2D
-color textures must be available. Vertex paint blends the bases before the same
-shared lighting calculation. For ordinary single-base normal-mapped terrain,
-enable **Normal map preview** and use **Detail · per-fragment**. See [Normal-map preview](normal-maps.md).
-Base display overrides, unsupported material transforms, detail layers, blend
-modulation, proxies and translucent effects remain excluded. Two-base normal
-maps are not yet supported.
+Supported opaque single-base terrain and plain two-base `WorldVertexTransition`
+terrain receive this preview. Paint blends both color and normal layers. For
+normal-mapped terrain, enable **Normal map preview** and use
+**Detail · per-fragment**. See [Normal-map preview](normal-maps.md).
+Base display overrides, unsupported transforms, detail, blend modulation,
+proxies and translucent effects remain excluded.
 See [lighting preview](lighting-preview.md).
 
 ## Mirror or shear terrain

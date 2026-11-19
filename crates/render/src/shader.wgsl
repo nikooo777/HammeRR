@@ -17,6 +17,7 @@ struct MaterialParams {
 @group(1) @binding(2) var texture_sampler: sampler;
 @group(1) @binding(3) var<uniform> material: MaterialParams;
 @group(1) @binding(4) var normal_texture: texture_2d<f32>;
+@group(1) @binding(5) var second_normal_texture: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -174,8 +175,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
     let surface_overlay = surface_diagnostic(in, grid_width);
     if surface_overlay.a > 0.0 { return surface_overlay; }
+    let blend_weight = in.color.a;
     if material.flags.y > 0.5 {
-        texel = mix(texel, second, in.color.a);
+        texel = mix(texel, second, blend_weight);
     }
     if material.flags.w > 0.5 {
         texel = vec4<f32>(1.0);
@@ -190,8 +192,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let alpha = select(1.0, texel.a, material.flags.z > 0.5 || in.texture_alpha != 0u) * in.opacity;
     var shading_normal = n;
     if globals.surface_view.z != 0u && material.helper.z > 0.5 && abs(in.tangent.w) > 0.5 {
-        let uv = in.uv * material.normal_transform.xy + material.normal_transform.zw;
-        let normal = textureSampleGrad(normal_texture, texture_sampler, uv, uv_dx * material.normal_transform.xy, uv_dy * material.normal_transform.xy).xyz * 2.0 - 1.0;
+        let scale = material.normal_transform.xy;
+        let uv = in.uv * scale + material.normal_transform.zw;
+        let normal_dx = uv_dx * scale;
+        let normal_dy = uv_dy * scale;
+        var normal = textureSampleGrad(normal_texture, texture_sampler, uv, normal_dx, normal_dy).xyz * 2.0 - 1.0;
+        if material.helper.z > 1.5 {
+            let second_normal = textureSampleGrad(
+                second_normal_texture, texture_sampler, uv, normal_dx, normal_dy,
+            ).xyz * 2.0 - 1.0;
+            normal = mix(normal, second_normal, blend_weight);
+        }
         let tangent = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
         let bitangent = cross(n, tangent) * sign(in.tangent.w);
         shading_normal = normalize(tangent * normal.x + bitangent * normal.y + n * normal.z);
@@ -241,7 +252,6 @@ const BAKED_NEAREST_BASE: u32 = 16u;
 const BAKED_CLAMP_S: u32 = 32u;
 const BAKED_CLAMP_T: u32 = 64u;
 
-@group(1) @binding(5) var second_normal_texture: texture_2d<f32>;
 @group(1) @binding(6) var<uniform> baked_material: BakedMaterial;
 @group(2) @binding(0) var<storage, read> baked_samples: array<vec4<f32>>;
 @group(2) @binding(1) var<storage, read> baked_faces: array<BakedFace>;

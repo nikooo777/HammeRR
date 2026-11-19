@@ -3,6 +3,7 @@
 # Material emission
 
 Bake light from an opaque world, detail or stationary brush-model surface.
+See [Preview surface glow](#preview-surface-glow) for the editor display.
 
 1. Create an ASCII file in mounted game content, for example `scripts/room.rad`.
 2. Add one material, RGB color and brightness per line:
@@ -40,6 +41,21 @@ hdr: lights/panel 128 192 255 510
 
 An unprefixed record supplies both channels. Blank lines and whole-line `//`
 comments are accepted. Duplicate material/channel assignments reject.
+
+## Preview surface glow
+
+1. Apply a supported material with `$selfillum 1`, such as `props/plasticexitsign001a`.
+2. Choose **Textured** in the viewport header.
+3. Open **Overlays** and enable **Unshadowed authored lighting** to check the surface under authored lights.
+
+Plain opaque `LightmappedGeneric` and `VertexLitGeneric` materials use their
+base texture alpha as the glow mask and accept `$selfillumtint` as `[0–1]`
+or `{0–255}` RGB channels. Plain
+`UnlitGeneric` displays its base color without surface shading. The preview
+affects the surface only. Use an **Emission file** to bake light onto nearby geometry.
+
+Use **Reload material assets** after editing the VMT or VTF. Other masks,
+proxies, complex effects and missing textures report an unavailable preview.
 
 ## Use texture colours
 

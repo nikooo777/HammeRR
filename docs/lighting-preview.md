@@ -40,6 +40,7 @@ Use **Reload material assets** after changing materials.
 ## Limits
 
 - No baked material emission, shadows, bounce, styles, animation or sky visibility test. Lights can shine through walls.
+- Supported [material glow](material-emission.md#preview-surface-glow) remains visible on the source surface.
 - Malformed requested HDR fields exclude that light with its entity ID and reason; they do not select LDR. Literal ambient fields are ignored when **Include sky ambient** is off.
 - Unresolved light-value parameters exclude that light in either channel, including HDR and ambient tokens when **Include sky ambient** is off. Other valid lamps remain available.
 - At most 32 visible, unnamed, constant lights, including one sun.

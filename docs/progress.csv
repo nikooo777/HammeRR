@@ -67,7 +67,7 @@ A01,Source model support and selection,65
 A02,Sound exploration,100
 A03,Particle exploration (++),100
 P01,Live lighting preview (++),55
-P02,Source material fidelity,50
+P02,Source material fidelity,56.25
 P03,2D sky rendering (++),100
 P04,3D skybox preview (++),25
 P05,Fog preview (++),100

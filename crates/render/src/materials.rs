@@ -11,15 +11,32 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmt::{Material, material_path, texture_path};
 use source_formats::vtf::Vtf;
 
+mod emission;
+
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
 pub const MAX_RELOAD_FAILURES: usize = 100;
 // Point/clamp sampling, normal/procedural/cube/target/vertex textures, SSBump and border flags.
 const TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
 
+#[derive(Debug, Clone, Copy)]
+pub struct Emission {
+    pub tint: [f32; 3],
+    pub base_alpha: bool,
+}
+
+struct DisplayTextures {
+    base: Option<Vtf>,
+    blend: Option<Vtf>,
+    base_path: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct MaterialInfo {
     pub(crate) reference: bool,
+    pub emission: Option<Emission>,
+    emission_error: Option<String>,
+    pub(crate) emission_model_only: bool,
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
     pub(crate) terrain_blend_bumped: bool,
@@ -51,6 +68,18 @@ pub struct MaterialInfo {
 }
 
 impl MaterialInfo {
+    pub(crate) fn emission_for(&self, model: bool) -> Result<bool, &str> {
+        if let Some(error) = &self.emission_error {
+            return Err(error);
+        }
+        if self.emission.is_some_and(|emission| emission.base_alpha)
+            && self.emission_model_only != model
+        {
+            return Err("Self-illumination requires the matching brush or model shader");
+        }
+        Ok(self.emission.is_some())
+    }
+
     pub fn source_identity(&self) -> Option<u64> {
         self.material_identity
     }
@@ -63,14 +92,7 @@ impl MaterialInfo {
         let name = name.to_ascii_lowercase();
         match Self::load_checked(fs, &name, None) {
             Ok(material) => material,
-            Err(error) => {
-                let mut material = Self::untextured(&name);
-                material.width = FALLBACK_SIZE;
-                material.height = FALLBACK_SIZE;
-                material.missing = true;
-                material.error = Some(error);
-                material
-            }
+            Err(error) => Self::failed(&name, error, false),
         }
     }
 
@@ -81,16 +103,49 @@ impl MaterialInfo {
                 Material::load(fs, name).map_err(|error| format!("Material {name}: {error}"))?
             }
         };
+        match Self::display_textures(fs, name, material.as_ref(), limits.map(|limits| limits[1])) {
+            Ok(textures) => Ok(Self::from_resolved(
+                name,
+                material.as_ref(),
+                textures.base,
+                textures.blend,
+                textures.base_path,
+            )),
+            Err(error) if limits.is_none() => Ok(Self::failed(
+                name,
+                error,
+                material.as_ref().is_some_and(emission::requested),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn failed(name: &str, error: String, emission_requested: bool) -> Self {
+        let mut material = Self::untextured(name);
+        material.width = FALLBACK_SIZE;
+        material.height = FALLBACK_SIZE;
+        material.missing = true;
+        material.emission_error = emission_requested.then(|| error.clone());
+        material.error = Some(error);
+        material
+    }
+
+    fn display_textures(
+        fs: &GameFs,
+        name: &str,
+        material: Option<&Material>,
+        maximum: Option<usize>,
+    ) -> Result<DisplayTextures, String> {
         let mut base = None;
-        let mut display_texture = None;
-        if let Some(material) = &material {
+        let mut base_path = None;
+        if let Some(material) = material {
             for path in material
                 .editor_textures()
                 .map_err(|error| format!("Material {name}: {error}"))?
             {
-                if let Some(texture) = read_vtf(fs, &path, limits.map(|limits| limits[1]))? {
+                if let Some(texture) = read_vtf(fs, &path, maximum)? {
                     base = Some(texture);
-                    display_texture = Some(path);
+                    base_path = Some(path);
                     break;
                 }
             }
@@ -101,22 +156,19 @@ impl MaterialInfo {
             }
         }
         let blend = material
-            .as_ref()
             .filter(|m| m.shader == "worldvertextransition")
             .and_then(|m| m.get("$basetexture2"))
             .map(|texture| {
                 let path = texture_path(texture);
-                read_vtf(fs, &path, limits.map(|limits| limits[1]))?
+                read_vtf(fs, &path, maximum)?
                     .ok_or_else(|| format!("Blend texture {path} was not found"))
             })
             .transpose()?;
-        Ok(Self::from_resolved(
-            name,
-            material.as_ref(),
+        Ok(DisplayTextures {
             base,
             blend,
-            display_texture,
-        ))
+            base_path,
+        })
     }
 
     pub(crate) fn from_resolved(
@@ -140,12 +192,25 @@ impl MaterialInfo {
         let declares_normals = material.is_some_and(crate::normal_maps::declares_normals);
         let model_bumped = declares_normals
             && material.is_some_and(|material| material.shader == "vertexlitgeneric");
+        let (emission, emission_error) = match material.map_or(Ok(None), |material| {
+            emission::resolve(material, base.as_ref(), display_texture.as_deref())
+        }) {
+            Ok(emission) => (emission, None),
+            Err(error) => (None, Some(error)),
+        };
+        let masked_emission = emission.is_some_and(|emission| emission.base_alpha);
 
         Self {
             reference: false,
+            emission,
+            emission_error,
+            emission_model_only: material
+                .is_some_and(|material| material.shader == "vertexlitgeneric"),
             material_identity: material.map(material_identity),
-            lighting_error: material
-                .map_or_else(|| Some("No resolved material".into()), lighting_error),
+            lighting_error: material.map_or_else(
+                || Some("No resolved material".into()),
+                |material| lighting_error(material, masked_emission),
+            ),
             terrain_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
@@ -154,6 +219,7 @@ impl MaterialInfo {
                         base.as_ref(),
                         blend.as_ref(),
                         display_texture.as_deref(),
+                        masked_emission,
                     )
                 },
             ),
@@ -163,12 +229,24 @@ impl MaterialInfo {
             declares_normals,
             model_bumped,
             model_normal_error: material.filter(|_| model_bumped).and_then(|material| {
-                model_lighting_error(material, base.as_ref(), display_texture.as_deref(), true)
+                model_lighting_error(
+                    material,
+                    base.as_ref(),
+                    display_texture.as_deref(),
+                    true,
+                    false,
+                )
             }),
             model_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
-                    model_lighting_error(material, base.as_ref(), display_texture.as_deref(), false)
+                    model_lighting_error(
+                        material,
+                        base.as_ref(),
+                        display_texture.as_deref(),
+                        false,
+                        masked_emission,
+                    )
                 },
             ),
             display_texture,
@@ -196,6 +274,9 @@ impl MaterialInfo {
     pub fn untextured(name: &str) -> Self {
         Self {
             reference: false,
+            emission: None,
+            emission_error: None,
+            emission_model_only: false,
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
@@ -223,20 +304,21 @@ impl MaterialInfo {
     }
 }
 
-fn lighting_error(material: &Material) -> Option<String> {
+fn lighting_error(material: &Material, masked_emission: bool) -> Option<String> {
     if material.shader != "lightmappedgeneric" {
         return Some("Authored lighting requires LightmappedGeneric".into());
     }
-    diffuse_lighting_error(material)
+    diffuse_lighting_error(material, masked_emission)
 }
 
-fn diffuse_lighting_error(material: &Material) -> Option<String> {
+fn diffuse_lighting_error(material: &Material, masked_emission: bool) -> Option<String> {
     let reason = if !material.blocks.is_empty() {
         "Authored lighting excludes proxies and nested fallback/effect blocks"
     } else if material.translucent() || material.alpha_test() {
         "Authored lighting excludes translucent and alpha-tested materials"
     } else if material.params.iter().any(|(key, _)| {
-        key.starts_with("$selfillum") || ["%tooltexture", "$additive"].contains(&key.as_str())
+        !masked_emission && key.starts_with("$selfillum")
+            || ["%tooltexture", "$additive"].contains(&key.as_str())
     }) {
         "Authored lighting excludes self-illumination, additive and base display overrides"
     } else {
@@ -250,11 +332,12 @@ fn model_lighting_error(
     base: Option<&Vtf>,
     display_texture: Option<&str>,
     normal_preview: bool,
+    masked_emission: bool,
 ) -> Option<String> {
     if material.shader != "vertexlitgeneric" {
         return Some("Model authored lighting requires VertexLitGeneric".into());
     }
-    if let Some(reason) = diffuse_lighting_error(material) {
+    if let Some(reason) = diffuse_lighting_error(material, masked_emission) {
         return Some(reason);
     }
     if let Some((key, _)) = material.params.iter().find(|(key, _)| {
@@ -265,7 +348,12 @@ fn model_lighting_error(
             && matches!(
                 key.as_str(),
                 "$bumpmap" | "$bumptransform" | "$basetexturetransform"
-            ))
+            )
+            || masked_emission
+                && matches!(
+                    key.as_str(),
+                    "$selfillum" | "$selfillumtint" | "$basetexturetransform"
+                ))
     }) {
         let key: String = key.chars().take(256).collect();
         let mode = if normal_preview {
@@ -302,16 +390,9 @@ fn model_lighting_error(
             "Model authored lighting requires a static single-frame, single-face 2D base".into(),
         );
     }
-    if !matches!(
-        base.format,
-        source_formats::vtf::ImageFormat::Rgb888
-            | source_formats::vtf::ImageFormat::Bgr888
-            | source_formats::vtf::ImageFormat::Rgba8888
-            | source_formats::vtf::ImageFormat::Bgra8888
-            | source_formats::vtf::ImageFormat::Dxt1
-            | source_formats::vtf::ImageFormat::Dxt3
-            | source_formats::vtf::ImageFormat::Dxt5
-    ) {
+    if !(crate::normal_maps::ordinary_ldr_format(base.format)
+        || masked_emission && base.format == source_formats::vtf::ImageFormat::Dxt1OneBitAlpha)
+    {
         return Some("Model authored lighting requires an ordinary LDR RGB base format".into());
     }
     None
@@ -324,7 +405,7 @@ fn terrain_blend_lighting_error(
     display_texture: Option<&str>,
 ) -> Option<String> {
     let bumped = crate::normal_maps::declares_normals(material);
-    if let Some(reason) = diffuse_lighting_error(material) {
+    if let Some(reason) = diffuse_lighting_error(material, false) {
         return Some(reason);
     }
     if let Some((key, _)) = material.params.iter().find(|(key, _)| {
@@ -396,11 +477,12 @@ fn terrain_lighting_error(
     base: Option<&Vtf>,
     blend: Option<&Vtf>,
     display_texture: Option<&str>,
+    masked_emission: bool,
 ) -> Option<String> {
     if material.shader == "worldvertextransition" {
         return terrain_blend_lighting_error(material, base, blend, display_texture);
     }
-    lighting_error(material).or_else(|| {
+    lighting_error(material, masked_emission).or_else(|| {
         material.params.iter().find_map(|(key, _)| {
             if (key.starts_with("$bump") && !["$bumpmap", "$bumptransform"].contains(&key.as_str()))
                 || key.starts_with("$normal") || key.starts_with("$ssbump")

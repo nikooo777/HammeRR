@@ -3127,6 +3127,7 @@ impl Session {
             .then(|| render::scene::OverlayPreview {
                 draft: self.overlay_render_draft(),
             });
+        let textured = view.surface == render::SurfaceView::Textured;
         let mut mesh = match SceneMesh::try_build_with_reference_terrain_filtered(
             document.vmf(),
             &self.game,
@@ -3143,8 +3144,9 @@ impl Session {
             skybox,
             view.tool_textures,
             view.selection_tint,
-            view.normal_maps && view.surface == render::SurfaceView::Textured,
-            view.lighting_preview && view.surface == render::SurfaceView::Textured,
+            view.normal_maps && textured,
+            view.lighting_preview && textured,
+            textured,
             &references.models,
             !baked_surfaces,
             view.entity_helpers,

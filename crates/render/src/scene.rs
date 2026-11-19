@@ -10,6 +10,9 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 
 use crate::materials::{MaterialId, MaterialLibrary};
 
+pub(crate) const MATERIAL_EMISSION: u32 = 4;
+const MODEL_SURFACE: u32 = 8;
+
 mod model_lighting;
 mod model_normals;
 pub(crate) mod projected_overlays;
@@ -161,6 +164,10 @@ pub enum SceneIssue {
         face: FaceId,
         message: String,
     },
+    Model {
+        entity: Option<u32>,
+        message: String,
+    },
     Terrain(TerrainIssue),
     Overlay {
         entity: Option<u32>,
@@ -174,20 +181,20 @@ impl SceneIssue {
             Self::Brush { solid, .. } => Some(*solid),
             Self::Surface { face, .. } => Some(face.solid),
             Self::Terrain(issue) => Some(issue.face.solid),
-            Self::Overlay { .. } => None,
+            Self::Model { .. } | Self::Overlay { .. } => None,
         }
     }
 
     pub fn entity(&self) -> Option<u32> {
         match self {
-            Self::Overlay { entity, .. } => *entity,
+            Self::Model { entity, .. } | Self::Overlay { entity, .. } => *entity,
             _ => None,
         }
     }
 
     pub fn face(&self) -> Option<FaceId> {
         match self {
-            Self::Brush { .. } | Self::Overlay { .. } => None,
+            Self::Brush { .. } | Self::Model { .. } | Self::Overlay { .. } => None,
             Self::Surface { face, .. } => Some(*face),
             Self::Terrain(issue) => Some(issue.face),
         }
@@ -198,6 +205,7 @@ impl SceneIssue {
             Self::Brush { message, .. } => message,
             Self::Surface { message, .. } => message,
             Self::Terrain(issue) => &issue.message,
+            Self::Model { message, .. } => message,
             Self::Overlay { message, .. } => message,
         }
     }
@@ -212,6 +220,10 @@ impl SceneIssue {
                 "Terrain face {} on brush {}: {}",
                 issue.face.side, issue.face.solid, issue.message
             ),
+            Self::Model { entity, message } => match entity {
+                Some(id) => format!("Model {id} preview: {message}"),
+                None => format!("Model preview: {message}"),
+            },
             Self::Overlay { entity, message } => match entity {
                 Some(id) => format!("Overlay {id} preview: {message}"),
                 None => format!("Overlay draft preview: {message}"),
@@ -282,6 +294,7 @@ struct Builder<'a> {
     selection_tint: bool,
     lighting: crate::lighting::Preview,
     normal_maps: crate::normal_maps::Report,
+    emission: bool,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
     displayed_icons: Vec<crate::icons::Instance>,
     helper_bounds: Vec<Vec3>,
@@ -320,6 +333,39 @@ impl Builder<'_> {
             self.indices.resize_with(id + 1, Vec::new);
         }
         id
+    }
+
+    fn material_emission(&self, material: MaterialId, model: bool) -> Result<u32, String> {
+        let info = self.library.get(material);
+        if !self.emission || info.tool && !self.tool_textures {
+            return Ok(0);
+        }
+        match info.emission_for(model) {
+            Ok(true) if info.tool => Err(format!(
+                "{}: Material emission requires an opaque non-tool material",
+                info.name
+            )),
+            Ok(true) => Ok(MATERIAL_EMISSION),
+            Ok(false) => Ok(0),
+            Err(reason) => Err(format!("{}: {reason}", info.name)),
+        }
+    }
+
+    fn surface_emission(&mut self, material: MaterialId, face: FaceId, supported: bool) -> u32 {
+        let emission = self.material_emission(material, false).and_then(|flags| {
+            if flags != 0 && !supported {
+                Err("Terrain material emission requires world or func_detail terrain".into())
+            } else {
+                Ok(flags)
+            }
+        });
+        match emission {
+            Ok(flags) => flags,
+            Err(message) => {
+                self.issues.push(SceneIssue::Surface { face, message });
+                0
+            }
+        }
     }
 
     fn push_vertex(&mut self, vertex: Vertex) -> u32 {
@@ -590,6 +636,7 @@ impl Builder<'_> {
             return false;
         }
         let material = self.material(name);
+        let emission = self.surface_emission(material, face, true);
         let info = self.library.get(material);
         let tool = info.tool;
         let size = glam::DVec2::new(f64::from(info.width), f64::from(info.height));
@@ -658,7 +705,7 @@ impl Builder<'_> {
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
-                texture_flags: 0,
+                texture_flags: emission,
                 tangent,
                 baked_irradiance: [0.0; 3],
                 lighting_receiver,
@@ -770,6 +817,7 @@ impl Builder<'_> {
         source: (FaceId, &source_formats::vmf::Side, bool),
     ) {
         let (face, side, owner_supported) = source;
+        let emission = self.surface_emission(material, face, owner_supported);
         let triangles: Vec<[usize; 3]> = mesh.triangles().collect();
         let coordinates = mesh
             .base_positions
@@ -881,7 +929,7 @@ impl Builder<'_> {
             lightmap: lightmap_vertex(side, mesh.base_positions[i]),
             smoothing: side.smoothing_groups.unwrap_or(0),
             opacity: 1.0,
-            texture_flags: 0,
+            texture_flags: emission,
             tangent,
             baked_irradiance: [0.0; 3],
             lighting_receiver,
@@ -1184,6 +1232,32 @@ impl Builder<'_> {
                     }
                 }
             };
+            if material_override.is_none() {
+                match self.material_emission(material, true) {
+                    Ok(0) => {}
+                    Ok(flags)
+                        if instance.appearance.mode == source_formats::render_color::NORMAL =>
+                    {
+                        for &index in &part.indices {
+                            self.vertices[first as usize + index as usize].texture_flags |=
+                                flags | MODEL_SURFACE;
+                        }
+                    }
+                    result => {
+                        let message = result.err().unwrap_or_else(|| {
+                            format!(
+                                "{}: Material emission requires opaque Normal model render mode",
+                                self.library.get(material).name
+                            )
+                        });
+                        let entity = match instance.id {
+                            ObjectId::Entity(id) => Some(id),
+                            _ => None,
+                        };
+                        self.issues.push(SceneIssue::Model { entity, message });
+                    }
+                }
+            }
             let normal_ready = if let Some(normals) = &mut normals
                 && normals.begin_part(part, self.library.get(material), self.tool_textures)
             {
@@ -1796,6 +1870,7 @@ impl SceneMesh {
             selection_tint,
             normal_maps,
             lighting,
+            false,
             reference_models,
             authored_surfaces,
             entity_helpers,
@@ -1825,6 +1900,7 @@ impl SceneMesh {
         selection_tint: bool,
         normal_maps: bool,
         lighting: bool,
+        emission: bool,
         reference_models: &[crate::models::Instance],
         authored_surfaces: bool,
         entity_helpers: bool,
@@ -1850,6 +1926,7 @@ impl SceneMesh {
             selection_tint,
             normal_maps,
             lighting,
+            emission,
             reference_models,
             authored_surfaces,
             entity_helpers,
@@ -1879,6 +1956,7 @@ impl SceneMesh {
         selection_tint: bool,
         normal_maps: bool,
         lighting: bool,
+        emission: bool,
         reference_models: &[crate::models::Instance],
         authored_surfaces: bool,
         entity_helpers: bool,
@@ -1921,6 +1999,7 @@ impl SceneMesh {
                 active: normal_maps,
                 ..Default::default()
             },
+            emission,
             icons,
             displayed_icons: Vec::new(),
             helper_bounds: Vec::new(),
@@ -1997,6 +2076,7 @@ impl SceneMesh {
         builder.lighting.report.active = false;
         let normal_maps_active = builder.normal_maps.active;
         builder.normal_maps.active = false;
+        builder.emission = false;
         for instance in reference_models {
             builder.add_model(instance, selected.contains(&instance.id));
         }

@@ -6,12 +6,15 @@ const BAKED_RADIANCE_RECEIVER: u32 = 3u;
 const UNLIT_PROJECTED_RECEIVER: u32 = 6u;
 const TEXTURE_ALPHA: u32 = 1u;
 const MODEL_NORMAL_FRAME: u32 = 2u;
+const MATERIAL_EMISSION: u32 = 4u;
+const MODEL_SURFACE: u32 = 8u;
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
     flags: vec4<f32>,
     helper: vec4<f32>,
     normal_transform: vec4<f32>,
+    emission: vec4<f32>,
 }
 
 @group(1) @binding(0) var base_texture: texture_2d<f32>;
@@ -232,13 +235,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         shade = 0.3 + 0.7 * max(dot(shading_normal, globals.light_dir.xyz), 0.0);
     }
     if in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == UNLIT_PROJECTED_RECEIVER { shade = 1.0; }
-    var color = texel.rgb * in.color.rgb * shade;
+    let albedo = texel.rgb * in.color.rgb;
+    let masked_emission = material.emission.w > 1.5;
+    let model_surface = (in.texture_flags & MODEL_SURFACE) != 0u;
+    let emission = globals.surface_view.x == 0u && (in.texture_flags & MATERIAL_EMISSION) != 0u
+        && material.emission.w > 0.5 && (!masked_emission || (material.emission.w > 2.5) == model_surface);
+    let emission_weight = select(1.0, texel.a, masked_emission);
+    let emitted = albedo * material.emission.rgb;
+    var color = albedo * shade;
     if globals.lighting_settings.z > 0.5 && in.lighting_receiver == 1u {
         var irradiance = in.authored_irradiance;
         if globals.lighting_settings.y > 0.5 { irradiance = authored_irradiance(in.world_position, shading_normal); }
-        let radiance = texel.rgb * in.color.rgb * irradiance * globals.lighting_settings.w;
+        var radiance = albedo * irradiance;
+        if emission { radiance = mix(radiance, emitted, emission_weight); }
+        radiance *= globals.lighting_settings.w;
         color = radiance;
         if globals.scene_display.x < 0.5 { color = radiance / (vec3<f32>(1.0) + radiance); }
+    } else if emission {
+        color = mix(color, emitted, emission_weight);
     }
     if (in.lighting_receiver & 15u) == BAKED_RADIANCE_RECEIVER {
         if globals.scene_display.x > 0.5 {

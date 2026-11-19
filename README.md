@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 91.47% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 91.53% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -69,7 +69,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |
 | ![Different materials on one brush](docs/images/face-materials.png) | ![Cyan and orange light catching normal-mapped cobbles on curved terrain](docs/images/normal-maps-on.png) |
-| Filter native materials and inspect both blend-image layers. | Preview normal detail on brushes, painted terrain and models. |
+| Browse materials, inspect blend layers and preview surface glow. | Preview normal detail on brushes, painted terrain and models. |
 
 | [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
 | --- | --- |

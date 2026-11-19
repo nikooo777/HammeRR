@@ -406,9 +406,7 @@ impl ViewOptions {
             lighting_channel: self.lighting_channel,
             lighting_sky_ambient: self.lighting_sky_ambient,
             lighting_textured: self.lighting_preview && self.surface == SurfaceView::Textured,
-            preview_tool_textures: (self.lighting_preview || self.normal_maps)
-                && self.surface == SurfaceView::Textured
-                && self.tool_textures,
+            preview_tool_textures: self.surface == SurfaceView::Textured && self.tool_textures,
             additive_sprite_guides: self.additive_sprite_guides,
             instance_contents: self.instance_contents,
         }
@@ -1641,6 +1639,15 @@ impl Renderer {
         let second_normal = normal_asset.and_then(|asset| asset.secondary_image.as_ref());
         let normal_layers = flag(normal_asset.is_some()) + flag(second_normal.is_some());
         let transform = normal_asset.map_or([1.0, 1.0, 0.0, 0.0], |asset| asset.report.transform);
+        let emission = info.emission.as_ref().map_or([0.0; 4], |emission| {
+            let [r, g, b] = emission.tint;
+            let mode = if emission.base_alpha {
+                2.0 + flag(info.emission_model_only)
+            } else {
+                1.0
+            };
+            [r, g, b, mode]
+        });
         let params = [
             flag(info.alpha_test),
             flag(info.blend.is_some()),
@@ -1654,6 +1661,10 @@ impl Renderer {
             transform[1],
             transform[2],
             transform[3],
+            emission[0],
+            emission[1],
+            emission[2],
+            emission[3],
         ];
         let params = ctx
             .device

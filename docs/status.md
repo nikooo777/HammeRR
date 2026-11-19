@@ -19,7 +19,7 @@ or automatic mounting by Hammer. See [Portable VMFs](portable-maps.md).
 
 ## Group completion
 
-![Estimated implementation: 91.47% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 91.53% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -33,7 +33,7 @@ Other partial-group scores remain estimates.
 | --- | ---: | ---: | ---: |
 | G07 · Plane clipping | 21 | 21 | 100% |
 | C05 · Displacements | 13 | 17 | 76.47% |
-| P02 · Source material fidelity | 8 | 16 | 50% |
+| P02 · Source material fidelity | 9 | 16 | 56.25% |
 
 <details>
 <summary>C05 · Displacement workflows</summary>
@@ -78,7 +78,7 @@ Workflows use the supported geometry, material and resource limits in
 | P02-08 | Preview model normal maps | Complete |
 | P02-09 | Preview specular material response | Open |
 | P02-10 | Preview environment reflections | Open |
-| P02-11 | Preview material emission | Open |
+| P02-11 | Preview material emission | Complete |
 | P02-12 | Preview animated and proxy-driven material effects | Open |
 | P02-13 | Preview refraction and native water shading | Open |
 | P02-14 | Preview detail texture layers | Open |
@@ -111,7 +111,7 @@ Completed workflows retain the limits in [Materials](textures.md) and
 | [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, grid snapping, fixed/attached pivots, terrain mirror/shear and supported point-placement transforms. | Unknown point semantics and unrepresentable model/instance deformation; general surface interpolation. |
 | [Brush tools](brush-tools.md) | Hollow ordinary brushes; carve brushes and terrain with retained convex cutters; clip flat, curved, folded and overhanging terrain. Shared previews preserve qualified native geometry, UVs, paint, labels and unchanged neighbors. | One terrain face per world/detail brush. Native representation, topology and work limits apply. Terrain cutters, terrain hollowing and concave merging remain unsupported. Unrepresentable fields or unauthorized neighbor changes refuse. |
 | [Components](components.md) | Move, rotate, scale, weld, split and ridges; free face cuts with interior endpoints and crossings, saved triangle plans, explicit piece UV axes, convex materialization and supported cubemap/order remapping. | Terrain cuts, holes, nonmanifold topology and other face-binding remaps. |
-| [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting, checked native texture mip chains and located projection errors. | Full native shader preview. |
+| [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, plain self-illumination, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting, checked native texture mip chains and located projection errors. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Flat brushes, curved world/detail terrain with painted blends, and supported static or reference-pose models. | Special encodings and unsupported material effects. |
 | [Lighting preview](lighting-preview.md) | Unshadowed LDR/HDR point, spot, sun and optional constant sky ambient on supported opaque brush, terrain and model surfaces. | Baked emission, shadows, sky visibility, bounce, styles, native exposure adaptation and brightness match. |
 | [HDR scene display](fog.md#use-hdr-scene-display) | One manual scene exposure for enabled lighting, sky and fog, with linear fog and translucency before the editor's Reinhard display curve. Shared UI/MCP settings and temporary render overrides. | Perspective Textured panes only; other panes retain component exposures. Missing content, excessive radiance and GPU limits report errors. No native adaptation or pixel parity. |

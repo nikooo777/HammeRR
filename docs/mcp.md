@@ -665,6 +665,9 @@ Plain two-base `WorldVertexTransition` terrain uses vertex-alpha texture blendin
 Both exact static 2D LDR color bases must load. For bumped blends, enable
 `normal_maps:true` with Detail quality. Display overrides, unsupported transforms,
 detail, blend modulation, proxies and opacity effects remain excluded.
+`render_view` with `surface:"textured"` also displays supported material
+self-illumination and plain unlit materials. Apply the material with
+`set_material`. Read `preview_issues` for unavailable effects.
 The channel, lighting exposure and other authored-light preview settings are temporary; they do not edit the map or saved preview defaults.
 `render_view` accepts the same settings as temporary overrides without changing shared state.
 `sky_channel` selects sky content independently. In Legacy display,

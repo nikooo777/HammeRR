@@ -296,7 +296,7 @@ impl Channel {
                     lightmap: [luxel[0] as f32, luxel[1] as f32, 0.0],
                     smoothing: face.smoothing_groups,
                     opacity: alpha / 255.0,
-                    texture_alpha: 0,
+                    texture_flags: 0,
                     tangent,
                     lighting_receiver: receiver,
                     baked_irradiance: [0.0; 3],

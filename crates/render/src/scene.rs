@@ -11,6 +11,7 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::materials::{MaterialId, MaterialLibrary};
 
 mod model_lighting;
+mod model_normals;
 pub(crate) mod projected_overlays;
 mod rope_mesh;
 
@@ -19,6 +20,13 @@ pub use projected_overlays::{Draft as OverlayDraft, Preview as OverlayPreview};
 
 const HELPER_SEGMENTS: usize = 16;
 const MAX_PREVIEW_ISSUES: usize = 64;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NormalReceiver {
+    Flat,
+    Terrain,
+    Model,
+}
 
 /// Hammer's color for entities whose editor block has none.
 const DEFAULT_ENTITY_COLOR: [u8; 3] = [220, 30, 220];
@@ -66,7 +74,7 @@ pub struct Vertex {
     pub smoothing: u32,
     /// Baked FACE receivers use this slot for the native terrain blend fraction.
     pub opacity: f32,
-    pub texture_alpha: u32,
+    pub texture_flags: u32,
     pub tangent: [f32; 4],
     pub lighting_receiver: u32,
     pub baked_irradiance: [f32; 3],
@@ -611,19 +619,21 @@ impl Builder<'_> {
         }
         let mut tangent = [0.0; 4];
         if self.normal_maps.active && !tool {
-            let result = self.normal_asset(material, false).and_then(|asset| {
-                asset
-                    .map(|asset| {
-                        crate::normal_maps::tangent(
-                            side,
-                            normal,
-                            points,
-                            dimensions,
-                            asset.report.transform,
-                        )
-                    })
-                    .transpose()
-            });
+            let result = self
+                .normal_asset(material, NormalReceiver::Flat)
+                .and_then(|asset| {
+                    asset
+                        .map(|asset| {
+                            crate::normal_maps::tangent(
+                                side,
+                                normal,
+                                points,
+                                dimensions,
+                                asset.report.transform,
+                            )
+                        })
+                        .transpose()
+                });
             match result {
                 Ok(Some(value)) => {
                     tangent = value;
@@ -648,7 +658,7 @@ impl Builder<'_> {
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
-                texture_alpha: 0,
+                texture_flags: 0,
                 tangent,
                 baked_irradiance: [0.0; 3],
                 lighting_receiver,
@@ -721,12 +731,19 @@ impl Builder<'_> {
     fn normal_asset(
         &mut self,
         material: MaterialId,
-        terrain: bool,
+        receiver: NormalReceiver,
     ) -> Result<Option<std::sync::Arc<crate::normal_maps::Asset>>, String> {
-        if !terrain && self.library.get(material).terrain_blend_bumped {
+        let info = self.library.get(material);
+        if receiver == NormalReceiver::Model && (!info.model_bumped || info.tool || info.sky) {
+            return Err("Model normal preview requires opaque VertexLitGeneric".into());
+        }
+        if receiver != NormalReceiver::Terrain && info.terrain_blend_bumped {
             return Err(
                 "WorldVertexTransition normal preview requires world or func_detail terrain".into(),
             );
+        }
+        if receiver != NormalReceiver::Model && info.model_bumped {
+            return Err("VertexLitGeneric normal preview requires an authored MDL mesh".into());
         }
         let asset = self.library.normal_map(self.fs, material);
         self.normal_maps.material(&asset.report);
@@ -771,35 +788,37 @@ impl Builder<'_> {
         let mut normal_frames = None;
         let mut normal_error = None;
         if self.normal_maps.active && !tool {
-            let result = self.normal_asset(material, true).and_then(|asset| {
-                asset
-                    .map(|asset| {
-                        if !owner_supported {
-                            return Err(
-                                "Terrain normal preview requires world or func_detail terrain"
-                                    .into(),
-                            );
-                        }
-                        let expanded = triangles.len() * 3;
-                        if self.normal_maps.terrain_vertices + expanded
-                            > crate::normal_maps::MAX_TERRAIN_VERTICES
-                        {
-                            return Err(
+            let result = self
+                .normal_asset(material, NormalReceiver::Terrain)
+                .and_then(|asset| {
+                    asset
+                        .map(|asset| {
+                            if !owner_supported {
+                                return Err(
+                                    "Terrain normal preview requires world or func_detail terrain"
+                                        .into(),
+                                );
+                            }
+                            let expanded = triangles.len() * 3;
+                            if self.normal_maps.terrain_vertices + expanded
+                                > crate::normal_maps::MAX_TERRAIN_VERTICES
+                            {
+                                return Err(
                                 "Terrain normal preview exceeds its shared expanded-vertex budget"
                                     .into(),
                             );
-                        }
-                        crate::normal_maps::terrain_frames(
-                            mesh,
-                            normals,
-                            &coordinates,
-                            side,
-                            dimensions,
-                            asset.report.transform,
-                        )
-                    })
-                    .transpose()
-            });
+                            }
+                            crate::normal_maps::terrain_frames(
+                                mesh,
+                                normals,
+                                &coordinates,
+                                side,
+                                dimensions,
+                                asset.report.transform,
+                            )
+                        })
+                        .transpose()
+                });
             match result {
                 Ok(Some(value)) => {
                     normal_frames = Some(value);
@@ -862,7 +881,7 @@ impl Builder<'_> {
             lightmap: lightmap_vertex(side, mesh.base_positions[i]),
             smoothing: side.smoothing_groups.unwrap_or(0),
             opacity: 1.0,
-            texture_alpha: 0,
+            texture_flags: 0,
             tangent,
             baked_irradiance: [0.0; 3],
             lighting_receiver,
@@ -973,7 +992,7 @@ impl Builder<'_> {
                     lightmap: [0.0; 3],
                     smoothing: 0,
                     opacity: 1.0,
-                    texture_alpha: 0,
+                    texture_flags: 0,
                     tangent: [0.0; 4],
                     baked_irradiance: [0.0; 3],
                     lighting_receiver: 0,
@@ -1019,7 +1038,7 @@ impl Builder<'_> {
                 lightmap: [0.0; 3],
                 smoothing: 0,
                 opacity: 1.0,
-                texture_alpha: 0,
+                texture_flags: 0,
                 tangent: [0.0; 4],
                 baked_irradiance: [0.0; 3],
                 lighting_receiver: 0,
@@ -1133,7 +1152,7 @@ impl Builder<'_> {
                 lightmap: [0.0, 0.0, -1.0],
                 smoothing: 0,
                 opacity: instance.appearance.opacity(),
-                texture_alpha: u32::from(
+                texture_flags: u32::from(
                     instance.appearance.mode == source_formats::render_color::TEXTURE,
                 ),
                 tangent: [0.0; 4],
@@ -1143,6 +1162,8 @@ impl Builder<'_> {
         }
         let mut lighting = (self.lighting.report.active && material_override.is_none())
             .then(|| model_lighting::Admission::new(instance));
+        let mut normals = (self.normal_maps.active && material_override.is_none())
+            .then(model_normals::Admission::default);
         let materials = instance.asset.materials();
         for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
@@ -1163,12 +1184,21 @@ impl Builder<'_> {
                     }
                 }
             };
+            let normal_ready = if let Some(normals) = &mut normals
+                && normals.begin_part(part, self.library.get(material), self.tool_textures)
+            {
+                let result = self.prepare_model_normals(instance, part, material, first as usize);
+                normals.finish_part(&self.library.get(material).name, result)
+            } else {
+                false
+            };
             if let Some(lighting) = &mut lighting {
                 lighting.part(
                     part,
                     self.library.get(material),
                     &self.vertices[first as usize..],
                     self.tool_textures,
+                    normal_ready,
                 );
             }
             let indices = part.indices.iter().map(|&index| first + index);
@@ -1197,6 +1227,13 @@ impl Builder<'_> {
         if selected {
             self.add_model_outline(instance);
         }
+        if let Some(normals) = normals {
+            normals.finish(
+                instance,
+                &mut self.vertices[first as usize..],
+                &mut self.normal_maps,
+            );
+        }
         if let Some(lighting) = lighting {
             lighting.finish(
                 instance,
@@ -1205,6 +1242,26 @@ impl Builder<'_> {
             );
         }
         self.stats.model_entities += 1;
+    }
+
+    fn prepare_model_normals(
+        &mut self,
+        instance: &crate::models::Instance,
+        part: &source_formats::model::Part,
+        material: MaterialId,
+        first: usize,
+    ) -> Result<(), String> {
+        let tangents = model_normals::source_tangents(instance)?;
+        let asset = self
+            .normal_asset(material, NormalReceiver::Model)?
+            .ok_or("Model normal preview needs its declared $bumpmap")?;
+        model_normals::prepare_part(
+            instance,
+            part,
+            &mut self.vertices[first..],
+            tangents,
+            asset.report.transform,
+        )
     }
 
     fn add_model_outline(&mut self, instance: &crate::models::Instance) {
@@ -1938,10 +1995,13 @@ impl SceneMesh {
 
         let lighting_active = builder.lighting.report.active;
         builder.lighting.report.active = false;
+        let normal_maps_active = builder.normal_maps.active;
+        builder.normal_maps.active = false;
         for instance in reference_models {
             builder.add_model(instance, selected.contains(&instance.id));
         }
         builder.lighting.report.active = lighting_active;
+        builder.normal_maps.active = normal_maps_active;
         let (mins, maxs) = builder
             .vertices
             .iter()

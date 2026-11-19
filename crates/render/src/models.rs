@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     Arc, RwLock, RwLockReadGuard,
@@ -17,6 +18,7 @@ use source_formats::{
 };
 
 const MAX_CACHE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_TANGENT_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 128;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
 const MAX_MATERIAL_ERROR_CHARS: usize = 1024;
@@ -32,6 +34,7 @@ pub use source_formats::model_scale::{
 pub struct Asset {
     pub path: String,
     pub model: Model,
+    pub(crate) tangents: Result<Box<[[f32; 4]]>, Cow<'static, str>>,
     materials: RwLock<Result<Vec<String>, String>>,
     material_bytes: AtomicUsize,
     source_identity: Option<[u8; 32]>,
@@ -64,11 +67,17 @@ fn material_binding_bytes(materials: &Result<Vec<String>, String>) -> usize {
 }
 
 impl Asset {
-    fn new(path: String, model: Model, materials: Result<Vec<String>, String>) -> Self {
+    fn new(
+        path: String,
+        model: Model,
+        tangents: Result<Box<[[f32; 4]]>, Cow<'static, str>>,
+        materials: Result<Vec<String>, String>,
+    ) -> Self {
         let material_bytes = AtomicUsize::new(material_binding_bytes(&materials));
         Self {
             path,
             model,
+            tangents,
             materials: RwLock::new(materials),
             material_bytes,
             source_identity: None,
@@ -107,10 +116,22 @@ impl Asset {
     }
 
     pub fn memory_bytes(&self) -> usize {
-        self.memory_bytes_with(self.material_bytes.load(Ordering::Relaxed))
+        self.geometry_bytes() + self.tangent_bytes()
     }
 
-    fn memory_bytes_with(&self, material_bytes: usize) -> usize {
+    pub fn geometry_bytes(&self) -> usize {
+        self.geometry_bytes_with(self.material_bytes.load(Ordering::Relaxed))
+    }
+
+    fn tangent_bytes(&self) -> usize {
+        match &self.tangents {
+            Ok(tangents) => std::mem::size_of_val(tangents.as_ref()),
+            Err(Cow::Owned(error)) => error.capacity(),
+            Err(Cow::Borrowed(_)) => 0,
+        }
+    }
+
+    fn geometry_bytes_with(&self, material_bytes: usize) -> usize {
         self.model.memory_bytes() + std::mem::size_of::<Self>() - std::mem::size_of::<Model>()
             + 2 * std::mem::size_of::<usize>()
             + self.path.capacity()
@@ -207,14 +228,16 @@ fn load(fs: &GameFs, path: &str, material_bindings: bool) -> Result<Asset, Strin
         .map_err(|error| format!("{path}: {error}"))?;
     let vvd = read(fs, &format!("{stem}.vvd"))?;
     let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
-    let model = Model::parse(&mdl.data, &vvd.data, &vtx.data)
+    let (model, tangents) = Model::parse_preview(&mdl.data, &vvd.data, &vtx.data)
         .map_err(|error| format!("{path}: {error}"))?;
+    let tangents = tangents
+        .map_err(|error| Cow::Owned(error.chars().take(MAX_MATERIAL_ERROR_CHARS).collect()));
     let materials = if material_bindings {
         resolve_materials(fs, &model)
     } else {
         Err("Flat editor guide does not request material bindings".into())
     };
-    let mut asset = Asset::new(path.into(), model, materials);
+    let mut asset = Asset::new(path.into(), model, tangents, materials);
     asset.source_identity = Some(source_identity(&mdl.data, &vvd.data, &vtx.data));
     asset.source_origins = Some([mdl.origin, vvd.origin, vtx.origin]);
     Ok(asset)
@@ -354,11 +377,11 @@ impl Library {
             if material_bindings && !entry.material_bindings {
                 if let Ok(asset) = &entry.result {
                     let mut materials = resolve_materials(fs, &asset.model);
-                    let mut bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+                    let mut bytes = asset.geometry_bytes_with(material_binding_bytes(&materials));
                     if self.bytes - entry.bytes + bytes > MAX_CACHE_BYTES {
                         materials =
                             Err("Model material resolution exceeds the cache budget".into());
-                        bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+                        bytes = asset.geometry_bytes_with(material_binding_bytes(&materials));
                     }
                     let material_bytes = material_binding_bytes(&materials);
                     *asset
@@ -375,10 +398,9 @@ impl Library {
             }
             return entry.result.clone();
         }
-        let result = load(fs, &path, material_bindings)
-            .map(Arc::new)
+        let mut result = load(fs, &path, material_bindings)
             .map_err(|error| error.chars().take(1024).collect::<String>());
-        let bytes = result.as_ref().map_or(0, |asset| asset.memory_bytes());
+        let bytes = result.as_ref().map_or(0, Asset::geometry_bytes);
         while self.entries.len() >= MAX_CACHE_ENTRIES || self.bytes + bytes > MAX_CACHE_BYTES {
             let candidate = self
                 .entries
@@ -399,6 +421,20 @@ impl Library {
             self.bytes -= self.entries.remove(&candidate).unwrap().bytes;
             self.generation += 1;
         }
+        if let Ok(asset) = &mut result {
+            let tangent_bytes = self
+                .entries
+                .values()
+                .filter_map(|entry| entry.result.as_ref().ok())
+                .map(|asset| asset.tangent_bytes())
+                .sum::<usize>();
+            if tangent_bytes + asset.tangent_bytes() > MAX_TANGENT_CACHE_BYTES {
+                asset.tangents = Err(Cow::Borrowed(
+                    "Model normal preview exceeds the 32 MiB tangent cache; reload models with fewer visible models",
+                ));
+            }
+        }
+        let result = result.map(Arc::new);
         self.bytes += bytes;
         self.generation += 1;
         self.entries.insert(
@@ -425,10 +461,10 @@ impl Library {
             };
             report.refreshed += 1;
             let mut materials = resolve_materials(fs, &asset.model);
-            let mut bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+            let mut bytes = asset.geometry_bytes_with(material_binding_bytes(&materials));
             if self.bytes - entry.bytes + bytes > MAX_CACHE_BYTES {
                 materials = Err("Model material resolution exceeds the cache budget".into());
-                bytes = asset.memory_bytes_with(material_binding_bytes(&materials));
+                bytes = asset.geometry_bytes_with(material_binding_bytes(&materials));
             }
             let Ok(mut bindings) = asset.materials.write() else {
                 report

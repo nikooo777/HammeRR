@@ -450,7 +450,7 @@ impl Layer {
             if !vertex.uv.iter().all(|value| value.is_finite()) {
                 return Err("overlay texture transform exceeds native float bounds".into());
             }
-            vertex.texture_alpha = u32::from(material.texture_alpha);
+            vertex.texture_flags = u32::from(material.texture_alpha);
             if material.unlit {
                 vertex.lighting_receiver = UNLIT_RECEIVER;
             }
@@ -515,7 +515,7 @@ impl Layer {
                 lightmap: [0.0; 3],
                 smoothing: 0,
                 opacity: 1.0,
-                texture_alpha: 0,
+                texture_flags: 0,
                 tangent: [0.0; 4],
                 lighting_receiver: 0,
                 baked_irradiance: [0.0; 3],

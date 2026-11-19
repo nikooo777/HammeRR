@@ -634,7 +634,8 @@ See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
    temporary override to `render_view`.
 2. Read `get_normal_map_preview`: `report.applied_faces` and `rejected_faces`
    count flat brush polygons; `report.terrain` counts admitted/excluded terrain
-   surfaces and drawn triangles. Errors identify the affected terrain side/brush.
+   surfaces and triangles. `report.models` counts authored instances, selected
+   bumped parts and their triangles. Errors identify the affected part or terrain face.
 3. For authored lighting, select `lighting_quality:"detail"`. Fixed directional
    shading also supports the effect. Reload material assets after file changes.
 
@@ -645,7 +646,9 @@ the effect to apply. Invalid packed geometry, singular UVs and invalid tangent
 frames remain explicit exclusions. Normal assets share the existing cache and
 limits. `report.terrain_vertices` counts expanded triangle vertices against
 `limits.terrain_vertices`; exhausted geometry budgets remain explicit exclusions.
-Models and special normal encodings remain unsupported.
+Plain `VertexLitGeneric` models in Normal render mode use stored VVD tangents in
+their selected static or reference pose. Missing textures or unsafe frames report
+an error and leave ordinary display. Special normal encodings remain unsupported.
 
 ## Preview authored lighting
 

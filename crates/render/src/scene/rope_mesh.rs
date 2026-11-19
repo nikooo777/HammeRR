@@ -159,7 +159,7 @@ impl SceneMesh {
                         lightmap: [0.0; 3],
                         smoothing: 0,
                         opacity: material.report.opacity,
-                        texture_alpha: u32::from(material.report.translucent),
+                        texture_flags: u32::from(material.report.translucent),
                         tangent: [0.0; 4],
                         lighting_receiver: 0,
                         baked_irradiance: [0.0; 3],

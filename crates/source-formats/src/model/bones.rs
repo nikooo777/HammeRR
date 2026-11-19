@@ -82,23 +82,18 @@ pub fn reference(reader: &Reader<'_>) -> io::Result<Reference> {
     })
 }
 
-pub fn vertex(
+fn for_vertex_influence(
     reader: &Reader<'_>,
     offset: usize,
     transforms: &[DAffine3],
-    position: [f32; 3],
-    normal: [f32; 3],
-) -> io::Result<([f32; 3], [f32; 3])> {
+    mut apply: impl FnMut(&DAffine3, f64),
+) -> io::Result<()> {
     let count = usize::from(reader.byte(offset + 15)?);
     if !(1..=3).contains(&count) {
         return Err(invalid(
             "VVD reference vertices need one to three bone weights",
         ));
     }
-    let position = DVec3::from_array(position.map(f64::from));
-    let normal = DVec3::from_array(normal.map(f64::from));
-    let mut point = DVec3::ZERO;
-    let mut direction = DVec3::ZERO;
     let mut total = 0.0;
     for index in 0..count {
         let weight = f64::from(reader.float(offset + index * 4)?);
@@ -111,11 +106,33 @@ pub fn vertex(
         let transform = transforms
             .get(bone)
             .ok_or_else(|| invalid("VVD bone index is outside the model hierarchy"))?;
-        point += transform.transform_point3(position) * weight;
-        direction += transform.transform_vector3(normal) * weight;
+        apply(transform, weight);
         total += weight;
     }
-    if (total - 1.0).abs() > 0.001 || !point.is_finite() || point.abs().max_element() > 65536.0 {
+    if (total - 1.0).abs() > 0.001 {
+        return Err(invalid(
+            "VVD reference weights or transformed position exceed bounds",
+        ));
+    }
+    Ok(())
+}
+
+pub fn vertex(
+    reader: &Reader<'_>,
+    offset: usize,
+    transforms: &[DAffine3],
+    position: [f32; 3],
+    normal: [f32; 3],
+) -> io::Result<([f32; 3], [f32; 3])> {
+    let position = DVec3::from_array(position.map(f64::from));
+    let normal = DVec3::from_array(normal.map(f64::from));
+    let mut point = DVec3::ZERO;
+    let mut direction = DVec3::ZERO;
+    for_vertex_influence(reader, offset, transforms, |transform, weight| {
+        point += transform.transform_point3(position) * weight;
+        direction += transform.transform_vector3(normal) * weight;
+    })?;
+    if !point.is_finite() || point.abs().max_element() > 65536.0 {
         return Err(invalid(
             "VVD reference weights or transformed position exceed bounds",
         ));
@@ -128,4 +145,26 @@ pub fn vertex(
             .ok_or_else(|| invalid("VVD reference normal is degenerate"))?
     };
     Ok((point.as_vec3().to_array(), direction.as_vec3().to_array()))
+}
+
+pub fn tangent(
+    reader: &Reader<'_>,
+    offset: usize,
+    transforms: &[DAffine3],
+    [x, y, z, sign]: [f32; 4],
+) -> io::Result<[f32; 4]> {
+    let tangent = DVec3::new(f64::from(x), f64::from(y), f64::from(z));
+    let mut direction = DVec3::ZERO;
+    for_vertex_influence(reader, offset, transforms, |transform, weight| {
+        direction += transform.transform_vector3(tangent) * weight;
+    })?;
+    let direction = if direction == DVec3::ZERO {
+        direction
+    } else {
+        direction
+            .try_normalize()
+            .ok_or_else(|| invalid("VVD reference tangent is not finite"))?
+    };
+    let [x, y, z] = direction.as_vec3().to_array();
+    Ok([x, y, z, sign])
 }

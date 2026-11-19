@@ -889,7 +889,7 @@ fn transformed(
         lightmap: [0.0, 0.0, -1.0],
         smoothing: 0,
         opacity: 1.0,
-        texture_alpha: 0,
+        texture_flags: 0,
         tangent: [0.0; 4],
         lighting_receiver: BAKED_PROP_RECEIVER,
         baked_irradiance: [0.0; 3],

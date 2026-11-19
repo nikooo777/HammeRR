@@ -111,11 +111,19 @@ pub struct Model {
     pub attachments: Vec<Attachment>,
 }
 
+pub type PreviewTangents = Result<Box<[[f32; 4]]>, String>;
+
 struct Mesh {
     material: usize,
     first: usize,
     count: usize,
     lod_counts: [usize; MAX_LODS],
+}
+
+struct Parsed {
+    model: Model,
+    hardware: Option<HardwareLayout>,
+    tangents: Option<io::Result<Box<[[f32; 4]]>>>,
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -124,7 +132,22 @@ fn invalid(message: &str) -> io::Error {
 
 impl Model {
     pub fn parse(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> io::Result<Self> {
-        Self::parse_inner(mdl, vvd, vtx, &mut hardware::Budget::ordinary()).map(|(model, _)| model)
+        Self::parse_inner(mdl, vvd, vtx, &mut hardware::Budget::ordinary(), false)
+            .map(|parsed| parsed.model)
+    }
+
+    /// Tangent rows follow the same fixed-up root LOD order as the returned model's vertices.
+    pub fn parse_preview(
+        mdl: &[u8],
+        vvd: &[u8],
+        vtx: &[u8],
+    ) -> io::Result<(Self, PreviewTangents)> {
+        let parsed = Self::parse_inner(mdl, vvd, vtx, &mut hardware::Budget::ordinary(), true)?;
+        let tangents = parsed
+            .tangents
+            .ok_or_else(|| invalid("VVD preview did not collect tangent data"))?
+            .map_err(|error| error.to_string());
+        Ok((parsed.model, tangents))
     }
 
     /// Charges cumulative parsing allocations and work before growth, with zero-charge
@@ -137,8 +160,8 @@ impl Model {
         charge: &mut impl FnMut(HardwareCharge) -> io::Result<()>,
     ) -> io::Result<(Self, HardwareLayout)> {
         let mut budget = hardware::Budget::hardware(limits, charge)?;
-        let (model, layout) = Self::parse_inner(mdl, vvd, vtx, &mut budget)?;
-        Ok((model, layout.unwrap()))
+        let parsed = Self::parse_inner(mdl, vvd, vtx, &mut budget, false)?;
+        Ok((parsed.model, parsed.hardware.unwrap()))
     }
 
     fn parse_inner(
@@ -146,7 +169,8 @@ impl Model {
         vvd: &[u8],
         vtx: &[u8],
         budget: &mut hardware::Budget<'_>,
-    ) -> io::Result<(Self, Option<HardwareLayout>)> {
+        preview_tangents: bool,
+    ) -> io::Result<Parsed> {
         let header = ModelHeader::parse(mdl)?;
         if budget.enabled() && !header.is_static_prop() {
             return Err(invalid("model hardware layout requires a static-prop MDL"));
@@ -195,7 +219,7 @@ impl Model {
         }
         let skinning =
             (!header.is_static_prop()).then(|| reference.as_ref().unwrap().skinning.as_slice());
-        let vertex_data = vvd::parse(vvd, header.checksum, skinning, budget)?;
+        let vertex_data = vvd::parse(vvd, header.checksum, skinning, budget, preview_tangents)?;
         let vertices = vertex_data.vertices;
         let bodies = reader.table(0, 232, 236, 16, MAX_BODY_PARTS)?;
         budget.array::<Vec<Vec<Mesh>>>(bodies.len)?;
@@ -400,7 +424,11 @@ impl Model {
             attachments,
         };
         result.bounds = result.bounds_for_body(0).unwrap_or(result.bounds);
-        Ok((result, geometry.hardware))
+        Ok(Parsed {
+            model: result,
+            hardware: geometry.hardware,
+            tangents: vertex_data.tangents,
+        })
     }
 
     pub fn parts_for_body(&self, body: u32) -> impl Iterator<Item = &Part> {

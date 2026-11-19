@@ -61,11 +61,13 @@ X is red, Y is green and Z is blue. Positions follow the displayed reference pos
 
 Supported opaque, single-base `VertexLitGeneric` meshes receive light.
 One unsupported selected material excludes the complete model and reports a reason.
+For supported bumped models, enable **Normal map preview** and use
+**Detail · per-fragment**. See [Normal-map preview](normal-maps.md).
 
 ## Reload changed assets
 
 Use **Reload material assets** for changed VMT/VTF files.
-Use **Reload models** for changed geometry or model material directories.
+Use **Reload models** for changed geometry, tangents or model material directories.
 Reloading geometry ends affected placement and selection reviews; start them again.
 Catalog sources describe current lookups. Model inspection retains the MDL,
 VVD and VTX origins captured when that cached model loaded; it does not verify
@@ -81,7 +83,7 @@ their bytes and winning source origins before accepting a model choice.
 - No animation, flexes, procedural/IK poses or runtime physics preview.
 - Attachment parenting and attachment placement are unavailable.
 - Opacity uses batch sorting, not triangle sorting. Intersecting transparent geometry can sort incorrectly.
-- Authored lighting excludes bump, blend, reflection, Phong, proxy and other unsupported model materials.
+- Authored lighting excludes blend, reflection, Phong, proxy and other unsupported model materials.
 - Static-prop output has separate [compiler limits](static-props.md).
 - Editor budgets: 64 MiB per companion file, 128 cached models, one million scene vertices and six million indices.
 

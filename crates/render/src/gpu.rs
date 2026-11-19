@@ -358,7 +358,7 @@ pub struct SceneKey {
     lighting_channel: crate::LightingChannel,
     lighting_sky_ambient: bool,
     lighting_textured: bool,
-    lighting_tool_textures: bool,
+    preview_tool_textures: bool,
     additive_sprite_guides: bool,
     instance_contents: bool,
 }
@@ -406,7 +406,7 @@ impl ViewOptions {
             lighting_channel: self.lighting_channel,
             lighting_sky_ambient: self.lighting_sky_ambient,
             lighting_textured: self.lighting_preview && self.surface == SurfaceView::Textured,
-            lighting_tool_textures: self.lighting_preview
+            preview_tool_textures: (self.lighting_preview || self.normal_maps)
                 && self.surface == SurfaceView::Textured
                 && self.tool_textures,
             additive_sprite_guides: self.additive_sprite_guides,

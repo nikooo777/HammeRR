@@ -4,6 +4,8 @@ const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
 const BAKED_DETAIL_RECEIVER: u32 = 2u;
 const BAKED_RADIANCE_RECEIVER: u32 = 3u;
 const UNLIT_PROJECTED_RECEIVER: u32 = 6u;
+const TEXTURE_ALPHA: u32 = 1u;
+const MODEL_NORMAL_FRAME: u32 = 2u;
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
@@ -27,7 +29,7 @@ struct VertexIn {
     @location(4) lightmap: vec3<f32>,
     @location(5) smoothing: u32,
     @location(6) opacity: f32,
-    @location(7) texture_alpha: u32,
+    @location(7) texture_flags: u32,
     @location(8) tangent: vec4<f32>,
     @location(9) lighting_receiver: u32,
     @location(10) baked_irradiance: vec3<f32>,
@@ -42,7 +44,7 @@ struct VertexOut {
     @location(4) lightmap: vec3<f32>,
     @location(5) @interpolate(flat) smoothing: u32,
     @location(6) opacity: f32,
-    @location(7) @interpolate(flat) texture_alpha: u32,
+    @location(7) @interpolate(flat) texture_flags: u32,
     @location(8) tangent: vec4<f32>,
     @location(9) @interpolate(flat) lighting_receiver: u32,
     @location(10) authored_irradiance: vec3<f32>,
@@ -128,7 +130,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.lightmap = v.lightmap;
     out.smoothing = v.smoothing;
     out.opacity = v.opacity;
-    out.texture_alpha = v.texture_alpha;
+    out.texture_flags = v.texture_flags;
     out.tangent = v.tangent;
     out.lighting_receiver = v.lighting_receiver;
     out.baked_irradiance = v.baked_irradiance;
@@ -189,9 +191,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Fixed directional light like Hammer's 3D view: tops brightest,
     // undersides darkest, walls in between depending on facing.
     let n = normalize(in.normal);
-    let alpha = select(1.0, texel.a, material.flags.z > 0.5 || in.texture_alpha != 0u) * in.opacity;
+    let alpha = select(1.0, texel.a, material.flags.z > 0.5 || (in.texture_flags & TEXTURE_ALPHA) != 0u) * in.opacity;
+    let model_frame = (in.texture_flags & MODEL_NORMAL_FRAME) != 0u;
     var shading_normal = n;
-    if globals.surface_view.z != 0u && material.helper.z > 0.5 && abs(in.tangent.w) > 0.5 {
+    if globals.surface_view.z != 0u && material.helper.z > 0.5 && (model_frame || abs(in.tangent.w) > 0.5) {
         let scale = material.normal_transform.xy;
         let uv = in.uv * scale + material.normal_transform.zw;
         let normal_dx = uv_dx * scale;
@@ -203,9 +206,26 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             ).xyz * 2.0 - 1.0;
             normal = mix(normal, second_normal, blend_weight);
         }
-        let tangent = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
-        let bitangent = cross(n, tangent) * sign(in.tangent.w);
-        shading_normal = normalize(tangent * normal.x + bitangent * normal.y + n * normal.z);
+        var frame_normal = in.normal;
+        var tangent = in.tangent.xyz;
+        var handedness = in.tangent.w;
+        if !model_frame {
+            frame_normal = n;
+            tangent = normalize(tangent - n * dot(n, tangent));
+            handedness = sign(handedness);
+        }
+        let bitangent = cross(frame_normal, tangent) * handedness;
+        let mapped = tangent * normal.x + bitangent * normal.y + frame_normal * normal.z;
+        if model_frame {
+            let squared_length = dot(mapped, mapped);
+            var reciprocal_length = 0x1.fffffep+127f;
+            if squared_length != 0.0 {
+                reciprocal_length = inverseSqrt(squared_length);
+            }
+            shading_normal = mapped * reciprocal_length;
+        } else {
+            shading_normal = normalize(mapped);
+        }
     }
     var shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     if globals.surface_view.w != 0u && material.helper.w > 0.5 {

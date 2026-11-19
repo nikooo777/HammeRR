@@ -27,6 +27,7 @@ impl Admission {
         material: &MaterialInfo,
         vertices: &[Vertex],
         tool_textures: bool,
+        normal_ready: bool,
     ) {
         self.parts += 1;
         if tool_textures || !material.tool {
@@ -39,6 +40,8 @@ impl Admission {
             Some("Tool and sky model materials are excluded from authored lighting")
         } else if material.base.is_none() || material.missing {
             Some("Model authored lighting needs an available base display texture")
+        } else if normal_ready {
+            material.model_normal_error.as_deref()
         } else {
             material.model_lighting_error.as_deref()
         };

@@ -166,9 +166,8 @@ fn validate_static(
     metadata(&reader, &mut budget, profile)?;
     animations(&reader, &mut budget)?;
     bones(&reader, &mut budget, profile)?;
-    tangents(vvd, &mut budget)?;
-    let (model, _) = Model::parse_inner(mdl, vvd, vtx, &mut budget)?;
-    Ok(model)
+    super::vvd::validate_tangents(vvd, &mut budget)?;
+    Model::parse_inner(mdl, vvd, vtx, &mut budget, false).map(|parsed| parsed.model)
 }
 
 fn terminated(bytes: &[u8]) -> io::Result<&str> {
@@ -365,36 +364,6 @@ fn animations(reader: &Reader<'_>, budget: &mut Budget<'_>) -> io::Result<()> {
         }
         string(reader, reader.relative(base, 4)?)?;
         string(reader, reader.relative(base, 8)?)?;
-    }
-    Ok(())
-}
-
-fn tangents(vvd: &[u8], budget: &mut Budget<'_>) -> io::Result<()> {
-    let reader = Reader::new(vvd, 64)?;
-    let count = reader.count(16, super::MAX_VERTICES)?;
-    let start = reader.count(60, vvd.len())?;
-    let vertex_start = reader.count(56, vvd.len())?;
-    let vertex_end = vertex_start
-        .checked_add(count * 48)
-        .ok_or_else(|| invalid("portable VVD vertex range overflow"))?;
-    if start < vertex_end || vertex_start < 64 {
-        return Err(invalid(
-            "portable VVD needs a complete separate tangent stream",
-        ));
-    }
-    reader.bytes(start, count * 16)?;
-    budget.charge(0, count * 5)?;
-    for index in 0..count {
-        budget.checkpoint(index)?;
-        let offset = start + index * 16;
-        let xyz = reader.vector(offset)?;
-        let length = xyz.iter().map(|value| value * value).sum::<f32>();
-        let sign = reader.float(offset + 12)?;
-        if (length - 1.0).abs() > 0.01 || !matches!(sign, -1.0 | 1.0) {
-            return Err(invalid(
-                "portable VVD tangents must be finite unit vectors with a unit sign",
-            ));
-        }
     }
     Ok(())
 }

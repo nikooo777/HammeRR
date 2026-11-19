@@ -23,6 +23,9 @@ pub struct MaterialInfo {
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
     pub(crate) terrain_blend_bumped: bool,
+    pub(crate) declares_normals: bool,
+    pub(crate) model_bumped: bool,
+    pub(crate) model_normal_error: Option<String>,
     pub model_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
@@ -134,6 +137,9 @@ impl MaterialInfo {
             flags & source_formats::bsp::surf::SKY != 0
                 && flags & source_formats::bsp::surf::SKY2D == 0
         });
+        let declares_normals = material.is_some_and(crate::normal_maps::declares_normals);
+        let model_bumped = declares_normals
+            && material.is_some_and(|material| material.shader == "vertexlitgeneric");
 
         Self {
             reference: false,
@@ -152,13 +158,17 @@ impl MaterialInfo {
                 },
             ),
             terrain_blend_bumped: material.is_some_and(|material| {
-                material.shader == "worldvertextransition"
-                    && crate::normal_maps::declares_normals(material)
+                material.shader == "worldvertextransition" && declares_normals
+            }),
+            declares_normals,
+            model_bumped,
+            model_normal_error: material.filter(|_| model_bumped).and_then(|material| {
+                model_lighting_error(material, base.as_ref(), display_texture.as_deref(), true)
             }),
             model_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
-                    model_lighting_error(material, base.as_ref(), display_texture.as_deref())
+                    model_lighting_error(material, base.as_ref(), display_texture.as_deref(), false)
                 },
             ),
             display_texture,
@@ -190,6 +200,9 @@ impl MaterialInfo {
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_blend_bumped: false,
+            declares_normals: false,
+            model_bumped: false,
+            model_normal_error: None,
             model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             blend_texture: None,
@@ -236,6 +249,7 @@ fn model_lighting_error(
     material: &Material,
     base: Option<&Vtf>,
     display_texture: Option<&str>,
+    normal_preview: bool,
 ) -> Option<String> {
     if material.shader != "vertexlitgeneric" {
         return Some("Model authored lighting requires VertexLitGeneric".into());
@@ -244,23 +258,45 @@ fn model_lighting_error(
         return Some(reason);
     }
     if let Some((key, _)) = material.params.iter().find(|(key, _)| {
-        !matches!(
+        !(matches!(
             key.as_str(),
             "$basetexture" | "$model" | "$surfaceprop" | "$surfaceprop2" | "$nodecal" | "%keywords"
-        )
+        ) || normal_preview
+            && matches!(
+                key.as_str(),
+                "$bumpmap" | "$bumptransform" | "$basetexturetransform"
+            ))
     }) {
         let key: String = key.chars().take(256).collect();
-        return Some(format!(
-            "Model authored lighting excludes unsupported parameter {key}"
-        ));
+        let mode = if normal_preview {
+            "normal preview"
+        } else {
+            "authored lighting"
+        };
+        return Some(format!("Model {mode} excludes unsupported parameter {key}"));
     }
-    let declared = material.get("$basetexture").map(texture_path);
+    let declared = material
+        .get("$basetexture")
+        .filter(|value| {
+            !normal_preview || !value.trim().is_empty() && asset_relative(value.trim()).is_ok()
+        })
+        .map(texture_path);
     if declared.as_deref() != display_texture || display_texture.is_none() {
         return Some("Model authored lighting needs its declared base display texture".into());
     }
     let Some(base) = base else {
         return Some("Model authored lighting needs an available base display texture".into());
     };
+    if normal_preview {
+        if let Err(error) = crate::normal_maps::validate_static_texture(base, u32::from(u16::MAX)) {
+            return Some(format!("Model normal preview base texture: {error}"));
+        }
+        if base.flags & TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS != 0 {
+            return Some(
+                "Model normal preview needs an ordinary repeat-sampled base texture".into(),
+            );
+        }
+    }
     if base.frames != 1 || base.faces != 1 || base.depth != 1 {
         return Some(
             "Model authored lighting requires a static single-frame, single-face 2D base".into(),

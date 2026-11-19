@@ -178,7 +178,7 @@ impl Session {
                     .map_err(|error| format!("Detail model {name}: {error}"))?;
                 drop(inputs);
                 asset_bytes = asset_bytes
-                    .checked_add(asset.memory_bytes())
+                    .checked_add(asset.geometry_bytes())
                     .ok_or("Detail model asset size overflow")?;
                 if asset_bytes > MAX_ASSET_BYTES {
                     return Err("Compiled detail model assets exceed 64 MiB".into());

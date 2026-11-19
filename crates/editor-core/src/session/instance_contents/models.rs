@@ -289,7 +289,7 @@ impl Session {
                 .checked_add(gpu_bytes)
                 .ok_or_else(|| prop.error("Model GPU size overflow"))?;
             let asset_bytes = if assets.insert(Arc::as_ptr(&instance.asset) as usize) {
-                instance.asset.memory_bytes()
+                instance.asset.geometry_bytes()
             } else {
                 0
             };

@@ -46,7 +46,7 @@ pub(crate) fn validate_static_texture(texture: &Vtf, maximum_axis: u32) -> Resul
     }
     Ok(())
 }
-pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain. Terrain also supports WorldVertexTransition with two exact static ordinary repeat-sampled LDR color textures and checked normal inputs. Models, sprites, icons and helpers are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. Ordinary LightmappedGeneric uses one bump map. WorldVertexTransition uses the first normal for both colors when only one map is declared. Vertex paint blends both normals when a second map is declared. Missing or invalid declared layers reject the whole terrain normal preview. Proxies, fallback blocks, detail, animated frames and base display overrides are excluded. WorldVertexTransition uses identity texture transforms. LightmappedGeneric uses an identity base transform and supports positive axis scale and translation with zero rotation for bump maps. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
+pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain. Terrain also supports WorldVertexTransition with two exact static ordinary repeat-sampled LDR color textures and checked normal inputs. Selected-body and selected-skin authored MDL meshes support opaque Normal mode and plain VertexLitGeneric with one ordinary RGB bump map, identity transforms and checked stored tangents on the displayed pose. Sprites, icons, helpers and reference meshes are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. Brush and terrain normal Z must be at least 128. Model preview uses the stored normal and tangent with the installed shader’s signed bitangent and zero-vector normalization. Signed/swizzled, HDR and SSBump encodings are unsupported. Ordinary LightmappedGeneric uses one bump map. WorldVertexTransition uses the first normal for both colors when only one map is declared. Vertex paint blends both normals when a second map is declared. Missing or invalid declared layers reject normals for the terrain receiver or the selected model instance. Proxies, fallback blocks, detail, animated frames and base display overrides are excluded. WorldVertexTransition uses identity texture transforms. LightmappedGeneric uses an identity base transform and supports positive axis scale and translation with zero rotation for bump maps. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
 
 #[derive(Serialize)]
 pub struct Limits {
@@ -260,18 +260,21 @@ fn load(
         return Ok(None);
     }
     let terrain_only = material.shader == "worldvertextransition";
-    if terrain_only {
-        let display = display
-            .ok_or("Terrain blend normal preview requires both exact base display textures")?;
+    let model_only = material.shader == "vertexlitgeneric";
+    if terrain_only || model_only {
+        let display = display.ok_or("Normal preview requires the exact base display textures")?;
         if let Some(error) = &display.error {
             return Err(error.clone());
         }
         if !display.matches_material(&material) {
-            return Err(
-                "Terrain blend normal preview requires both exact base display textures".into(),
-            );
+            return Err("Normal preview requires the exact base display textures".into());
         }
-        if let Some(error) = &display.terrain_lighting_error {
+        let error = if terrain_only {
+            &display.terrain_lighting_error
+        } else {
+            &display.model_normal_error
+        };
+        if let Some(error) = error {
             return Err(error.clone());
         }
     } else {
@@ -291,6 +294,9 @@ fn load(
         return Err("Normal preview requires an identity base texture transform".into());
     }
     report.transform = transform(material.get("$bumptransform"))?;
+    if model_only && report.transform != IDENTITY_TRANSFORM {
+        return Err("VertexLitGeneric normal preview requires identity $bumptransform".into());
+    }
     if terrain_only {
         if report.transform != IDENTITY_TRANSFORM {
             return Err(
@@ -305,9 +311,9 @@ fn load(
             );
         }
     }
-    let path = normal_path(bump, terrain_only)?;
+    let path = normal_path(bump, terrain_only || model_only)?;
     report.texture = Some(path.clone());
-    let image = read_normal(fs, &path, budget, &mut report.texture_source)?;
+    let image = read_normal(fs, &path, budget, !model_only, &mut report.texture_source)?;
     report.dimensions = Some([image.width, image.height]);
     let secondary = if terrain_only && let Some(bump) = material.get("$bumpmap2") {
         let path =
@@ -317,6 +323,7 @@ fn load(
             fs,
             &path,
             budget - image.pixels.len(),
+            true,
             &mut report.secondary_texture_source,
         )
         .map_err(|error| format!("Second normal layer {path}: {error}"))?;
@@ -366,8 +373,8 @@ fn single_layer_material(material: &Material) -> Result<(), String> {
     Ok(())
 }
 
-fn normal_path(value: &str, terrain_only: bool) -> Result<String, String> {
-    if terrain_only {
+fn normal_path(value: &str, require_relative: bool) -> Result<String, String> {
+    if require_relative {
         asset_relative(value.trim()).map_err(|error| error.to_string())?;
     }
     let path = asset_relative(&texture_path(value)).map_err(|error| error.to_string())?;
@@ -381,6 +388,7 @@ fn read_normal(
     fs: &GameFs,
     path: &str,
     budget: usize,
+    require_upper_hemisphere: bool,
     source: &mut Option<crate::icons::Source>,
 ) -> Result<RgbaImage, String> {
     let asset = fs
@@ -405,12 +413,13 @@ fn read_normal(
     let image = texture
         .decode_rgba8(0, 0, 0)
         .map_err(|error| error.to_string())?;
-    if image
-        .pixels
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .any(|pixel| pixel[2] < 128)
+    if require_upper_hemisphere
+        && image
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[2] < 128)
     {
         return Err("Normal preview requires RGB normal Z≥128; lower-hemisphere or ambiguous normal encodings are unsupported".into());
     }
@@ -447,7 +456,7 @@ pub fn tangent(
     ])
 }
 
-fn validate_uvs(
+pub(crate) fn validate_uvs(
     coordinates: impl IntoIterator<Item = glam::DVec2>,
     transform: [f32; 4],
 ) -> Result<(), String> {
@@ -539,6 +548,7 @@ pub struct Report {
     pub rejected_faces: usize,
     pub terrain: crate::lighting::TerrainReceivers,
     pub terrain_vertices: usize,
+    pub models: crate::lighting::ModelReceivers,
     pub materials: Vec<AssetReport>,
     pub errors: Vec<String>,
     pub errors_truncated: bool,
@@ -592,10 +602,11 @@ impl Report {
             return "Normal map preview requires Textured view; no normal assets were read".into();
         }
         let mut summary = format!(
-            "Normal maps · {} brush polygons · {} terrain surfaces · {} unavailable",
+            "Normal maps · {} brush polygons · {} terrain surfaces · {} model instances · {} unavailable",
             self.applied_faces,
             self.terrain.admitted_surfaces,
-            self.rejected_faces + self.terrain.excluded_surfaces
+            self.models.admitted_instances,
+            self.rejected_faces + self.terrain.excluded_surfaces + self.models.excluded_instances
         );
         for error in self.errors.iter().take(3) {
             summary.push_str(&format!("\n{error}"));

@@ -111,6 +111,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 smoothing_angle: 45,
                 lighting_work_limit: compiler::DEFAULT_LIGHTING_WORK_LIMIT,
                 generate_reflections: false,
+                radar_overview: compiler::radar::Mode::Off,
                 pack_sky_assets: false,
                 pack_water_assets: false,
                 pack_static_prop_assets: false,

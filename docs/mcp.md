@@ -2289,6 +2289,13 @@ See [Color correction](color-correction.md) for target and resource limits.
 4. Poll `get_compile_status`.
 5. Inspect diagnostics before calling `launch_game`.
 
+For a [radar overview](compile-and-play.md#radar-overview), set
+`radar_overview:"auto"` or a whole-number Z as a string, such as `"160"`.
+Use `"off"` to disable it. The setting is part of build recipes and content
+profiles. A successful build reports the packed path, dimensions, ceiling
+and coordinate transform in `stats.radar_overview`. Run staging updates
+the overview for the temporary map name.
+
 Engine physics uses the current content profile's explicit `engine_root`, or
 the content's engine directory when that optional path is absent. An invalid
 explicit root fails; it does not switch to another installation. Compile status

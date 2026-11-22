@@ -29,6 +29,7 @@ pub mod portals;
 mod postprocess;
 pub mod prop_lighting_assets;
 mod publication;
+pub mod radar;
 mod sky_areas;
 pub mod sky_assets;
 pub mod sky_region;
@@ -204,6 +205,7 @@ pub struct Options {
     pub bounces: u8,
     pub smoothing_angle: u8,
     pub generate_reflections: bool,
+    pub radar_overview: radar::Mode,
     pub pack_sky_assets: bool,
     pub pack_water_assets: bool,
     pub pack_static_prop_assets: bool,
@@ -253,6 +255,7 @@ impl Default for Options {
             bounces: 0,
             smoothing_angle: 0,
             generate_reflections: false,
+            radar_overview: radar::Mode::Off,
             pack_sky_assets: false,
             pack_water_assets: false,
             pack_static_prop_assets: false,
@@ -296,6 +299,7 @@ impl Options {
 
     pub const fn requires_guarded_publication(self) -> bool {
         self.generate_reflections
+            || self.radar_overview.enabled()
             || self.pack_sky_assets
             || self.pack_water_assets
             || self.pack_static_prop_assets
@@ -307,6 +311,7 @@ impl Options {
 
     pub fn validate(self) -> Result<Self, String> {
         validate_lighting_work_limit(self.lighting_work_limit)?;
+        self.radar_overview.validate()?;
         if self.terrain_lighting_normals == TerrainLightingNormals::NativeClient
             && !self.lighting.performs_lighting()
         {
@@ -584,6 +589,8 @@ pub struct HdrLightingStats {
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
     pub postprocess: PostprocessReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radar_overview: Option<radar::Stats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub material_emission: Option<MaterialEmissionStats>,
     pub brush_shadow_models: usize,
@@ -1199,6 +1206,11 @@ fn build(
     if options.generate_reflections && context.is_none() {
         return Err("Generate reflections requires an explicit output CompileContext".into());
     }
+    let radar_context = options
+        .radar_overview
+        .enabled()
+        .then(|| context.ok_or("Radar overview requires an explicit output CompileContext"))
+        .transpose()?;
     if options.generate_reflections {
         cubemap_assets::binding::capture_preflight(vmf)?;
     }
@@ -2092,6 +2104,20 @@ fn build(
             asset_bytes: plan.asset_bytes(),
         });
         output.static_prop_assets = Some(plan);
+    }
+    if let Some(context) = radar_context {
+        control.advance(Stage::RadarOverview)?;
+        let stats = radar::pack(&mut bsp, options.radar_overview, context, control)
+            .map_err(|error| format!("Radar overview: {error}"))?;
+        output.report.diagnostics.push(Diagnostic::info(
+            format!(
+                "Packed {} × {} radar overview at Z {}",
+                stats.size, stats.size, stats.ceiling_z
+            ),
+            None,
+            None,
+        ));
+        output.stats.radar_overview = Some(stats);
     }
     if let Some(sources) = &material_sources {
         output.material_sources = Some(

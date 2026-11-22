@@ -87,6 +87,7 @@ the heading to see each object and its **Frame recorded position** action.
 | **Colored texture shadows** | Tint baked light through admitted fractional textures; requires **Brush texture shadows** and lit mode. Default off. |
 | **Bake static-prop vertex lighting** | Write supported per-vertex prop lighting. |
 | **Generate reflections** | Capture and pack scene cubemaps with private CS:S clients. |
+| **Generate radar overview** | Draw a top-down cutaway and pack the CS:S overview into the BSP. |
 | **Pack sky assets**, **Pack liquid assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
 
 **Lighting work limit (millions)** bounds lighting preparation, ray searches and shading. Click **Apply work limit** after editing it.
@@ -95,13 +96,30 @@ Use [build recipes](build-recipes.md) to retain settings.
 
 **Postprocess order** applies immediately to the next build. Read the effective
 plan beneath it for stages skipped by the current lighting and physics settings.
-Geometry and visibility stay first. Packing, reflection capture and publication
+Geometry and visibility stay first. Packing, radar generation, reflection capture and publication
 keep their fixed order afterward. A failed stage stops the build and preserves
 the previous published BSP. **Build details…** retains the job's captured plan.
 
 With **Pack sky assets**, **Checking sky assets** validates dependencies before
 lighting or physics; final packing and publication still follow those stages,
 and an error preserves the previous BSP.
+
+### Radar overview
+
+1. Open **Build → Build settings…**.
+2. Turn on **Generate radar overview**.
+3. Leave **Radar ceiling Z** at `auto` to cut 64 units above the highest team
+   spawn. For a different floor, enter a whole-number Z and click **Apply height**.
+4. Choose **Compile** or **Run Map**. CS:S loads the player radar and spectator
+   overview from the BSP. Keep the BSP's filename when sharing it.
+
+![An automatically generated indoor overview with the roof removed](images/radar-overview.png)
+
+The overview uses upward-facing world brushes and terrain below the cut, with
+outlines at edges and height changes. It uses one layer in CS:S. Brush entities
+and models are omitted. Solid 3D skybox scenery below the cut can appear.
+Automatic mode needs a valid team spawn. If generation fails, the previous BSP
+stays available.
 
 ### Terrain lighting normals
 
@@ -454,7 +472,9 @@ cargo run -j8 -p compiler --bin hammerr-compile -- \
   map.vmf --game /path/to/cstrike/gameinfo.txt
 ```
 
-Use `--help` for available settings. CLI, editor and MCP builds use the same compiler.
+Use `--radar-overview auto` to pack an overview, or pass a whole-number Z
+instead. Use `--help` for all settings. CLI, editor and MCP builds use the
+same compiler.
 
 <!-- page-nav -->
 

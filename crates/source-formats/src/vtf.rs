@@ -146,6 +146,20 @@ pub struct RgbaImage {
     pub pixels: Vec<u8>,
 }
 
+pub fn legacy_rgba8888_header(size: [u16; 2], flags: u32, mips: u8) -> [u8; 80] {
+    let mut bytes = [0; 80];
+    bytes[..4].copy_from_slice(SIGNATURE);
+    for (offset, value) in [(4, 7u32), (8, 2), (12, 80), (20, flags), (57, u32::MAX)] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (offset, value) in [(16, size[0]), (18, size[1]), (24, 1), (63, 1)] {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[48..52].copy_from_slice(&1f32.to_le_bytes());
+    bytes[56] = mips;
+    bytes
+}
+
 fn u16_at(d: &[u8], at: usize) -> Result<u16, Error> {
     Ok(u16::from_le_bytes(
         d.get(at..at + 2)

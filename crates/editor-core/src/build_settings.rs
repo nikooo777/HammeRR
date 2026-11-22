@@ -20,6 +20,11 @@ pub struct BuildSettings {
     pub lighting_work_limit: u64,
     #[serde(default)]
     pub generate_reflections: bool,
+    #[serde(
+        default = "default_radar_overview",
+        skip_serializing_if = "is_radar_off"
+    )]
+    pub radar_overview: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pack_sky_assets: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -40,6 +45,14 @@ pub struct BuildSettings {
 
 fn default_terrain_lighting_normals() -> String {
     compiler::TerrainLightingNormals::Authored.name().into()
+}
+
+fn default_radar_overview() -> String {
+    compiler::radar::Mode::default().setting()
+}
+
+fn is_radar_off(value: &str) -> bool {
+    value == "off"
 }
 
 fn default_postprocess_order() -> String {
@@ -75,6 +88,7 @@ impl BuildSettings {
             smoothing_angle: options.smoothing_angle,
             lighting_work_limit: options.lighting_work_limit,
             generate_reflections: options.generate_reflections,
+            radar_overview: options.radar_overview.setting(),
             pack_sky_assets: options.pack_sky_assets,
             pack_water_assets: options.pack_water_assets,
             pack_static_prop_assets: options.pack_static_prop_assets,
@@ -100,6 +114,7 @@ impl BuildSettings {
             smoothing_angle: self.smoothing_angle,
             lighting_work_limit: self.lighting_work_limit,
             generate_reflections: self.generate_reflections,
+            radar_overview: compiler::radar::Mode::parse(&self.radar_overview)?,
             pack_sky_assets: self.pack_sky_assets,
             pack_water_assets: self.pack_water_assets,
             pack_static_prop_assets: self.pack_static_prop_assets,
@@ -121,6 +136,7 @@ impl BuildSettings {
         settings["colored_texture_shadows"] = self.colored_texture_shadows.into();
         settings["reflect_static_props"] = self.reflect_static_props.into();
         settings["refine_ambient_probes"] = self.refine_ambient_probes.into();
+        settings["radar_overview"] = self.radar_overview.as_str().into();
         settings
     }
 
@@ -136,6 +152,7 @@ impl BuildSettings {
             ),
             (options.reflect_static_props, "reflected static-prop light"),
             (options.generate_reflections, "reflection capture"),
+            (options.radar_overview.enabled(), "radar overview"),
             (options.pack_sky_assets, "sky packing"),
             (options.pack_water_assets, "liquid packing"),
             (options.pack_static_prop_assets, "static-prop packing"),
@@ -178,6 +195,7 @@ impl BuildSettings {
             smoothing_angle: Some(self.smoothing_angle),
             lighting_work_limit: Some(self.lighting_work_limit),
             generate_reflections: Some(self.generate_reflections),
+            radar_overview: Some(&self.radar_overview),
             pack_sky_assets: Some(self.pack_sky_assets),
             pack_water_assets: Some(self.pack_water_assets),
             pack_static_prop_assets: Some(self.pack_static_prop_assets),

@@ -85,6 +85,8 @@ export component CompileWindow inherits Window {
     callback change-colored-texture-shadows(bool);
     in property <bool> pack-sky-assets;
     callback change-pack-sky-assets(bool);
+    in property <string> radar-overview: "off";
+    callback change-radar-overview(string);
     in property <bool> pack-water-assets;
     in property <string> water-packing-description;
     callback change-pack-water-assets(bool);
@@ -207,7 +209,7 @@ export component CompileWindow inherits Window {
                         selected => { root.change-postprocess-order(self.current-index); }
                     }
                 }
-                Text { text: "Geometry and visibility run first. Packing, reflection capture and publication keep their fixed order."; wrap: word-wrap; color: Theme.text-muted; }
+                Text { text: "Geometry and visibility run first. Packing, radar generation, reflection capture and publication keep their fixed order."; wrap: word-wrap; color: Theme.text-muted; }
                 if root.postprocess-plan != "": Text { text: root.postprocess-plan; wrap: word-wrap; color: Theme.text-muted; }
                 FieldRow {
                     label: "Build lighting"; label-width: 216px; inset: false;
@@ -239,6 +241,23 @@ export component CompileWindow inherits Window {
                 if root.water-packing-description != "": Text { text: root.water-packing-description; wrap: word-wrap; color: Theme.text-muted; }
                 CheckBox { text: "Pack static prop assets"; checked: root.pack-static-prop-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-static-prop-assets(self.checked); } }
                 if root.static-prop-packing-description != "": Text { text: root.static-prop-packing-description; wrap: word-wrap; color: Theme.text-muted; }
+                CheckBox { text: "Generate radar overview"; checked: root.radar-overview != "off"; enabled: root.lighting-enabled; toggled => { root.change-radar-overview(self.checked ? "auto" : "off"); } }
+                if root.radar-overview != "off": FieldRow {
+                    label: "Radar ceiling Z"; label-width: 216px; inset: false;
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        radar-height := LineEdit {
+                            accessible-label: "Radar ceiling Z";
+                            text: root.radar-overview;
+                            width: 104px;
+                            enabled: root.lighting-enabled;
+                            accepted => { root.change-radar-overview(self.text); }
+                        }
+                        Button { text: "Apply height"; enabled: root.lighting-enabled; clicked => { root.change-radar-overview(radar-height.text); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+                if root.radar-overview != "off": Text { text: "Auto cuts 64 units above the highest team spawn. Enter a whole-number Z to choose the cut height. The overview is packed into the BSP."; wrap: word-wrap; color: Theme.text-muted; }
                 CheckBox { text: "Generate reflections"; checked: root.generate-reflections; enabled: root.lighting-enabled; toggled => { root.change-reflections(self.checked); } }
                 if root.reflection-description != "": Text { text: root.reflection-description; wrap: word-wrap; color: Theme.text-muted; }
                 if root.capture-summary != "": Text { text: root.capture-summary; wrap: word-wrap; color: Theme.text-muted; }

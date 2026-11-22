@@ -12,7 +12,7 @@ use source_formats::vmf::Vmf;
 
 const MAX_PRINTED_LIGHTING_CONTRIBUTORS: usize = 8;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--terrain-lighting-normals authored|native_client] [--physics none|engine] [--postprocess-order lighting_then_physics|physics_then_lighting] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--reflect-static-props] [--brush-texture-shadows] [--colored-texture-shadows] [--refine-ambient-probes] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--terrain-lighting-normals authored|native_client] [--physics none|engine] [--postprocess-order lighting_then_physics|physics_then_lighting] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--reflect-static-props] [--brush-texture-shadows] [--colored-texture-shadows] [--refine-ambient-probes] [--radar-overview off|auto|<ceiling-z>] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -25,6 +25,11 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--generate-reflections") => options.generate_reflections = true,
+            Some("--radar-overview") => {
+                let value = args.next().ok_or(USAGE)?;
+                options.radar_overview =
+                    compiler::radar::Mode::parse(value.to_str().ok_or(USAGE)?)?;
+            }
             Some("--pack-sky-assets") => options.pack_sky_assets = true,
             Some("--pack-water-assets") => options.pack_water_assets = true,
             Some("--pack-static-prop-assets") => options.pack_static_prop_assets = true,
@@ -94,6 +99,9 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
                     compiler::MAX_LIGHTING_WORK_LIMIT
                 );
                 let plan = Options::default().postprocess_plan();
+                println!(
+                    "\n--radar-overview off|auto|<ceiling-z> packs a CS:S overview into the BSP. Auto cuts 64 units above the highest team spawn. Use a whole-number ceiling Z to select a height explicitly. Default off."
+                );
                 println!(
                     "\n--terrain-lighting-normals defaults to authored. native_client selects verified CS:S load-normal inputs for unbumped lit terrain, using nearest-even position/basis rounding with FTZ/DAZ on this CPU. Authored border choices are ignored. HammeRR triangle-barycentric luxel sampling remains; VRAD, bump and pixel parity are not established. The kernel charges actual work to the shared lighting limit and retains its 128 Mi-unit guard. Its conservative 384 MiB scratch reservation is not measured RSS. Fullbright, bumped terrain or unsupported kernel input rejects without fallback."
                 );
@@ -169,8 +177,7 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
         source.verify_bytes(source_text.as_bytes())?;
     }
     let fs = GameFs::from_gameinfo(game)?;
-    let context = options
-        .generate_reflections
+    let context = (options.generate_reflections || options.radar_overview.enabled())
         .then(|| CompileContext::from_output(&path))
         .transpose()?;
     let mut output = compile_with_source_controlled(

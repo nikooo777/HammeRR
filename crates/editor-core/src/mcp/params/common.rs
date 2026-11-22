@@ -733,6 +733,9 @@ pub struct CompileSettingsArgs {
     pub pack_static_prop_assets: Option<bool>,
     /// Generate one native reflection bounce per selected lighting channel; default false. Requires direct_ldr or direct_ldr_hdr; incompatible combinations reject atomically.
     pub generate_reflections: Option<bool>,
+    /// Radar overview baked and packed on Compile. "off" (default), "auto"
+    /// (highest compiled team spawn + 64) or a whole-number ceiling Z as a string.
+    pub radar_overview: Option<String>,
     /// Whole degrees 0–90; zero disables automatic smoothing on unassigned world/model faces.
     pub smoothing_angle: Option<u8>,
     /// Exact integer work units shared by preparation, LDR and HDR lighting. Range 1–10,000,000,000; default 1,000,000,000. Retains sampling quality and independent resource limits; omitted/null retains the current value.

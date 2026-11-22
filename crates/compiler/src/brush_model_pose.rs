@@ -1,7 +1,7 @@
 use glam::{DMat3, DMat4, DVec3};
 use map_core::Plane;
 use source_formats::bsp::{Bsp, MAX_LIGHTING_FACES, Model, lump};
-use source_formats::keyvalues::{FlatBlockLimits, parse_flat_blocks_controlled};
+use source_formats::keyvalues::{FlatBlock, FlatBlockLimits, parse_flat_blocks_controlled};
 
 pub(crate) const MAX_INITIAL_POSE_BYTES: usize = 128;
 const MAX_NATIVE_POSE_BYTES: usize = MAX_INITIAL_POSE_BYTES - 1;
@@ -12,6 +12,31 @@ const MAX_INITIAL_ENTITY_PAIRS: usize = 262_144;
 
 pub fn initial_brush_model_transforms(bsp: &Bsp) -> Result<Vec<DMat4>, String> {
     initial_brush_model_transforms_controlled(bsp, &mut || Ok(()))
+}
+
+pub(crate) fn read_entities(
+    bsp: &Bsp,
+    check: &mut dyn FnMut() -> std::io::Result<()>,
+) -> std::io::Result<Vec<FlatBlock>> {
+    let entity_lump = bsp.lump(lump::ENTITIES);
+    if entity_lump.version != 0
+        || entity_lump.fourcc != [0; 4]
+        || entity_lump.data.len() > MAX_INITIAL_ENTITIES_BYTES
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Unsupported compiled entity metadata or size",
+        ));
+    }
+    parse_flat_blocks_controlled(
+        bsp.entities()?,
+        FlatBlockLimits {
+            max_bytes: MAX_INITIAL_ENTITIES_BYTES,
+            max_blocks: MAX_LIGHTING_FACES,
+            max_pairs: MAX_INITIAL_ENTITY_PAIRS,
+        },
+        check,
+    )
 }
 
 pub fn initial_brush_model_transforms_controlled(
@@ -31,23 +56,7 @@ pub fn initial_brush_model_transforms_controlled(
     if world.origin != [0.0; 3] {
         return Err("Compiled Model0 has a nonzero or invalid origin".into());
     }
-    let entity_lump = bsp.lump(lump::ENTITIES);
-    if entity_lump.version != 0
-        || entity_lump.fourcc != [0; 4]
-        || entity_lump.data.len() > MAX_INITIAL_ENTITIES_BYTES
-    {
-        return Err("Unsupported compiled entity metadata or size".into());
-    }
-    let entities = parse_flat_blocks_controlled(
-        bsp.entities().map_err(|error| error.to_string())?,
-        FlatBlockLimits {
-            max_bytes: MAX_INITIAL_ENTITIES_BYTES,
-            max_blocks: MAX_LIGHTING_FACES,
-            max_pairs: MAX_INITIAL_ENTITY_PAIRS,
-        },
-        check,
-    )
-    .map_err(|error| error.to_string())?;
+    let entities = read_entities(bsp, check).map_err(|error| error.to_string())?;
     let mut transforms = vec![None; models.len()];
     transforms[0] = Some(DMat4::IDENTITY);
     for properties in entities {

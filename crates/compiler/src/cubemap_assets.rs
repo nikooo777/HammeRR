@@ -49,8 +49,7 @@ impl CompileContext {
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         {
             return Err(
-                "Reflection output basename must contain 1–64 ASCII letters, digits, '_' or '-'"
-                    .into(),
+                "Build output basename must contain 1–64 ASCII letters, digits, '_' or '-'".into(),
             );
         }
         Ok(Self {
@@ -62,7 +61,7 @@ impl CompileContext {
         Self::new(
             path.file_stem()
                 .and_then(|name| name.to_str())
-                .ok_or("Reflection output has no UTF-8 basename")?,
+                .ok_or("Build output has no UTF-8 basename")?,
         )
     }
 

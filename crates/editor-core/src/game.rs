@@ -355,7 +355,7 @@ pub fn stage_map_bytes(bytes: &[u8], map: &str) -> Result<Vec<u8>, String> {
             }
         }
     }
-    Ok(bytes)
+    compiler::radar::rebase(bytes, &staged, map, &control).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

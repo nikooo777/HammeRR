@@ -5,6 +5,7 @@ use slint::ComponentHandle;
 
 use crate::CompileWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
+use crate::session::compilation::BuildSettingsUpdate;
 use crate::session::{Actor, Session};
 
 mod baked_lightmaps;
@@ -320,6 +321,7 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
             .into(),
     );
     sky_packing::refresh(window, session);
+    window.set_radar_overview(session.compile_options().radar_overview.setting().into());
     water_packing::refresh(window, session);
     static_prop_packing::refresh(window, session);
     prop_vertex_lighting::refresh(window, session);
@@ -649,6 +651,26 @@ impl Controller {
         let capture = capture::bind(&window, &access, &recipes);
         diagnostics::bind(&window, &access);
         sky_packing::bind(&window, &access, &recipes);
+        window.on_change_radar_overview({
+            let (window, target, recipes) = (window.as_weak(), access.downgrade(), recipes.clone());
+            move |value| {
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let result = session.update_build_settings(
+                        Actor::User,
+                        BuildSettingsUpdate {
+                            radar_overview: Some(value.as_str()),
+                            ..Default::default()
+                        },
+                    );
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => "Radar overview setting applied.".into(),
+                        Err(error) => error.into(),
+                    });
+                });
+            }
+        });
         prop_vertex_lighting::bind(&window, &access, &recipes);
         brush_texture_shadows::bind(&window, &access, &recipes);
         water_packing::bind(&window, &access, &recipes);

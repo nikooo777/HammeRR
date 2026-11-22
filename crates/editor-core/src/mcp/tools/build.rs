@@ -148,6 +148,7 @@ impl EditorServer {
                     smoothing_angle: args.smoothing_angle,
                     lighting_work_limit: args.lighting_work_limit,
                     generate_reflections: args.generate_reflections,
+                    radar_overview: args.radar_overview.as_deref(),
                 },
             )
         })

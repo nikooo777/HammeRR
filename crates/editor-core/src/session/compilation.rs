@@ -724,6 +724,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub smoothing_angle: Option<u8>,
     pub lighting_work_limit: Option<u64>,
     pub generate_reflections: Option<bool>,
+    pub radar_overview: Option<&'a str>,
     pub pack_sky_assets: Option<bool>,
     pub pack_water_assets: Option<bool>,
     pub pack_static_prop_assets: Option<bool>,
@@ -812,6 +813,7 @@ impl Session {
             .collect::<Vec<_>>();
         let mut settings = json!({"pack_sky_assets":self.compilation.options.pack_sky_assets,"sky_packing_description":"Pack the complete exact authored sky family, original materials, Patch dependencies and supported LDR/HDR textures during Compile or Run Map. Default off. Incomplete or unsupported families fail without publication or automatic family fallback. Does not pack unrelated assets or select the game's rendering channel.","generate_reflections":self.compilation.options.generate_reflections,"reflection_description":"Capture one reflection bounce after native scene startup and warmup. Authored physics, animation and map I/O stay active. Direct LDR captures LDR; Direct LDR + HDR verifies both channels before publication. Requires a verified CS:S capture runtime; Fullbright is unsupported.","smoothing_angle":self.compilation.options.smoothing_angle,"smoothing_angle_range":{"min":0,"max":90,"unit":"degrees","disabled":0},"bounces":self.compilation.options.bounces,"bounce_choices":bounce_choices,"visibility":self.compilation.options.visibility.name(), "visibility_choices":visibility_choices, "sky_quality":self.compilation.options.sky_quality.name(),"sky_choices":sky_choices,"lighting":self.compilation.options.lighting.name(),"physics":self.compilation.options.physics.name(),
             "recipe":self.active_build_recipe(),"editable":!self.compiling() && !self.closing,"choices":choices,"physics_choices":physics_choices});
+        settings["radar_overview"] = self.compilation.options.radar_overview.setting().into();
         let unavailable_reason = if !self.compilation.options.lighting.performs_lighting() {
             Some(
                 "Choose Direct LDR or Direct LDR + HDR before enabling static-prop vertex lighting.",
@@ -1227,6 +1229,7 @@ impl Session {
             smoothing_angle,
             lighting_work_limit,
             generate_reflections,
+            radar_overview,
             pack_sky_assets,
             pack_water_assets,
             pack_static_prop_assets,
@@ -1259,6 +1262,10 @@ impl Session {
                 .unwrap_or(self.compilation.options.pack_static_prop_assets),
             generate_reflections: generate_reflections
                 .unwrap_or(self.compilation.options.generate_reflections),
+            radar_overview: radar_overview
+                .map(compiler::radar::Mode::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.radar_overview),
             bounces,
             smoothing_angle: smoothing_angle.unwrap_or(self.compilation.options.smoothing_angle),
             lighting_work_limit: lighting_work_limit
@@ -1306,7 +1313,7 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · radar {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.terrain_lighting_normals.label(),
                     options.physics.label(),
@@ -1321,6 +1328,7 @@ impl Session {
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.reflect_static_props { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
+                    options.radar_overview.setting(),
                     if options.pack_sky_assets { "on" } else { "off" },
                     if options.pack_water_assets { "on" } else { "off" },
                     if options.pack_static_prop_assets { "on" } else { "off" }
@@ -1408,15 +1416,16 @@ impl Session {
                     .map_err(|error| error.to_string())
             })
             .transpose()?;
-        let (context, environment) = if generating {
+        let context = (generating || self.compilation.options.radar_overview.enabled())
+            .then(|| compiler::CompileContext::from_output(&path))
+            .transpose()?;
+        let environment = if generating {
             if self.game_running() {
                 return Err("Close CS:S before capturing reflections".into());
             }
-            let context = compiler::CompileContext::from_output(&path)?;
-            let environment = self.capture_environment()?;
-            (Some(context), Some(environment))
+            Some(self.capture_environment()?)
         } else {
-            (None, None)
+            None
         };
         let native_plan = environment
             .as_ref()

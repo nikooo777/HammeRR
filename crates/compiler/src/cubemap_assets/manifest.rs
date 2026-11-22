@@ -27,17 +27,7 @@ pub(crate) fn bootstrap_cube(edge: u16) -> Result<Vec<u8>, String> {
         return Err("Unsupported reflection cube edge".into());
     }
     let mips = edge.ilog2() as u8 + 1;
-    let mut bytes = vec![0u8; 80];
-    bytes[..4].copy_from_slice(b"VTF\0");
-    for (offset, value) in [(4, 7u32), (8, 2), (12, 80), (20, 0x400c)] {
-        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-    for (offset, value) in [(16, edge), (18, edge), (24, 1), (26, 0), (63, 1)] {
-        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-    }
-    bytes[48..52].copy_from_slice(&1f32.to_le_bytes());
-    bytes[57..61].copy_from_slice(&(-1i32).to_le_bytes());
-    bytes[56] = mips;
+    let mut bytes = source_formats::vtf::legacy_rgba8888_header([edge; 2], 0x400c, mips).to_vec();
     for mip in (0..mips).rev() {
         let size = usize::from((edge >> mip).max(1));
         for _ in 0..size * size * 7 {

@@ -3284,13 +3284,17 @@ export component AppWindow inherits Window {
         height: 100%;
         // Keys that the focused control rejects bubble here, so shortcuts work after toolbar and panel clicks.
         key-pressed(event) => {
-            if root.shortcut-input-blocked { return reject; }
             if (event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta && (event.text == "k" || event.text == "K")) {
-                if event.repeat { return accept; }
+                if event.repeat || root.palette-open { return accept; }
+                if root.shortcut-input-blocked {
+                    root.open-palette();
+                    return accept;
+                }
                 if root.key(event.text, true, event.repeat, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) { return accept; }
                 root.open-palette();
                 return accept;
             }
+            if root.shortcut-input-blocked { return reject; }
             root.key(event.text, true, event.repeat, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
         }
         key-released(event) => {

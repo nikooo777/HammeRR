@@ -24,7 +24,7 @@ Commands that open a dialog end with "…". Hover a toolbar or rail icon to see 
 
 ## Search commands
 
-1. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> in the viewport, or click **Search commands** in the toolbar.
+1. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> anywhere in the editor window, or click **Search commands** in the toolbar.
 2. Type part of a command, menu name, object ID, class, name or material.
 3. Use the arrow keys to choose a result, then press <kbd>Enter</kbd>.
 

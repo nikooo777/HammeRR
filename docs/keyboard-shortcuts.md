@@ -70,7 +70,8 @@ position across layouts, choose **Physical key**, **KeyZ** and **Ctrl** for
   run after the focused control rejects the key. Buttons may consume Space or
   Enter; an unbound Tab moves focus. Pointing at the viewport gives it keyboard
   focus unless text is being edited. The desktop must deliver the combination.
-- **Escape** stays reserved. Exact <kbd>Ctrl</kbd>+<kbd>K</kbd> opens command search; modified
+- **Escape** stays reserved. Exact <kbd>Ctrl</kbd>+<kbd>K</kbd> opens command search, also while a
+  text field has focus; modified
   alternatives such as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> can be assigned.
 - Arrow keys and **PageUp**/**PageDown**, with no modifier or only **Shift**,
   keep fixed nudging behavior. Include **Ctrl**, **Alt** or **Meta** to bind them.

@@ -1332,6 +1332,15 @@ fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi)
                             return;
                         }
                     }
+                } else if ui.borrow().material_for_decal {
+                    let state = ui.borrow();
+                    let Some(controller) = &state.entity_placement else {
+                        window.set_detail(
+                            "Open Place a decal again before choosing a material.".into(),
+                        );
+                        return;
+                    };
+                    controller.choose_decal_material(&material);
                 } else if ui.borrow().material_for_atlas {
                     if let Some(controller) = &ui.borrow().atlas {
                         controller.choose_material(&mut session, &material);
@@ -1423,6 +1432,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     };
     ui.borrow_mut().material_for_group = key == "@group";
     ui.borrow_mut().material_for_atlas = key == "@atlas";
+    ui.borrow_mut().material_for_decal = key == "@decal";
     ui.borrow_mut().material_for_faces = key == "@faces";
     ui.borrow_mut().material_for_clip = key == "@clip";
     ui.borrow_mut().material_for_primitive = key == "@primitive";
@@ -1457,6 +1467,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key.starts_with("@replace-")
         || key == "@group"
         || key == "@atlas"
+        || key == "@decal"
     {
         None
     } else {
@@ -1486,6 +1497,12 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
             .carve_window
             .as_ref()
             .map(|window| window.get_cut_material().to_string())
+            .unwrap_or_default()
+    } else if key == "@decal" {
+        ui.borrow()
+            .entity_placement
+            .as_ref()
+            .map(|controller| controller.window.get_decal_material().to_string())
             .unwrap_or_default()
     } else if key == "@atlas" {
         ui.borrow()

@@ -168,6 +168,7 @@ struct Ui {
     shortcuts: Option<shortcuts_ui::Controller>,
     material_for_group: bool,
     material_for_atlas: bool,
+    material_for_decal: bool,
     overlay_material_target: Option<overlay_ui::MaterialTarget>,
     material_for_replace: Option<bool>,
     material_for_faces: bool,
@@ -323,6 +324,7 @@ impl Ui {
             shortcuts: None,
             material_for_group: false,
             material_for_atlas: false,
+            material_for_decal: false,
             overlay_material_target: None,
             material_for_replace: None,
             material_for_faces: false,
@@ -712,7 +714,18 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_has_fgd_model_guide(
         helper_report
             .as_ref()
-            .is_some_and(|report| report.model_guide.is_some()),
+            .and_then(|report| report.model_guide.as_ref())
+            .is_some_and(|guide| {
+                !matches!(
+                    guide.suppression_reason,
+                    Some(
+                        "brush_or_nonpoint"
+                            | "specialized_light"
+                            | "specialized_rope"
+                            | "specialized_helper"
+                    )
+                )
+            }),
     );
     app.set_entity_helper_status(
         helper_report

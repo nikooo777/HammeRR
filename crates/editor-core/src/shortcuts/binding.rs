@@ -196,14 +196,24 @@ pub struct Chord {
 impl Chord {
     pub fn label(&self) -> String {
         format!(
-            "{}{}{}{}{}{}",
-            if self.physical { "Physical " } else { "" },
+            "{}{}{}{}{}",
             if self.control { "Ctrl+" } else { "" },
             if self.shift { "Shift+" } else { "" },
             if self.alt { "Alt+" } else { "" },
             if self.meta { "Meta+" } else { "" },
-            self.key
+            self.key_label()
         )
+    }
+
+    fn key_label(&self) -> &str {
+        if !self.physical {
+            return &self.key;
+        }
+        self.key
+            .strip_prefix("Key")
+            .or_else(|| self.key.strip_prefix("Digit"))
+            .filter(|name| name.len() == 1)
+            .unwrap_or(&self.key)
     }
 
     pub(super) fn canonicalized_key(&self) -> Option<String> {

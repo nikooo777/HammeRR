@@ -49,7 +49,7 @@ Corner edits keep the bindings and projection axes. Crossed or collapsed corners
 ## Place a water transition
 
 1. Select the receiver faces, such as a bank beside a pool.
-2. Open **Overlay…** and enable **Water transition**.
+2. Open **Overlay…** and set **Type** to **Water transition**.
 3. Choose **Material** and set the **Texture** U and V ranges.
 4. Click **Fit / Preview**, then **Apply water transition**.
 5. Compile and play to check the transition.
@@ -62,9 +62,10 @@ compile with all their records and need a separate tool to edit their layout.
 ## Place a decal
 
 1. Open **Entity…** and choose `infodecal`.
-2. Click **Pick surface…** and enter **Decal material**, for example `decals/arrow_left`.
+2. Click **Pick surface…**. Enter a **Material**, for example `decals/arrow_left`,
+   or click **Browse materials…**.
 3. Click **Pick surface** and select a solid world or `func_detail` brush face.
-4. Check the point, then click **Apply entity**.
+4. Check the point, then click **Apply decal**.
 5. Compile and play to see the decal.
 
 The point is the decal's origin. CS:S chooses nearby receivers and can project onto more than one face. A named decal needs activation through entity I/O. Custom materials must be mounted when you play or included in a [portable VMF](portable-maps.md).

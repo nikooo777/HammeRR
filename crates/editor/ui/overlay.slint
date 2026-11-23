@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
-import { SelectableRow } from "kit.slint";
-import { Button, CheckBox, LineEdit, ListView, ScrollView, SpinBox } from "widgets.slint";
+import { SelectableRow, Segmented, FieldRow } from "kit.slint";
+import { Button, LineEdit, ListView, ScrollView, SpinBox } from "widgets.slint";
 
 export struct OverlayTargetRow {
     entity: string,
@@ -221,27 +221,31 @@ export component OverlayWindow inherits Window {
                         Button { text: "Viewport handles"; enabled: root.can-handle-corners; clicked => { root.handle-corners(); } }
                         Text { text: "Preview corners, then drag a cyan corner in the viewport. Release to review with Apply corners. Escape or Cancel handles restores the draft from before the drag. Motion is unsnapped in the fixed projection plane."; wrap: word-wrap; color: Theme.text-muted; }
                     }
-                    if !root.refit-mode: CheckBox {
-                        text: "Water transition";
-                        checked <=> root.water-transition;
-                        toggled => { root.edited(); }
+                    if !root.refit-mode: FieldRow {
+                        label: "Type"; label-width: 72px; inset: false;
+                        Segmented {
+                            options: ["Overlay", "Water transition"];
+                            current: root.water-transition ? 1 : 0;
+                            label: "overlay type";
+                            activated(index) => { root.water-transition = index == 1; root.edited(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    Text { text: "Material"; font-weight: 600; }
-                    HorizontalLayout {
-                        spacing: 10px;
+                    FieldRow {
+                        label: "Material"; label-width: 72px; inset: false;
                         LineEdit { enabled: !root.refit-mode; text <=> root.material; horizontal-stretch: 1; accessible-label: "Overlay material"; edited => { root.edited(); } }
                         Button { text: "Browse materials…"; enabled: !root.refit-mode; clicked => { root.browse-material(); } }
                     }
                     if !root.water-transition: HorizontalLayout {
                         spacing: 10px;
-                        Text { text: "Name"; width: 72px; vertical-alignment: center; }
+                        Text { text: "Name"; width: 72px; vertical-alignment: center; color: Theme.text-muted; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.targetname; placeholder-text: "Optional runtime name"; accessible-label: "Overlay name"; horizontal-stretch: 1; edited => { root.edited(); } }
                         Text { text: "Render order"; vertical-alignment: center; }
                         SpinBox { enabled: !root.refit-mode; minimum: 0; maximum: 3; value <=> root.render-order; accessible-label: "Overlay render order"; edited => { root.edited(); } }
                     }
                     HorizontalLayout {
                         spacing: 10px;
-                        Text { text: "Texture"; width: 72px; vertical-alignment: center; }
+                        Text { text: "Texture"; width: 72px; vertical-alignment: center; color: Theme.text-muted; }
                         Text { text: "U start"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.u-start; width: 80px; input-type: decimal; accessible-label: "Overlay U start"; edited => { root.edited(); } }
                         Text { text: "U end"; vertical-alignment: center; }
@@ -254,7 +258,7 @@ export component OverlayWindow inherits Window {
                     Text { text: root.water-transition ? "Water transitions use render order 0. Projection edits preserve the material and texture ranges." : root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     if !root.water-transition: HorizontalLayout {
                         spacing: 10px;
-                        Text { text: "Fade"; width: 72px; vertical-alignment: center; }
+                        Text { text: "Fade"; width: 72px; vertical-alignment: center; color: Theme.text-muted; }
                         Text { text: "Start distance"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.fade-min; input-type: decimal; accessible-label: "Overlay fade start distance"; edited => { root.edited(); } }
                         Text { text: "End distance"; vertical-alignment: center; }

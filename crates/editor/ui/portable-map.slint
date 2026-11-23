@@ -6,9 +6,9 @@ export component PortableMapWindow inherits Window {
     background: Theme.panel;
     default-font-size: Theme.font;
     preferred-width: 720px;
-    preferred-height: 620px;
+    preferred-height: 500px;
     min-width: 560px;
-    min-height: 540px;
+    min-height: 420px;
     in-out property <int> action-index;
     in-out property <string> source-vmf;
     in-out property <string> destination;
@@ -20,6 +20,10 @@ export component PortableMapWindow inherits Window {
     in property <bool> busy;
     callback apply();
     callback close-dialog();
+    callback browse-source();
+    callback browse-destination();
+    callback browse-companion();
+    callback add-content-folder();
     forward-focus: keys;
     keys := FocusScope {
         key-pressed(event) => {
@@ -35,29 +39,45 @@ export component PortableMapWindow inherits Window {
                 ComboBox { model: ["Attach assets to current map", "Save portable VMF copy", "Export plain VMF", "Export assets ZIP"]; current-index <=> root.action-index; enabled: !root.busy; }
             }
             if root.action-index != 0: FieldRow { inset: false; label-width: 120px; label: "Source VMF";
-                LineEdit { text <=> root.source-vmf; placeholder-text: "Blank uses the open map"; enabled: !root.busy; }
+                LineEdit { text <=> root.source-vmf; placeholder-text: "Blank uses the open map"; accessible-label: "Source VMF"; enabled: !root.busy; horizontal-stretch: 1; }
+                Button { text: "Browse…"; enabled: !root.busy; clicked => { root.browse-source(); } }
             }
             if root.action-index != 0: FieldRow { inset: false; label-width: 120px; label: "Destination";
-                LineEdit { text <=> root.destination; placeholder-text: root.action-index == 3 ? "Full path to a new .zip file" : "Full path to a different .vmf file"; enabled: !root.busy; }
+                LineEdit { text <=> root.destination; placeholder-text: root.action-index == 3 ? "Full path to a new .zip file" : "Full path to a different .vmf file"; accessible-label: "Destination"; enabled: !root.busy; horizontal-stretch: 1; }
+                Button { text: "Browse…"; enabled: !root.busy; clicked => { root.browse-destination(); } }
             }
             if root.action-index < 2: FieldRow { inset: false; label-width: 120px; label: "Companion BSP";
-                LineEdit { text <=> root.companion-bsp; placeholder-text: "Optional · only this explicit BSP is imported"; enabled: !root.busy; }
+                LineEdit { text <=> root.companion-bsp; placeholder-text: "Optional · only this explicit BSP is imported"; accessible-label: "Companion BSP"; enabled: !root.busy; horizontal-stretch: 1; }
+                Button { text: "Browse…"; enabled: !root.busy; clicked => { root.browse-companion(); } }
             }
-            if root.action-index < 2: VerticalLayout {
+            if root.action-index < 2: HorizontalLayout {
                 spacing: Theme.space;
-                Text { text: "Content folders · one full path per line, first wins"; color: Theme.text; }
-                TextEdit { text <=> root.content-roots; enabled: !root.busy; preferred-height: 88px; }
-                Text { text: "Optional. Mounted custom content is also included when required by the map."; color: Theme.text-muted; wrap: word-wrap; }
+                VerticalLayout {
+                    width: 120px;
+                    padding-top: Theme.space-xs;
+                    alignment: start;
+                    Text { text: "Content folders"; color: Theme.text-muted; wrap: word-wrap; }
+                }
+                VerticalLayout {
+                    spacing: Theme.space;
+                    TextEdit { text <=> root.content-roots; enabled: !root.busy; height: 84px; accessible-label: "Content folders"; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Add folder…"; enabled: !root.busy; clicked => { root.add-content-folder(); } }
+                        Text { text: "Optional · one path per line · the first match wins"; color: Theme.text-faint; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                    }
+                }
             }
+            if root.action-index < 2: Text { text: "Mounted custom content is also included when the map needs it."; color: Theme.text-muted; wrap: word-wrap; }
             if root.action-index == 0: Text { text: "Attach changes the map's content attachment. Save writes it into the VMF. Undo keeps attached assets."; color: Theme.text-muted; wrap: word-wrap; }
             if root.action-index >= 2: Text { text: "Hammer and external compilers need the plain VMF and the ZIP extracted into their content paths. They do not mount the VMF package."; color: Theme.text-muted; wrap: word-wrap; }
             if root.message != "": Text { text: root.message; color: root.failed ? Theme.danger : Theme.text; wrap: word-wrap; }
-            Rectangle { vertical-stretch: 1; background: transparent; }
+            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: Theme.space;
-                Button { text: "Cancel"; enabled: !root.busy; clicked => {root.close-dialog();} }
+                Button { text: root.message != "" && !root.failed ? "Close" : "Cancel"; enabled: !root.busy; clicked => { root.close-dialog(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: root.busy ? "Working…" : root.action-index == 0 ? "Attach assets" : root.action-index == 1 ? "Save portable copy" : "Export"; primary: true; enabled: !root.busy; clicked => {root.apply();} }
+                Button { text: root.busy ? "Working…" : root.action-index == 0 ? "Attach assets" : root.action-index == 1 ? "Save portable copy" : "Export"; primary: true; enabled: !root.busy; clicked => { root.apply(); } }
             }
         }
     }

@@ -75,6 +75,47 @@ export component IconButton inherits Rectangle {
     }
 }
 
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in property <int> current;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <length> segment-height: 22px;
+    callback activated(int);
+    width: segment-row.preferred-width + 4px;
+    height: root.segment-height + 6px;
+    border-radius: Theme.radius;
+    background: Theme.field;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    opacity: root.enabled ? 1 : 0.6;
+    segment-row := HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        for option[index] in root.options: Rectangle {
+            property <bool> active: index == root.current;
+            width: option-text.preferred-width + 20px;
+            border-radius: Theme.radius-sm;
+            background: self.active ? Theme.active : option-touch.has-hover && root.enabled ? Theme.hover : transparent;
+            accessible-role: button;
+            accessible-label: root.label == "" ? option : option + " " + root.label;
+            accessible-checkable: true;
+            accessible-checked: self.active;
+            accessible-enabled: root.enabled;
+            accessible-action-default => { if root.enabled { root.activated(index); } }
+            option-text := Text {
+                text: option;
+                color: parent.active ? Theme.text : Theme.text-muted;
+                font-size: Theme.font;
+            }
+            option-touch := TouchArea {
+                enabled: root.enabled;
+                clicked => { root.activated(index); }
+            }
+        }
+    }
+}
+
 export component Separator inherits Rectangle {
     in property <bool> vertical: true;
     width: root.vertical ? 1px : 20px;

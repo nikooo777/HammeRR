@@ -219,6 +219,30 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
         key,
         value,
     };
+    if matches!(lower.as_str(), "material" | "sides")
+        && map_core::overlay::water::is_transition(entity)
+        && map_core::overlay::water::has_transition_data(entity)
+    {
+        if let Ok(projections) = map_core::overlay::water::parse(entity) {
+            result.value = if lower == "material" {
+                projections
+                    .iter()
+                    .map(|projection| projection.options.material.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            } else {
+                projections
+                    .iter()
+                    .flat_map(|projection| &projection.sides)
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+        }
+        result.read_only = true;
+        result.description =
+            "Stored in the water transition projection. Use Overlay… to refit or rebind it.".into();
+    }
     if map_core::light::value_parameter(
         entity.classname().unwrap_or_default(),
         &result.key,
@@ -397,7 +421,13 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
                 }
             }
         }
-        "material" | "decal" | "sprite" => result.control = Control::Material,
+        "material" | "decal" | "sprite" => {
+            result.control = Control::Material;
+            result.advanced = false;
+            if kind == "decal" && result.label == result.key {
+                result.label = "Decal material".into();
+            }
+        }
         "sound" => {
             result.control = Control::Sound;
             result.advanced = false;

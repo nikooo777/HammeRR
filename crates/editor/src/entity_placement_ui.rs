@@ -87,7 +87,7 @@ fn present(window: &EntityPlacementWindow, report: &Value, dirty: bool) {
     } else if let Some(error) = plan["model_error"].as_str() {
         format!("Model unavailable; using editor helper bounds. {error}").into()
     } else if !plan["decal_texture"].is_null() {
-        "Review the decal position in the viewport. Apply entity adds one Undo step.".into()
+        "Review the decal position in the viewport. Apply decal adds one Undo step.".into()
     } else if !plan.is_null() {
         "Review the preview bounds in the viewport. Apply entity adds one Undo step.".into()
     } else {
@@ -219,6 +219,14 @@ impl Controller {
             }
         });
         Ok(Self { window, form })
+    }
+
+    pub fn choose_decal_material(&self, material: &str) {
+        self.window.set_decal_material(material.into());
+        self.form.borrow_mut().dirty = true;
+        self.window.set_ready(false);
+        self.window
+            .set_message("Pick a surface again after changing settings.".into());
     }
 
     pub fn initialize(&self, session: &Session, classname: &str) {

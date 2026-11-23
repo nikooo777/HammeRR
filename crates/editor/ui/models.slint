@@ -57,9 +57,9 @@ export component ModelWindow inherits Window {
             if root.message!="": Text {text:root.message;wrap:word-wrap;color:Theme.text-faint;}
             HorizontalLayout {
                 spacing:8px;
+                Button {text:"Close";clicked=>{root.cancel();}}
                 Button {text:"Reload models";clicked=>{root.reload();}}
                 Rectangle {horizontal-stretch:1;}
-                Button {text:"Close";clicked=>{root.cancel();}}
             }
         }
     }

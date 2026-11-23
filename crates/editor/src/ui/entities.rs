@@ -547,6 +547,10 @@ pub(super) fn show_entity_window(app: &AppWindow, ui: &SharedUi, brush_mode: boo
                     }
                 }
                 let controller = state.entity_placement.as_ref().unwrap();
+                controller.window.on_browse_material({
+                    let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                    move || browse("@decal")
+                });
                 controller.initialize(&lock(shared), &window.get_classname());
                 let _ = window.hide();
                 if let Err(error) = controller.window.show() {

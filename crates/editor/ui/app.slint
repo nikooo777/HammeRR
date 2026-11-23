@@ -7,7 +7,7 @@ export { WorkspaceWindow } from "workspace-shell.slint";
 export { WorkspaceDocumentTab }
 import { ViewportPaneView, ViewportPane, ViewportPaneSize } from "viewport-pane.slint";
 export { ViewportPane, ViewportPaneSize }
-import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, SelectableRow, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
+import { IconButton, Separator, Segmented, SectionHeader, FieldRow, Badge, MutedText, SelectableRow, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
 export { ExternalComparisonWindow, ComparisonRow } from "external-comparison.slint";
 export { EntityGalleryWindow, EntityGalleryClassRow, EntityGalleryPreviewRow } from "entity-gallery.slint";
 export { EntityGraphWindow, EntityGraphRow, EntityGraphNode, EntityGraphEdge } from "entity-graph.slint";
@@ -881,28 +881,34 @@ export component MaterialWindow inherits Window {
                         for row in root.rows: HorizontalLayout {
                             spacing: 8px;
                             padding-bottom: 8px;
+                            padding-right: Theme.space-lg;
+                            alignment: start;
                             min-width: 0px;
                             width: parent.width;
                             for tile in row.tiles: Rectangle {
-                                width: max(0px, (parent.width - 16px) / 3);
-                                height: 188px;
-                                background: root.material == tile.name ? Theme.selection : Theme.control-strong;
-                                border-radius: 6px;
+                                property <bool> chosen: root.material == tile.name;
+                                width: max(0px, (parent.width - Theme.space-lg - 16px) / 3);
+                                background: self.chosen ? Theme.accent-soft : tile-touch.has-hover && !root.search-pending ? Theme.hover : Theme.field;
+                                border-radius: Theme.radius;
+                                border-width: 1px;
+                                border-color: self.chosen ? Theme.accent : Theme.border;
                                 accessible-role: button;
                                 accessible-label: tile.name + (tile.preview-error == "" ? "" : ": " + tile.preview-error);
+                                accessible-checkable: true;
+                                accessible-checked: self.chosen;
                                 accessible-action-default => { if !root.search-pending { root.material = tile.name; root.preview-material(); } }
                                 VerticalLayout {
-                                    padding: 8px;
-                                    spacing: 6px;
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
                                     Rectangle {
-                                        height: 110px;
+                                        height: min(150px, max(64px, parent.width - 2 * Theme.space));
                                         Image { width: parent.width; height: parent.height; source: tile.preview; image-fit: contain; }
                                         if tile.preview-error != "": Text { text: root.preview-layer == 1 ? "Layer 2 unavailable" : "Image unavailable"; color: Theme.warning; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
                                     }
-                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; overflow: elide; font-size: Theme.font-small; }
-                                    Text { text: tile.source; overflow: elide; font-size: 10px; color: Theme.text-muted; }
+                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; overflow: elide; font-size: Theme.font-small; color: Theme.text; }
+                                    Text { text: tile.source; overflow: elide; font-size: Theme.font-small; color: Theme.text-faint; }
                                 }
-                                TouchArea { enabled: !root.search-pending; clicked => { root.material = tile.name; root.preview-material(); } }
+                                tile-touch := TouchArea { enabled: !root.search-pending; clicked => { root.material = tile.name; root.preview-material(); } }
                             }
                         }
                     }
@@ -932,8 +938,14 @@ export component MaterialWindow inherits Window {
                         }
                         HorizontalLayout {
                             spacing: Theme.space;
-                            Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
-                            Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
+                            Text { text: "Channel"; color: Theme.text-muted; vertical-alignment: center; }
+                            Segmented {
+                                options: ["Color", "Alpha"];
+                                current: root.preview-channel;
+                                label: "preview channel";
+                                activated(index) => { root.preview-channel = index; root.preview-material(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                         Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                         Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
@@ -3310,33 +3322,12 @@ export component AppWindow inherits Window {
                     IconButton { y: 6px; icon: Icon.redo; tooltip: "Redo"; enabled: root.can-redo; clicked => { root.redo(); } }
                     IconButton { y: 6px; icon: Icon.history; tooltip: "History"; clicked => { root.history(); } }
                     Separator { y: 10px; }
-                    Rectangle {
+                    Segmented {
                         y: 6px;
-                        width: mode-row.preferred-width + 4px;
-                        height: 28px;
-                        border-radius: Theme.radius;
-                        background: Theme.field;
-                        border-width: 1px;
-                        border-color: Theme.border-strong;
-                        mode-row := HorizontalLayout {
-                            padding: 2px;
-                            spacing: 2px;
-                            for mode[index] in ["Objects", "Faces"]: Rectangle {
-                                property <bool> active: (index == 1) == root.face-mode;
-                                width: mode-text.preferred-width + 20px;
-                                border-radius: Theme.radius-sm;
-                                background: self.active ? Theme.active : mode-touch.has-hover ? Theme.hover : transparent;
-                                accessible-role: button;
-                                accessible-label: mode + " selection";
-                                accessible-checked: self.active;
-                                mode-text := Text {
-                                    text: mode;
-                                    color: parent.active ? Theme.text : Theme.text-muted;
-                                    font-size: Theme.font;
-                                }
-                                mode-touch := TouchArea { clicked => { root.selection-mode-changed(index); } }
-                            }
-                        }
+                        options: ["Objects", "Faces"];
+                        current: root.face-mode ? 1 : 0;
+                        label: "selection";
+                        activated(index) => { root.selection-mode-changed(index); }
                     }
                     Separator { y: 10px; }
                     Text { text: "Grid"; color: Theme.text-faint; vertical-alignment: center; }

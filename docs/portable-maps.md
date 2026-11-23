@@ -11,9 +11,11 @@ configured content. The recipient still needs the required base game.
 
 1. Open a map. Select **File → Portable map…**.
 2. Leave **Operation** at **Attach assets to current map**.
-3. If needed, enter an explicit **Companion BSP**. Its complete PAK is imported.
+3. If needed, enter or **Browse…** for an explicit **Companion BSP**. Its complete
+   PAK is imported.
    HammeRR never chooses a BSP from the VMF name.
-4. Under **Content folders**, enter asset roots, one full path per line.
+4. Under **Content folders**, select **Add folder…** or enter asset roots, one
+   full path per line.
    Each root contains folders such as `materials` and `models`. The first root wins.
 5. Select **Attach assets**, then use **File → Save**.
 
@@ -36,8 +38,9 @@ not paths to the sender's computer. Reopen uses the retained package.
 
 1. Select **File → Portable map…**.
 2. Set **Operation** to **Save portable VMF copy**.
-3. Leave **Source VMF** blank to use the open map, or enter a source VMF path.
-4. Enter a different `.vmf` path in **Destination**.
+3. Leave **Source VMF** blank to use the open map, or enter or **Browse…** for a
+   source VMF.
+4. Enter or **Browse…** for a different `.vmf` path in **Destination**.
 5. Choose import sources if needed. Select **Save portable copy**.
 
 The source and open document stay unchanged. Normal **Open** and **Save** need

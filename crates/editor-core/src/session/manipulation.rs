@@ -839,7 +839,10 @@ impl Session {
         if matches!(preview.grid_snap, Some(GridSnapPreview::EachObject { .. })) {
             self.edit(
                 actor,
-                &format!("snap {} objects to grid", preview.ids.len()),
+                &format!(
+                    "snap {} to grid",
+                    crate::count::count(preview.ids.len(), "object", "objects")
+                ),
                 |tx| {
                     apply_transform_plan(
                         tx,

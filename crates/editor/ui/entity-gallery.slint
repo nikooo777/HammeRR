@@ -14,6 +14,7 @@ export struct EntityGalleryClassRow {
 export struct EntityGalleryPreviewRow { title: string, detail: string }
 
 export component EntityGalleryWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Point-entity gallery - HammeRR";
     preferred-width: 760px;
@@ -92,7 +93,7 @@ export component EntityGalleryWindow inherits Window {
                 Button { text: "Select page"; enabled: root.owned; clicked => { root.select-page(); } }
                 Button { text: "Clear selection"; enabled: root.owned; clicked => { root.clear-selection(); } }
             }
-            Text { text: root.selection-summary; wrap: word-wrap; }
+            if root.selection-summary != "": Text { text: root.selection-summary; wrap: word-wrap; }
             FieldRow {
                 inset: false;
                 label: "First cell X/Y/Z";
@@ -113,7 +114,7 @@ export component EntityGalleryWindow inherits Window {
                 IconButton { icon: Icon.frame; tooltip: "Frame preview"; enabled: root.ready; clicked => { root.frame(-1); } }
             }
             Text { text: "Reviewed examples"; font-weight: 600; }
-            Text { text: root.preview-summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.preview-summary != "": Text { text: root.preview-summary; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
                 content-width: self.width;
                 vertical-stretch: 1;

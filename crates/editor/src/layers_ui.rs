@@ -109,7 +109,14 @@ fn refresh(window: &LayersWindow, session: &Session, state: &RefCell<Form>, forc
     window.set_layers(Rc::new(VecModel::from(rows)).into());
     window.set_previous(form.offset > 0);
     window.set_next(!report["next_offset"].is_null());
-    window.set_page_label(format!("{} layers", report["total"]).into());
+    window.set_page_label(
+        crate::count::count(
+            report["total"].as_u64().unwrap_or_default() as usize,
+            "layer",
+            "layers",
+        )
+        .into(),
+    );
     window.set_selected(
         form.selected
             .map(|id| id.to_string())

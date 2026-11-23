@@ -37,7 +37,11 @@ pub fn refresh_properties(window: &PropertiesWindow, session: &Session) {
     window.set_heading(if preview.target == PropertyTarget::World {
         "World settings".into()
     } else {
-        format!("Properties · {} entities", preview.count).into()
+        format!(
+            "Properties · {}",
+            crate::count::count(preview.count, "entity", "entities")
+        )
+        .into()
     });
     window.set_summary(
         format!(
@@ -108,6 +112,7 @@ pub fn refresh_properties(window: &PropertiesWindow, session: &Session) {
                 field: crate::ui::property_row(property.field),
                 status: status.into(),
                 can_reset: property.can_reset,
+                can_remove: property.stored_count > 0,
             }
         })
         .collect::<Vec<_>>();
@@ -642,7 +647,12 @@ pub fn refresh_report(window: &ReportWindow, session: &Session) {
             window.set_generation(session.document_generation().to_string().into());
             window.set_revision(session.document().revision().to_string().into());
             window.set_summary(
-                format!("{} matches · Page {}", rows.len(), window.get_page() + 1).into(),
+                format!(
+                    "{} · page {}",
+                    crate::count::count(rows.len(), "match", "matches"),
+                    window.get_page() + 1
+                )
+                .into(),
             );
             window.set_has_next(offset + 100 < rows.len());
             window.set_rows(ModelRc::new(VecModel::from(

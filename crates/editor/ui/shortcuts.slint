@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView } from "widgets.slint";
-import { FieldRow } from "kit.slint";
+import { FieldRow, SelectableRow } from "kit.slint";
 
 export struct ShortcutRow { command: string, label: string, current: string, factory: string }
 export struct ShortcutStroke { key: string, physical: bool, control: bool, shift: bool, alt: bool, meta: bool }
@@ -150,23 +150,29 @@ export component ShortcutsWindow inherits Window {
                 VerticalLayout {
                     padding-right: Theme.space-xl;
                     spacing: Theme.space-lg;
+                    alignment: start;
                     HorizontalLayout {
                         spacing: Theme.space;
+                        padding-left: Theme.space;
+                        padding-right: Theme.space;
                         Text { text: "Command"; color: Theme.text; width: Theme.shortcuts-command-width; font-weight: 600; }
                         Text { text: "Current form"; color: Theme.text; horizontal-stretch: 1; font-weight: 600; }
                         Text { text: "Factory bindings"; color: Theme.text; width: Theme.shortcuts-factory-width; font-weight: 600; }
                     }
                     ListView {
                         height: Theme.shortcuts-catalog-height;
-                        for row in root.commands: Rectangle {
+                        for row in root.commands: SelectableRow {
                             height: max(Theme.row-height, row-layout.min-height);
-                            background: root.selected == row.command ? Theme.selection : Theme.hover;
+                            label: row.label;
+                            selected: root.selected == row.command;
+                            clicked => { root.choose(row.command); }
                             row-layout := HorizontalLayout {
                                 spacing: Theme.space;
-                                padding: Theme.space-xs;
-                                Button { text: row.label; width: Theme.shortcuts-command-width - Theme.space-xs; clicked => { root.choose(row.command); } }
+                                padding-left: Theme.space;
+                                padding-right: Theme.space;
+                                Text { text: row.label; color: Theme.text; width: Theme.shortcuts-command-width; vertical-alignment: center; overflow: elide; }
                                 Text { text: row.current; color: Theme.text; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; }
-                                Text { text: row.factory; width: Theme.shortcuts-factory-width - Theme.space-xs; vertical-alignment: center; color: Theme.text-muted; wrap: word-wrap; }
+                                Text { text: row.factory; width: Theme.shortcuts-factory-width; vertical-alignment: center; color: Theme.text-muted; wrap: word-wrap; }
                             }
                         }
                     }

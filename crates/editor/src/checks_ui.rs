@@ -75,8 +75,22 @@ pub fn refresh(window: &ChecksWindow, session: &Session) {
         "Run checks to inspect the applied map.".into()
     } else {
         format!(
-            "{} errors · {} warnings · {} notes",
-            report["counts"]["error"], report["counts"]["warning"], report["counts"]["info"]
+            "{} · {} · {}",
+            crate::count::count(
+                report["counts"]["error"].as_u64().unwrap_or_default() as usize,
+                "error",
+                "errors"
+            ),
+            crate::count::count(
+                report["counts"]["warning"].as_u64().unwrap_or_default() as usize,
+                "warning",
+                "warnings"
+            ),
+            crate::count::count(
+                report["counts"]["info"].as_u64().unwrap_or_default() as usize,
+                "note",
+                "notes"
+            )
         )
         .into()
     });
@@ -116,8 +130,12 @@ pub fn refresh(window: &ChecksWindow, session: &Session) {
         "No report".into()
     } else {
         format!(
-            "{} matching issues · page {}",
-            report["matching"],
+            "{} · page {}",
+            crate::count::count(
+                report["matching"].as_u64().unwrap_or_default() as usize,
+                "matching issue",
+                "matching issues"
+            ),
             window.get_page() + 1
         )
         .into()

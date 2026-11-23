@@ -11,6 +11,7 @@ export struct SelectionDefaultRow {
 export struct SelectionProfileRow { id: string, name: string, filters: string }
 
 export component SelectionDefaultsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Selection defaults - HammeRR";
     preferred-width: 720px;

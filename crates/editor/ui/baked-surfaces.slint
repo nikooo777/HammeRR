@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, ScrollView, Slider, StandardTableView } from "widgets.slint";
 
 export component BakedSurfacesWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Baked surfaces - HammeRR";
     preferred-width: 780px;
@@ -62,7 +63,7 @@ export component BakedSurfacesWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.state; vertical-alignment: center; color: Theme.warning; }
             }
-            Text { text: root.summary; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 CheckBox { text: "Compiled static props"; checked <=> root.compiled-static-props; enabled: !root.worker-active; }
@@ -137,13 +138,13 @@ export component BakedSurfacesWindow inherits Window {
                 Button { text: root.record-index == 0 ? "Frame face" : "Frame static prop"; enabled: root.can-frame; clicked => { root.frame-face(); } }
                 if root.record-index == 1: Button { text: "Prepared prop samples…"; enabled: root.can-inspect-prop-samples; clicked => { root.inspect-prop-samples(); } }
             }
-            Text { text: root.face-summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.face-summary != "": Text { text: root.face-summary; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
                 content-width: self.width;
                 min-height: 40px;
                 preferred-height: 58px;
                 max-height: 90px;
-                Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
+                if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             }
             HorizontalLayout {
                 spacing: Theme.space;

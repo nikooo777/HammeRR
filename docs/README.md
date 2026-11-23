@@ -112,7 +112,7 @@ More in this section:
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="path-authoring.md"><img src="images/thumbs/linked-path-handles.jpg" width="260" alt=""></a><br><a href="path-authoring.md"><b>Linked paths</b></a><br>Create linked nodes and configure a brush train.</td>
-<td width="33%" valign="top"><a href="overlays.md"><img src="images/thumbs/overlay-native.jpg" width="260" alt=""></a><br><a href="overlays.md"><b>Overlays</b></a><br>Project a material onto compiled surfaces.</td>
+<td width="33%" valign="top"><a href="overlays.md"><img src="images/thumbs/overlay-native.jpg" width="260" alt=""></a><br><a href="overlays.md"><b>Overlays</b></a><br>Project materials, decals and water transitions onto surfaces.</td>
 <td width="33%" valign="top"><a href="prefabs.md"><img src="images/thumbs/prefab-assemblies.jpg" width="260" alt=""></a><br><a href="prefabs.md"><b>Prefab library</b></a><br>Save and reuse brush/entity assemblies as VMF files.</td>
 </tr>
 <tr>

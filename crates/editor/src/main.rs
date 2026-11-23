@@ -14,6 +14,7 @@ mod compile_ui;
 mod components_ui;
 mod connection_ui;
 mod context_ui;
+mod count;
 mod cubemap_ui;
 mod entity_gallery_ui;
 mod entity_graph_ui;

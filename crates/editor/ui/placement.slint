@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import {Button,CheckBox,ComboBox,LineEdit} from "widgets.slint";
 
 export component PlacementWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Place on surface - HammeRR";preferred-width:640px;preferred-height:720px;
     in property <string> selection;

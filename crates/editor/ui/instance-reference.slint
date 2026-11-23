@@ -36,6 +36,7 @@ component ReferenceVector inherits FieldRow {
 }
 
 export component InstanceReferenceWindow inherits Window {
+    default-font-size: Theme.font;
     title: root.collapse-active ? "Collapse references - HammeRR" : root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
     preferred-width: 760px;
     preferred-height: 720px;

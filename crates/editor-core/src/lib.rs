@@ -7,6 +7,7 @@ pub mod color;
 pub mod color_palette;
 pub mod content_profiles;
 pub(crate) mod content_watch;
+mod count;
 pub mod game;
 pub mod grid_preferences;
 pub mod identity;

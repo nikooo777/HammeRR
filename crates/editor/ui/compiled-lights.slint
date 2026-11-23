@@ -31,6 +31,7 @@ component DetailField inherits VerticalLayout {
 }
 
 export component CompiledLightsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Compiled lights - HammeRR";
     preferred-width: 1100px;
@@ -73,8 +74,8 @@ export component CompiledLightsWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 10px;
             Text { text: "Compiled lights"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
-            Text { text: root.channels; wrap: word-wrap; }
+            if root.build-state != "": Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
+            if root.channels != "": Text { text: root.channels; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Channel"; vertical-alignment: center; }

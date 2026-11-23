@@ -485,8 +485,12 @@ impl Session {
         self.log(
             actor,
             format!(
-                "checked map: {} issues",
-                self.checks.report.as_ref().unwrap().result.issues.len()
+                "checked map: {}",
+                crate::count::count(
+                    self.checks.report.as_ref().unwrap().result.issues.len(),
+                    "issue",
+                    "issues"
+                )
             ),
         );
         token

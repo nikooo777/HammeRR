@@ -4,6 +4,7 @@ import { Button, CheckBox, ComboBox, LineEdit, ListView, SpinBox } from "widgets
 export struct OpeningRow { key: string, label: string, open: bool }
 
 export component HollowWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Hollow brushes - HammeRR";
     preferred-width: 820px; preferred-height: 690px;

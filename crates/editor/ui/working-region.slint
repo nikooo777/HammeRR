@@ -117,7 +117,7 @@ export component WorkingRegionWindow inherits Window {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
             Text { text: "Working region visibility"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Box, distance and inclusion filters combine with AND. Matches to any exclusion stay hidden. Objects stay whole."; wrap: word-wrap; color: Theme.text-muted; }
             ComboBox {
                 model: ["Box and filters", "Categories and exclusions", "Saved rule profiles"];
@@ -206,11 +206,11 @@ export component WorkingRegionWindow inherits Window {
                     spacing: Theme.space-lg;
                     Text { text: "Automatic categories"; color: Theme.text; font-weight: 600; }
                     Text { text: "Categories follow authored object types, exact classes and loaded FGD groups. Counts include saved-hidden owners. Category buttons apply immediately."; wrap: word-wrap; color: Theme.text-muted; }
-                    Text { text: root.fgd-category-status; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.fgd-category-status != "": Text { text: root.fgd-category-status; wrap: word-wrap; color: Theme.text-muted; }
                     Text { text: "FGD groups match literal full classnames, ignoring case. Each group uses one exclusion; inheritance and wildcard expansion do not apply."; wrap: word-wrap; color: Theme.text-muted; }
                     LineEdit { text <=> root.category-query; placeholder-text: "Find categories by type, class or FGD group…"; accessible-label: "Find visibility categories"; edited => { root.category-query-changed(); } }
-                    Text { text: root.category-message; wrap: word-wrap; color: Theme.warning; }
-                    Text { text: root.category-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.category-message != "": Text { text: root.category-message; wrap: word-wrap; color: Theme.warning; }
+                    if root.category-summary != "": Text { text: root.category-summary; wrap: word-wrap; color: Theme.text-muted; }
                     for category in root.categories: VerticalLayout {
                         spacing: Theme.space-xs;
                         HorizontalLayout {
@@ -229,7 +229,7 @@ export component WorkingRegionWindow inherits Window {
                     }
                     Rectangle { height: 1px; background: Theme.border; }
                     Text { text: "Active exclusions"; color: Theme.text; font-weight: 600; }
-                    Text { text: root.exclusion-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.exclusion-summary != "": Text { text: root.exclusion-summary; wrap: word-wrap; color: Theme.text-muted; }
                     for exclusion in root.exclusions: VerticalLayout {
                         spacing: Theme.space;
                         Text { text: exclusion.summary; wrap: word-wrap; color: Theme.text; }

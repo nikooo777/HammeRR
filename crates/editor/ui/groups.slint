@@ -6,6 +6,7 @@ export struct ObjectGroupRow { id: string, label: string, detail: string }
 export struct ObjectGroupMemberRow { id: string, label: string, detail: string }
 
 export component ObjectGroupsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Object groups - HammeRR";
     preferred-width: 1080px;
@@ -113,7 +114,7 @@ export component ObjectGroupsWindow inherits Window {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     spacing: 8px;
-                    Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+                    if root.summary != "": Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
                     if root.editing && !root.ungrouping: HorizontalLayout {
                         spacing: 8px;
                         Text { text: "Group name"; vertical-alignment: center; }

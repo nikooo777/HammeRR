@@ -5,6 +5,7 @@ import {Button, ComboBox, LineEdit, ListView, ScrollView} from "widgets.slint";
 export struct ParticleChoiceRow {name:string,detail:string}
 
 export component ParticleBrowserWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Choose particle effect - HammeRR";
     preferred-width:1000px;preferred-height:720px;

@@ -8,6 +8,7 @@ export struct RopePreviewRow {
 }
 
 export component RopePreviewWindow inherits Window {
+    default-font-size: Theme.font;
     title: "Rope preview - HammeRR";
     background: Theme.panel;
     preferred-width: 780px;
@@ -85,7 +86,7 @@ export component RopePreviewWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: root.summary; color: root.published && !root.has-issues ? Theme.text : Theme.warning; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; color: root.published && !root.has-issues ? Theme.text : Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: Theme.space;
                 Button {

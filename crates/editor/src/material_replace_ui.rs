@@ -68,8 +68,8 @@ fn refresh(window: &MaterialReplaceWindow, session: &Session, target: &Target) {
     if let Some(report) = report {
         window.set_summary(
             format!(
-                "{} matching faces · {} hidden included · {} hidden skipped",
-                report.faces.len(),
+                "{} · {} hidden included · {} hidden skipped",
+                crate::count::count(report.faces.len(), "matching face", "matching faces"),
                 report.hidden_matches,
                 report.hidden_excluded
             )

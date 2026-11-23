@@ -216,7 +216,10 @@ impl Session {
             self.install_clipboard(payload);
             self.log(
                 actor,
-                format!("copied {} objects to clipboard", sources.len()),
+                format!(
+                    "copied {} to clipboard",
+                    crate::count::count(sources.len(), "object", "objects")
+                ),
             );
         }
         Ok(self.clipboard_report())

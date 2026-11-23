@@ -16,6 +16,7 @@ export struct AtlasIslandOverlay {
 }
 
 export component AtlasWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Fit atlas region - HammeRR";
     preferred-width: 720px;
@@ -140,7 +141,7 @@ export component AtlasWindow inherits Window {
                         Button { text: "Browse materials…"; clicked => { root.browse(); } }
                         Button { text: "Inspect material"; enabled: !root.stale; clicked => { root.inspect-material(); } }
                     }
-                    Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.details != "": Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
                     HorizontalLayout {
                         spacing: 8px;
                         Text { text: "Saved region"; vertical-alignment: center; }
@@ -261,7 +262,7 @@ export component AtlasWindow inherits Window {
                                 LineEdit { text <=> root.region-padding; input-type: number; accessible-label: "Atlas padding in source image pixels"; edited => { root.edited(); } }
                             }
                             Text { text: root.fit-mode == 2 ? "Padding insets the outer region. Island padding reserves pixels around each packed face inside that usable area." : "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: Theme.text-muted; }
-                            Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? Theme.warning : Theme.danger; }
+                            if root.usable-details != "": Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? Theme.warning : Theme.danger; }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
@@ -273,7 +274,7 @@ export component AtlasWindow inherits Window {
                     if root.packing-summary != "": MutedText { text: root.packing-summary; }
                 }
             }
-            Text { text: root.message; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

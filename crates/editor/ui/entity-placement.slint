@@ -3,6 +3,7 @@ import {Button, CheckBox, LineEdit} from "widgets.slint";
 import { FieldRow } from "kit.slint";
 
 export component EntityPlacementWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: root.decal ? "Place decal - HammeRR" : "Place entity on surface - HammeRR";
     preferred-width: 610px;

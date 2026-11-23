@@ -128,8 +128,12 @@ pub fn refresh(window: &RenameWindow, session: &Session) {
     if !proposal {
         window.set_summary(
             format!(
-                "{} references and text matches found.",
-                plan.references.len()
+                "{} found.",
+                crate::count::count(
+                    plan.references.len(),
+                    "reference or text match",
+                    "references and text matches"
+                )
             )
             .into(),
         );

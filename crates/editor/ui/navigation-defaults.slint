@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import {Button} from "widgets.slint";
 
 export component NavigationDefaultsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Navigation defaults - HammeRR";
     preferred-width: 720px;
@@ -40,10 +41,10 @@ export component NavigationDefaultsWindow inherits Window {
             }
             Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
             Text { text: "25–20000 Hammer units/s · factory 600 · Shift moves 4× faster. In perspective, hold the right mouse button and scroll to change the same speed. Speed edits and wheel changes stay temporary until Save current as defaults. Camera positions and navigation sensitivities are not stored."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.message; wrap: word-wrap; min-height: 34px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Reload defaults"; clicked => { root.reload(); } }

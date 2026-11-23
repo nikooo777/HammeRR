@@ -6,6 +6,7 @@ export struct ModelChoiceRow { path:string, name:string, folder:string, source:s
 export struct ModelBodygroupRow { index:int, label:string, choices:[string], selected:int }
 
 export component ModelBrowserWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Choose model — HammeRR";
     preferred-width:960px;

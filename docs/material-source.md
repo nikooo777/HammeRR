@@ -20,8 +20,8 @@ Use **Refresh source** to reread declarations. Use **Reload material assets** to
 1. Select a material in **Browse materials…**.
 2. Choose **Layer 1 · Editor display** or **Layer 2 · $basetexture2** above the preview. The thumbnails use the same chosen layer.
 3. Inspect the image, original dimensions, texture path and declaration identity.
-4. Click **Alpha** below the preview to read the source alpha range.
-5. Click **Color** to restore the RGBA preview.
+4. Set **Channel** below the preview to **Alpha** to read the source alpha range.
+5. Set **Channel** to **Color** to restore the RGBA preview.
 
 Black is alpha 0; white is alpha 255. The alpha view is opaque.
 It shows decoded image alpha, not shader opacity, animation or native blending.

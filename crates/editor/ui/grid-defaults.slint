@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import {Button} from "widgets.slint";
 
 export component GridDefaultsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Grid defaults - HammeRR";
     preferred-width: 690px;
@@ -30,10 +31,10 @@ export component GridDefaultsWindow inherits Window {
             Text { text: root.current; wrap: word-wrap; font-size: Theme.font-heading; }
             Text { text: root.defaults; wrap: word-wrap; font-size: Theme.font-heading; }
             Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
             Text { text: "Temporary grid changes stay in this session until Save current as defaults. Workplanes, brush depth, preview toggles and active tools are not saved."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.message; wrap: word-wrap; min-height: 34px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Reload defaults"; clicked => { root.reload(); } }

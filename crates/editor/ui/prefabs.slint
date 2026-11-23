@@ -33,6 +33,7 @@ component PrefabCard inherits Rectangle {
     touch:=TouchArea {enabled:root.enabled;mouse-cursor:pointer;clicked=>{card-focus.focus();root.choose();}}
 }
 export component PrefabsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Prefab library - HammeRR";
     preferred-width:1000px;preferred-height:880px;

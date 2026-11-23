@@ -496,8 +496,12 @@ impl Session {
         self.log(
             actor,
             format!(
-                "paint selection: {} matches",
-                matches.objects.len() + matches.faces.len()
+                "paint selection: {}",
+                crate::count::count(
+                    matches.objects.len() + matches.faces.len(),
+                    "match",
+                    "matches"
+                )
             ),
         );
         Ok(matches)

@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Button, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export component InstanceExtractionWindow inherits Window {
+    default-font-size: Theme.font;
     title: "Extract selection to instance - HammeRR";
     preferred-width: 760px;
     preferred-height: 650px;
@@ -58,7 +59,7 @@ export component InstanceExtractionWindow inherits Window {
             vertical-stretch: 1;
             VerticalLayout { Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; } }
         }
-        Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+        if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
         Text { text: "Undo restores the parent objects. The exported child stays on disk; Redo changes only the parent. Refresh instance contents explicitly after extraction."; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 10px;

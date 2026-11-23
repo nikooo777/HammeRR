@@ -32,6 +32,7 @@ component VectorInputRow inherits FieldRow {
 }
 
 export component ComponentsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Brush components - HammeRR";
     preferred-width: 880px;
@@ -381,7 +382,7 @@ export component ComponentsWindow inherits Window {
                             CheckBox { text: "Planned top material"; checked <=> root.show-top-material; }
                             if root.show-top-material: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-material-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                                if root.top-material-summary != "": Text { text: root.top-material-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Image { source: root.top-material-preview; width: 40px; height: 40px; image-fit: contain; }
@@ -398,7 +399,7 @@ export component ComponentsWindow inherits Window {
                             CheckBox { text: "Top texture placement"; checked <=> root.show-top-texture; }
                             if root.show-top-texture: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-texture-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                                if root.top-texture-summary != "": Text { text: root.top-texture-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VerticalLayout {
@@ -557,7 +558,7 @@ export component ComponentsWindow inherits Window {
                         Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     if root.operation != 6 || root.partition-cut-kind == 0: Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : (root.can-raise-partition ? "Preview ridge" : "Preview flat pieces")) : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
-                    Text { text: root.preview-summary; wrap: word-wrap; color: Theme.warning; }
+                    if root.preview-summary != "": Text { text: root.preview-summary; wrap: word-wrap; color: Theme.warning; }
                     Rectangle { vertical-stretch: 1; }
                     if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }

@@ -27,6 +27,9 @@ fn group_row(
             .iter()
             .any(|member| selected.contains(&member.object)),
         object: false,
+        brush: members
+            .iter()
+            .all(|member| member.kind == "solid" || member.kind == "brush_entity"),
     }
 }
 
@@ -48,6 +51,7 @@ fn object_row(member: &ObjectReport, selected: &BTreeSet<map_core::ObjectId>) ->
         expanded: false,
         selected: selected.contains(&member.object),
         object: true,
+        brush: member.kind != "point_entity",
     }
 }
 
@@ -61,6 +65,7 @@ fn note_row(label: String) -> OutlinerRow {
         expanded: false,
         selected: false,
         object: false,
+        brush: false,
     }
 }
 

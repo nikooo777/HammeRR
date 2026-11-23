@@ -10,6 +10,7 @@ export struct OverlayTargetRow {
 }
 
 export component OverlayWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Overlay - HammeRR";
     preferred-width: 780px;
@@ -177,7 +178,7 @@ export component OverlayWindow inherits Window {
                                 height: 180px; background: Theme.field; border-color: Theme.border; border-width: 1px; border-radius: 4px;
                                 Image { width: parent.width; height: parent.height; source: root.material-image; image-fit: contain; }
                             }
-                            Text { text: root.material-detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
+                            if root.material-detail != "": Text { text: root.material-detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
                         }
                     }
                     if root.corners-mode: VerticalLayout {

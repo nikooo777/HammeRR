@@ -3,6 +3,7 @@ import { SelectableRow } from "kit.slint";
 import {Button,CheckBox,ComboBox,LineEdit,ListView,SpinBox} from "widgets.slint";
 export struct LayerRow {id:string,label:string,detail:string,color:color}
 export component LayersWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Layers - HammeRR";
     preferred-width:1040px;

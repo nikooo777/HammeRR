@@ -3,6 +3,7 @@ import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint"
 import { FieldRow, MutedText } from "kit.slint";
 
 export component ReferenceImagesWindow inherits Window {
+    default-font-size: Theme.font;
     title: "Reference images - HammeRR";
     background: Theme.panel;
     preferred-width: 760px;
@@ -41,7 +42,7 @@ export component ReferenceImagesWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: Theme.space-lg;
             Text { text: "Reference images"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
+            if root.status != "": Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
             FieldRow {
                 inset: false;
                 label: "Reference image";

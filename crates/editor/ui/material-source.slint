@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Button, TextEdit } from "widgets.slint";
 
 export component MaterialSourceWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Material source - HammeRR";
     preferred-width: 900px;
@@ -30,7 +31,7 @@ export component MaterialSourceWindow inherits Window {
         Text { text: "Mounted source and Patch includes"; font-weight: 600; }
         TextEdit { text: root.provenance; read-only: true; wrap: word-wrap; height: 145px; accessible-label: "Material source provenance"; }
         TextEdit { text: root.resolved; read-only: true; wrap: word-wrap; height: 180px; accessible-label: "Resolved material declarations"; }
-        Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
+        if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
         Text { text: "Selected VMT source"; font-weight: 600; }
         TextEdit { text: root.source; read-only: true; font-family: "monospace"; wrap: word-wrap; vertical-stretch: 1; accessible-label: "Raw VMT source"; }
         Text {

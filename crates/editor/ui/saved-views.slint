@@ -5,10 +5,13 @@ import { Button, LineEdit, ScrollView } from "widgets.slint";
 export struct SavedViewRow { id: string, name: string, projection: string }
 
 export component SavedViewsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Saved views - HammeRR";
-    width: 660px;
-    height: 590px;
+    preferred-width: 660px;
+    preferred-height: 590px;
+    min-width: 520px;
+    min-height: 420px;
     in property <[SavedViewRow]> views;
     in property <string> selected-id;
     in property <string> current;

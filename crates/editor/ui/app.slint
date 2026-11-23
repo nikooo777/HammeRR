@@ -110,6 +110,7 @@ component ConnectionField inherits VerticalLayout {
 }
 
 export component ConnectionWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Entity Connections - HammeRR";
     preferred-width: 1040px;
@@ -305,6 +306,7 @@ component RenameReference inherits VerticalLayout {
 }
 
 export component RenameWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Entity References and Rename - HammeRR";
     preferred-width: 920px;
@@ -365,7 +367,7 @@ export component RenameWindow inherits Window {
                 checked <=> root.rename-group;
                 toggled => { root.fields-changed(); }
             }
-            Text { text: root.summary; wrap: word-wrap; font-weight: 600; accessible-label: "Rename summary"; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; font-weight: 600; accessible-label: "Rename summary"; }
             if root.rename-group: Text { text: root.members; wrap: word-wrap; font-size: Theme.font; color: Theme.text-faint; }
             if root.references.length == 0: Text { text: root.has-proposal ? "No linked fields need updating." : "No references found."; wrap: word-wrap; }
             ListView {
@@ -392,7 +394,7 @@ export component RenameWindow inherits Window {
                 checked <=> root.show-details;
                 toggled => { root.fields-changed(); }
             }
-            Text { text: root.message; wrap: word-wrap; color: root.can-apply ? Theme.success : Theme.warning; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: root.can-apply ? Theme.success : Theme.warning; }
             HorizontalLayout {
                 spacing: 12px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
@@ -404,6 +406,7 @@ export component RenameWindow inherits Window {
 }
 
 export component EntityWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: root.brush-mode ? "Brush Entity - HammeRR" : "Place Entity - HammeRR";
     preferred-width: 900px;
@@ -522,6 +525,7 @@ export struct EntityFlag {
 }
 
 export component GameLogWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "CS:S Game Log - HammeRR";
     preferred-width: 900px;
@@ -579,6 +583,7 @@ export struct KeyValue {
 }
 
 export component ColorWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Choose Color - HammeRR";
     preferred-width: 680px;
@@ -757,6 +762,7 @@ export struct MaterialTile { name: string, preview: image, favorite: bool, sourc
 export struct MaterialTileRow { tiles: [MaterialTile] }
 
 export component MaterialWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     in property <bool> sprite-resource;
     title: "Choose Material - HammeRR";
@@ -850,7 +856,7 @@ export component MaterialWindow inherits Window {
             if root.shader-scan-status != "": ScrollView {
                 height: 64px;
                 content-width: self.visible-width;
-                Text { text: root.shader-scan-status; wrap: word-wrap; color: root.shader-scan-pending ? Theme.warning : Theme.text-muted; }
+                if root.shader-scan-status != "": Text { text: root.shader-scan-status; wrap: word-wrap; color: root.shader-scan-pending ? Theme.warning : Theme.text-muted; }
             }
             HorizontalLayout {
                 spacing: 16px;
@@ -960,7 +966,7 @@ export component MaterialWindow inherits Window {
             }
             if root.reload-status != "": ScrollView {
                 height: 70px;
-                Text { text: root.reload-status; wrap: word-wrap; vertical-alignment: top; }
+                if root.reload-status != "": Text { text: root.reload-status; wrap: word-wrap; vertical-alignment: top; }
             }
             FieldRow {
                 label: "Material"; label-width: 136px; inset: false;
@@ -978,6 +984,7 @@ export component MaterialWindow inherits Window {
 }
 
 export component TerrainWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Edit terrain - HammeRR";
     preferred-width: 520px;
@@ -1158,6 +1165,7 @@ export component TerrainWindow inherits Window {
 }
 
 export component SurfaceWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Face Textures - HammeRR";
     preferred-width: 620px;
@@ -1373,6 +1381,7 @@ component PropertyField inherits VerticalLayout {
     in property <KeyValue> field;
     in property <bool> advanced;
     in property <bool> model-browsing;
+    in property <length> label-width: 104px;
     property <bool> show-help;
     property <bool> browsable: root.field.control == "material" || (root.model-browsing && (root.field.control == "model" || root.field.control == "sound" || root.field.control == "particle"));
     property <bool> inline: root.field.control == "text" || root.field.control == "number" || root.field.control == "slider" || root.field.control == "choices" || root.field.control == "boolean" || root.field.control == "material" || root.field.control == "model" || root.field.control == "sound" || root.field.control == "particle";
@@ -1402,7 +1411,7 @@ component PropertyField inherits VerticalLayout {
         spacing: 8px;
         min-height: 26px;
         if root.inline: Text {
-            width: 104px;
+            width: root.label-width;
             text: root.field.label;
             color: Theme.text-muted;
             vertical-alignment: center;
@@ -1533,9 +1542,11 @@ export struct ManagedFieldRow {
     field: KeyValue,
     status: string,
     can-reset: bool,
+    can-remove: bool,
 }
 
 export component PropertiesWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Properties - HammeRR";
     preferred-width: 740px;
@@ -1579,8 +1590,9 @@ export component PropertiesWindow inherits Window {
             LineEdit { text <=> root.filter; placeholder-text: "Find a property…"; edited => { root.search(); } }
             ListView {
                 for row in root.fields: VerticalLayout {
-                    padding-bottom: 16px; spacing: 6px;
+                    padding-bottom: 16px; padding-right: Theme.space-lg; spacing: 6px;
                     PropertyField {
+                        label-width: 180px;
                         field: row.field;
                         edited(value) => { root.edit(row.field.key, value); }
                         component-edited(index, value) => { root.component-edit(row.field.key, index, value); }
@@ -1592,7 +1604,7 @@ export component PropertiesWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Use default"; enabled: row.can-reset && !row.field.read-only; clicked => { root.reset(row.field.key); } }
-                        Button { text: "Remove override"; enabled: !row.field.read-only; clicked => { root.remove(row.field.key); } }
+                        Button { text: "Remove override"; enabled: row.can-remove && !row.field.read-only; clicked => { root.remove(row.field.key); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -1621,6 +1633,7 @@ export struct RecoveryRow { id: string, title: string, detail: string }
 export struct CheckIssueRow { id: string, title: string, location: string, severity: string }
 
 export component ChecksWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Map checks - HammeRR";
     preferred-width: 1040px; preferred-height: 760px;
@@ -1843,7 +1856,7 @@ export component RecentMapsWindow inherits Window {
                 VerticalLayout {
                     alignment: start;
                     padding-right: Theme.space-lg;
-                    Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.selected-detail != "": Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
             if root.selection-stale: Text { text: "The saved list changed. Select the map again or reload before opening or locating it."; color: Theme.warning; wrap: word-wrap; }
@@ -1871,6 +1884,7 @@ export component RecentMapsWindow inherits Window {
 }
 
 export component RecoveryWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Recovery - HammeRR";
     preferred-width: 780px;
@@ -1984,6 +1998,7 @@ export component RecoveryWindow inherits Window {
 }
 
 export component PointfileWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Pointfile - HammeRR";
     preferred-width: 660px; preferred-height: 360px;
@@ -2053,11 +2068,12 @@ component StatisticCard inherits Rectangle {
         padding: 16px; spacing: 8px;
         Text { text: root.label; color: Theme.text-muted; }
         Text { text: root.value; font-size: 24px; font-weight: 600; }
-        Text { text: root.detail; font-size: Theme.font; color: Theme.text-muted; wrap: word-wrap; }
+        if root.detail != "": Text { text: root.detail; font-size: Theme.font; color: Theme.text-muted; wrap: word-wrap; }
     }
 }
 
 export component StatisticsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Map statistics - HammeRR";
     preferred-width: 840px; preferred-height: 680px;
@@ -2091,7 +2107,7 @@ export component StatisticsWindow inherits Window {
                 StatisticCard { label: "Brush sides"; value: root.faces; detail: root.face-detail; }
                 StatisticCard { label: "Entities"; value: root.entities; detail: root.entity-detail; }
             }
-            Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
+            if root.details != "": Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
                 ComboBox { width: 280px; model: ["Materials · sides", "Entity classes · entities", "Model paths · references", "Lightmap scales · sides", "Terrain powers · displacements"]; current-index <=> root.section; selected => { root.page = 0; root.refresh(); } }
@@ -2125,6 +2141,7 @@ export component StatisticsWindow inherits Window {
 }
 
 export component ReportWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Object report - HammeRR";
     preferred-width: 960px; preferred-height: 760px;
@@ -2274,6 +2291,7 @@ export struct OutlinerRow {
     expanded: bool,
     selected: bool,
     object: bool,
+    brush: bool,
 }
 
 export struct PaletteRow {
@@ -2862,7 +2880,7 @@ export component AppWindow inherits Window {
         { id: "overlay", title: "Overlay…", group: "Brush › Materials", enabled: true },
         { id: "place-entity", title: "Place entity…", group: "Entity", enabled: true },
         { id: "place-rope", title: "Place rope…", group: "Entity", enabled: true },
-        { id: "batch-properties", title: "Edit selected entity properties…", group: "Entity", enabled: true },
+        { id: "batch-properties", title: "Edit selected entity properties…", group: "Entity", enabled: root.whole-entity-selection },
         { id: "change-entity-class", title: "Change entity classes…", group: "Entity", enabled: root.whole-entity-selection },
         { id: "browse-model", title: "Choose models…", group: "Entity", enabled: root.whole-entity-selection },
         { id: "browse-sound", title: "Choose sounds…", group: "Entity", enabled: root.whole-entity-selection },
@@ -3230,7 +3248,7 @@ export component AppWindow inherits Window {
             title: "Entity";
             MenuItem { title: "Place entity…"; activated => { root.place-entity(); } }
             MenuItem { title: "Place rope…"; activated => { root.place-rope(); } }
-            MenuItem { title: "Edit selected entity properties…"; activated => { root.batch-properties(); } }
+            MenuItem { title: "Edit selected entity properties…"; enabled: root.whole-entity-selection; activated => { root.batch-properties(); } }
             MenuItem { title: "Change entity classes…"; enabled: root.whole-entity-selection; activated => { root.change-entity-class(); } }
             MenuItem { title: "Choose models…"; enabled: root.whole-entity-selection; activated => { root.browse-model(); } }
             MenuItem { title: "Choose sounds…"; enabled: root.whole-entity-selection; activated => { root.browse-sound(""); } }
@@ -4308,7 +4326,7 @@ export component AppWindow inherits Window {
                                             y: (parent.height - self.height) / 2;
                                             width: 14px;
                                             height: 14px;
-                                            source: row.key == "world" ? Icon.block : Icon.entity;
+                                            source: row.brush ? Icon.block : Icon.entity;
                                             colorize: row.selected ? Theme.accent : Theme.text-muted;
                                         }
                                         Text {

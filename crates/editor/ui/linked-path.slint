@@ -5,6 +5,7 @@ import {Button, CheckBox, ComboBox, LineEdit, ScrollView} from "widgets.slint";
 export struct LinkedPathPoint { label: string, x: string, y: string, z: string, link: string, id: string, name: string }
 
 export component LinkedPathWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: root.existing ? "Edit linked path - HammeRR" : "Create linked path - HammeRR";
     preferred-width: 980px;

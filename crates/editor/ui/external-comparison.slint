@@ -3,6 +3,7 @@ import { Button, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct ComparisonRow { title: string, detail: string }
 export component ExternalComparisonWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Compare external map - HammeRR";
     preferred-width: 940px;
@@ -51,7 +52,7 @@ export component ExternalComparisonWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
             }
             Text { text: root.file; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.summary; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 ComboBox { model: ["All statuses", "Identical", "Changed", "Current only", "External only", "Ambiguous"]; current-value <=> root.status; enabled: !root.busy; selected => { root.filter-changed(); } }

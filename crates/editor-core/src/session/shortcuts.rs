@@ -220,9 +220,14 @@ impl Session {
     }
 
     pub fn delete_objects(&mut self, actor: Actor, ids: &[ObjectId]) -> Result<(), String> {
-        self.edit(actor, &format!("delete {} objects", ids.len()), |tx| {
-            edit::delete(tx, ids)
-        })
+        self.edit(
+            actor,
+            &format!(
+                "delete {}",
+                crate::count::count(ids.len(), "object", "objects")
+            ),
+            |tx| edit::delete(tx, ids),
+        )
     }
 
     pub fn duplicate_objects(
@@ -231,9 +236,14 @@ impl Session {
         ids: &[ObjectId],
         offset: DVec3,
     ) -> Result<Vec<ObjectId>, String> {
-        let copies = self.edit(actor, &format!("duplicate {} objects", ids.len()), |tx| {
-            edit::duplicate(tx, ids, offset)
-        })?;
+        let copies = self.edit(
+            actor,
+            &format!(
+                "duplicate {}",
+                crate::count::count(ids.len(), "object", "objects")
+            ),
+            |tx| edit::duplicate(tx, ids, offset),
+        )?;
         self.select(&copies, SelectMode::Replace)?;
         Ok(copies)
     }

@@ -207,7 +207,7 @@ export component RepeatWindow inherits Window {
                     if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
                 }
             }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: Theme.row-height; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

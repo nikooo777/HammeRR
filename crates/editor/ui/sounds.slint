@@ -5,6 +5,7 @@ import {Button, ComboBox, LineEdit, ListView, ScrollView, Slider} from "widgets.
 export struct SoundChoiceRow {value:string,name:string,detail:string}
 
 export component SoundBrowserWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Choose sound - HammeRR";
     preferred-width:960px;preferred-height:700px;

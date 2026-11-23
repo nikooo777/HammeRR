@@ -283,7 +283,7 @@ export component EntityGraphWindow inherits Window {
                         if root.selection-details != "": VerticalLayout {
                             spacing: Theme.space;
                             SectionHeader { text: root.chosen-node != "" ? "Selected node" : "Selected relationship"; inset: false; collapsible: false; }
-                            Text { text: root.selection-details; color: Theme.text; wrap: word-wrap; }
+                            if root.selection-details != "": Text { text: root.selection-details; color: Theme.text; wrap: word-wrap; }
                             if root.chosen-node != "": HorizontalLayout {
                                 spacing: Theme.space;
                                 Button { text: "Select owner"; enabled: root.can-act; clicked => { root.select-node(); } }

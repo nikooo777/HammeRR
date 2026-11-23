@@ -2,6 +2,7 @@ import { Theme, FieldRow, SectionHeader } from "kit.slint";
 import { Button, ComboBox, LineEdit, ScrollView, Slider, Switch } from "widgets.slint";
 
 export component FogWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Fog preview - HammeRR";
     preferred-width: 760px;
@@ -398,7 +399,7 @@ export component FogWindow inherits Window {
                         Text { text: "Enter and Leave record explicit touches at the current preview time. One virtual alive player starts outside every source. Camera movement does not detect touches."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Current settings"; inset: false; collapsible: false; }
-                    Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }
+                    if root.detail != "": Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }
                     if root.scope != "": SectionHeader { text: "Preview limits"; inset: false; expanded <=> root.limits-expanded; }
                     if root.scope != "" && root.limits-expanded: Text { text: root.scope; color: Theme.text-faint; wrap: word-wrap; }
                 }

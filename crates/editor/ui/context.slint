@@ -5,6 +5,7 @@ import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, TextEdit } fr
 export struct ContextRow { scope: string, summary: string, detail: string }
 
 export component ContextWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Design context - HammeRR";
     preferred-width: 1120px; preferred-height: 850px;

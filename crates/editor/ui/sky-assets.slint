@@ -9,6 +9,7 @@ export struct SkyAssetFaceRow {
 }
 
 export component SkyAssetsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Sky assets - HammeRR";
     preferred-width: 980px;
@@ -37,7 +38,7 @@ export component SkyAssetsWindow inherits Window {
         spacing: 10px;
         Text { text: "Sky assets"; font-size: Theme.font-display; font-weight: 600; }
         Text { text: root.family; wrap: word-wrap; }
-        Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+        if root.summary != "": Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
         if root.issues != "": TextEdit {
             text: root.issues;
             read-only: true;
@@ -83,7 +84,7 @@ export component SkyAssetsWindow inherits Window {
                 }
             }
         }
-        Text { text: root.read-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+        if root.read-summary != "": Text { text: root.read-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
         Text { text: root.scope; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
         Text {
             text: "Inspects the applied world skyname. Apply properties before inspecting pending sky changes. Viewport Sky channel selects LDR or a stricter HDR editor preview. Structural readiness does not validate HDR pixel radiance. This inspection does not pack custom sky assets.";

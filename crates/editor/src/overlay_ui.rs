@@ -624,14 +624,11 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
         )
         .into()
     } else {
-        state[if session.face_mode() {
-            "selection_error"
-        } else {
-            "refit_error"
-        }]
-        .as_str()
-        .unwrap_or("Select world/detail faces or terrain patches with a common projection plane")
-        .into()
+        idle_hint(&state, session)
+            .unwrap_or(
+                "Select world/detail faces or terrain patches with a common projection plane",
+            )
+            .into()
     });
     let corners = if matches && draft["valid"] == true && form.reviewed.is_some() {
         &draft["corners"]
@@ -650,6 +647,20 @@ fn refresh(window: &OverlayWindow, session: &Session, form: &RefCell<Form>) {
     } else if context_refreshed && window.get_ready() {
         window.set_message("".into());
     }
+}
+
+fn idle_hint<'a>(state: &'a Value, session: &Session) -> Option<&'a str> {
+    if !session.face_mode() && session.selection().is_empty() {
+        return Some(
+            "Select faces in Faces mode to fit a new overlay, or select one overlay to refit or edit",
+        );
+    }
+    state[if session.face_mode() {
+        "selection_error"
+    } else {
+        "refit_error"
+    }]
+    .as_str()
 }
 
 fn edited(window: &OverlayWindow, session: &mut Session, form: &RefCell<Form>) {
@@ -1194,7 +1205,7 @@ impl Controller {
         self.window
             .set_water_transition(state["selected_overlay"]["water_transition"] == true);
         self.window.set_material(material.into());
-        self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Edit selected corners uses the stored projection axes. For Refit selected overlay, choose a reference face whose current edges set the new axes." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { state[if session.face_mode() { "selection_error" } else { "refit_error" }].as_str().unwrap_or("Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview.") }.into());
+        self.window.set_message(if state["selected_overlay"]["reference_required"] == true { "Edit selected corners uses the stored projection axes. For Refit selected overlay, choose a reference face whose current edges set the new axes." } else if !state["selected_overlay"].is_null() { "Edit selected corners adjusts the current projection; Refit selected overlay fits its full bound face." } else { if idle_hint(&state, session).is_some() { "" } else { "Choose a material, then Fit / Preview. Review current draft loads a shared overlay preview." } }.into());
         refresh_material(&self.window, session);
         refresh(&self.window, session, &self.form);
         self.window.show()

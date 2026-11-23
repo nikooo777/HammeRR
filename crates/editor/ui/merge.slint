@@ -4,6 +4,7 @@ import { Button, CheckBox, ListView } from "widgets.slint";
 export struct MergeRow { solid: string, label: string, selected: bool }
 
 export component MergeWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Merge brushes - HammeRR";
     preferred-width: 780px; preferred-height: 580px;
@@ -38,7 +39,7 @@ export component MergeWindow inherits Window {
                     toggled => { root.choose-source(source.solid); }
                 }
             }
-            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
+            if root.summary != "": Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             Text { text: "The lowest brush ID keeps its ID and brush metadata. Outer faces keep their original material, world texture projection and lighting. On shared planes, the lowest brush ID wins."; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }

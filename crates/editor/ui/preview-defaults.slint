@@ -8,6 +8,7 @@ export struct PreviewDefaultRow {
 }
 
 export component PreviewDefaultsWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Preview defaults - HammeRR";
     preferred-width: 720px;
@@ -56,11 +57,11 @@ export component PreviewDefaultsWindow inherits Window {
                     }
                     Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
                     Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
-                    Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+                    if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
                     Text { text: "These 13 settings are saved. Sky channel and exposure, fog, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: root.message; wrap: word-wrap; min-height: 34px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Reload defaults"; clicked => { root.reload(); } }

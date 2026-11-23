@@ -2,7 +2,7 @@
 
 # Overlays
 
-Project a material across selected map faces. Use a [decal](#place-a-decal) for a mark from one point in CS:S.
+Project a material across selected map faces. Use a [decal](#place-a-decal) for a mark from one point in CS:S, or a [water transition](#place-a-water-transition) to blend a shoreline.
 
 ## Create an overlay
 

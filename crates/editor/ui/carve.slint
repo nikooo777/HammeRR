@@ -5,6 +5,7 @@ import { FieldRow, SectionHeader, SelectableRow } from "kit.slint";
 export struct CarveRow { solid: string, label: string, selected: bool, cutter: bool, terrain: bool }
 
 export component CarveWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Carve brushes - HammeRR";
     preferred-width: 820px; preferred-height: 850px;

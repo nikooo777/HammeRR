@@ -21,6 +21,7 @@ stroke or a two-stroke sequence, with logical keys or physical key positions.
 
 Logical keys follow the keyboard layout. Physical keys use the selected key
 position, such as **KeyW**, regardless of the character produced by that key.
+The command list and hints show the printed key, such as W.
 Changing **Key type** clears that stroke's **Key** selection; choose the key again.
 To enter a sequence, press its first stroke, release it, then press its second
 stroke within one second. **Escape** cancels a pending sequence. A mismatched

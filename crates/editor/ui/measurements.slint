@@ -275,7 +275,7 @@ export component MeasurementsWindow inherits Window {
                     }
                 }
             }
-            Text { text: root.message; color: Theme.text-muted; min-height: 36px; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

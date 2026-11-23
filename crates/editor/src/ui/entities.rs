@@ -69,7 +69,10 @@ pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Ve
                 size_text(query::entity_bounds(entity))
             };
             if !entity.solids.is_empty() {
-                detail += &format!(" · {} brushes", entity.solids.len());
+                detail += &format!(
+                    " · {}",
+                    crate::count::count(entity.solids.len(), "brush", "brushes")
+                );
             }
             let rows = entity_property_rows(session, entity);
             (title, detail, Some(rows))
@@ -103,7 +106,7 @@ pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Ve
             )
         }
         _ => (
-            format!("{} objects", ids.len()),
+            crate::count::count(ids.len(), "object", "objects"),
             size_text(query::bounds_of(doc, &ids)),
             None,
         ),

@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Button, CheckBox, LineEdit } from "widgets.slint";
 
 export component ColorCorrectionWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "Color correction - HammeRR";
     preferred-width: 720px;
@@ -22,7 +23,7 @@ export component ColorCorrectionWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: 16px;
             Text { text: "Color correction"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Source .raw LUT path"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;

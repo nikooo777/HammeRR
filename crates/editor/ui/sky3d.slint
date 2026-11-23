@@ -2,6 +2,7 @@ import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export component Sky3dWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title: "3D sky preview - HammeRR";
     preferred-width: 760px;
@@ -31,7 +32,7 @@ export component Sky3dWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: 12px;
             Text { text: "3D sky preview"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+            if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Sky camera"; font-weight: 600; }
             ComboBox {
                 accessible-label: "3D sky camera";
@@ -62,7 +63,7 @@ export component Sky3dWindow inherits Window {
                     alignment: start;
                     padding-right: Theme.space-lg;
                     spacing: 12px;
-                    Text { text: root.detail; wrap: word-wrap; }
+                    if root.detail != "": Text { text: root.detail; wrap: word-wrap; }
                     if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: Theme.warning; }
                     Text {
                         text: "Perspective · Textured. Choose a sky_camera and prepare its sealed region.\n\nSupported profiles include whole terrain, fixed models, grates and glass. Changed consumed assets retire the preview; prepare again.\n\nThe selected camera supplies static fog. SKY2D keeps its 2D background. Intersecting glass can blend in the wrong order. Native clipping, PVS and pixel parity are unavailable.";

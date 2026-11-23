@@ -4,6 +4,7 @@ import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "widgets.slint";
 export struct PolygonCorner { label:string, u:string, v:string, x:float, y:float }
 
 export component PolygonWindow inherits Window {
+    default-font-size: Theme.font;
     background: Theme.panel;
     title:"Draw polygon - HammeRR";preferred-width:900px;preferred-height:740px;
     in-out property <int> axis:2;

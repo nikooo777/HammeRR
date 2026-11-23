@@ -761,10 +761,11 @@ export component MaterialWindow inherits Window {
     in property <bool> sprite-resource;
     title: "Choose Material - HammeRR";
     preferred-width: 1180px;
-    preferred-height: 760px;
+    preferred-height: 680px;
     in-out property <string> filter;
     in-out property <int> match-mode;
     in-out property <string> shader-filter;
+    in-out property <bool> search-pending;
     in property <string> shader-scan-status;
     in property <bool> shader-scan-pending;
     in-out property <string> material;
@@ -793,6 +794,7 @@ export component MaterialWindow inherits Window {
     in property <string> detail;
     in property <bool> available;
     callback search();
+    callback queue-search();
     callback preview-material();
     callback preview-layer-changed();
     callback continue-shader-scan();
@@ -802,9 +804,14 @@ export component MaterialWindow inherits Window {
     callback reload-material-assets();
     callback inspect-source();
     callback cancel();
+    function search-edited() {
+        root.offset = 0;
+        root.search-pending = true;
+        root.queue-search();
+    }
     Timer {
         interval: 100ms;
-        running: root.shader-scan-pending;
+        running: root.shader-scan-pending && !root.search-pending;
         triggered => { root.continue-shader-scan(); }
     }
     forward-focus: dialog-focus;
@@ -818,7 +825,7 @@ export component MaterialWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 12px;
             Text { text: "Choose a material"; font-size: Theme.font-display; font-weight: 600; }
-            LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.offset = 0; root.search(); } }
+            LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.search-edited(); } accepted => { root.search(); } }
             HorizontalLayout {
                 spacing: Theme.space-lg;
                 FieldRow {
@@ -827,7 +834,7 @@ export component MaterialWindow inherits Window {
                 }
                 FieldRow {
                     label: "Shader"; label-width: 52px; inset: false; horizontal-stretch: 1;
-                    LineEdit { text <=> root.shader-filter; placeholder-text: "All shaders · e.g. WorldVertexTransition"; accessible-label: "Exact resolved shader filter"; edited => { root.offset = 0; root.search(); } }
+                    LineEdit { text <=> root.shader-filter; placeholder-text: "All shaders · e.g. WorldVertexTransition"; accessible-label: "Exact resolved shader filter"; edited => { root.search-edited(); } accepted => { root.search(); } }
                 }
             }
             HorizontalLayout {
@@ -849,7 +856,7 @@ export component MaterialWindow inherits Window {
                 spacing: 16px;
                 vertical-stretch: 1;
                 ListView {
-                    width: 210px;
+                    width: 180px;
                     for group in root.groups: SelectableRow {
                         height: 30px;
                         label: group.label;
@@ -867,20 +874,23 @@ export component MaterialWindow inherits Window {
                 }
                 VerticalLayout {
                     spacing: 8px;
-                    Text { text: root.catalog-label; color: Theme.text-muted; }
+                    Text { text: root.search-pending ? "Updating results…" : root.catalog-label; color: Theme.text-muted; }
                     ListView {
                         vertical-stretch: 1;
+                        content-width: self.width;
                         for row in root.rows: HorizontalLayout {
                             spacing: 8px;
                             padding-bottom: 8px;
+                            min-width: 0px;
+                            width: parent.width;
                             for tile in row.tiles: Rectangle {
-                                width: 165px;
+                                width: max(0px, (parent.width - 16px) / 3);
                                 height: 188px;
                                 background: root.material == tile.name ? Theme.selection : Theme.control-strong;
                                 border-radius: 6px;
                                 accessible-role: button;
                                 accessible-label: tile.name + (tile.preview-error == "" ? "" : ": " + tile.preview-error);
-                                accessible-action-default => { root.material = tile.name; root.preview-material(); }
+                                accessible-action-default => { if !root.search-pending { root.material = tile.name; root.preview-material(); } }
                                 VerticalLayout {
                                     padding: 8px;
                                     spacing: 6px;
@@ -889,51 +899,51 @@ export component MaterialWindow inherits Window {
                                         Image { width: parent.width; height: parent.height; source: tile.preview; image-fit: contain; }
                                         if tile.preview-error != "": Text { text: root.preview-layer == 1 ? "Layer 2 unavailable" : "Image unavailable"; color: Theme.warning; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
                                     }
-                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: Theme.font-small; }
+                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; overflow: elide; font-size: Theme.font-small; }
                                     Text { text: tile.source; overflow: elide; font-size: 10px; color: Theme.text-muted; }
                                 }
-                                TouchArea { clicked => { root.material = tile.name; root.preview-material(); } }
+                                TouchArea { enabled: !root.search-pending; clicked => { root.material = tile.name; root.preview-material(); } }
                             }
                         }
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        Button { text: "Previous"; enabled: root.offset > 0; clicked => { root.offset = max(0, root.offset - 36); root.search(); } }
-                        Button { text: "Next"; enabled: root.offset + 36 < root.total; clicked => { root.offset += 36; root.search(); } }
+                        Button { text: "Previous"; enabled: !root.search-pending && root.offset > 0; clicked => { root.offset = max(0, root.offset - 36); root.search(); } }
+                        Button { text: "Next"; enabled: !root.search-pending && root.offset + 36 < root.total; clicked => { root.offset += 36; root.search(); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
-                VerticalLayout {
+                ScrollView {
                     width: 230px;
-                    spacing: 10px;
-                    ComboBox { model: ["Layer 1 · Editor display", "Layer 2 · $basetexture2"]; current-index <=> root.preview-layer; selected => { root.preview-layer-changed(); } }
-                    Rectangle {
-                        height: 220px;
-                        background: Theme.field;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        preview-image := Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
-                        if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
-                    }
-                    HorizontalLayout {
-                        spacing: Theme.space;
-                        Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
-                        Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
-                    }
-                    details-scroll := ScrollView {
-                        vertical-stretch: 1;
-                        content-width: self.visible-width;
+                    content-width: self.width;
+                    VerticalLayout {
+                        spacing: 10px;
+                        alignment: start;
+                        padding-right: Theme.space-lg;
+                        ComboBox { model: ["Layer 1 · Editor display", "Layer 2 · $basetexture2"]; current-index <=> root.preview-layer; selected => { root.preview-layer-changed(); } }
+                        Rectangle {
+                            height: 150px;
+                            background: Theme.field;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            Image { width: parent.width; height: parent.height; source: root.preview; image-fit: contain; }
+                            if !root.available: Text { text: "No texture preview"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Color"; enabled: root.preview-channel != 0; clicked => { root.preview-channel = 0; root.preview-material(); } }
+                            Button { text: "Alpha"; enabled: root.preview-channel != 1; clicked => { root.preview-channel = 1; root.preview-material(); } }
+                        }
+                        Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
+                        Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
+                        Button { text: "Reload favorites"; enabled: root.favorites-reload-available; clicked => { root.reload-favorites(); } }
+                        if root.favorites-status != "": Text { text: root.favorites-status; wrap: word-wrap; font-size: Theme.font-small; color: Theme.text-muted; }
                         Text {
-                            width: details-scroll.visible-width - 16px;
                             text: root.detail;
                             wrap: word-wrap;
                         }
                     }
-                    Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
-                    Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
-                    Button { text: "Reload favorites"; enabled: root.favorites-reload-available; clicked => { root.reload-favorites(); } }
-                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: Theme.font-small; color: Theme.text-muted; }
                 }
             }
             if root.reload-status != "": ScrollView {

@@ -26,7 +26,7 @@ carry physical-source provenance; use **Reload material assets** after changes.
 
 ## Explore material names and shaders
 
-1. Open **Browse materials…** and enter the material-name query.
+1. Open **Browse materials…** and enter the material-name query. Results update after you stop typing. Press <kbd>Enter</kbd> to search immediately.
 2. Choose **Name match → Substring**, **Prefix** or **Regex**. Prefix starts at the beginning of the material path. Regex supports expressions such as `^nature/blend.*(grass|dirt)`.
 3. Optionally enter an exact **Shader**, such as `WorldVertexTransition` or `Water`. Leave it blank for all shaders.
 4. Combine these choices with **Winning VMT source**, **Exclude maps/ materials**,

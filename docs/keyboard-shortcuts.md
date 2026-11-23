@@ -52,11 +52,17 @@ File and clipboard factory bindings are <kbd>Ctrl</kbd>+<kbd>N</kbd>, <kbd>Ctrl<
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Ctrl</kbd>+<kbd>V</kbd>, respectively. They run
 the same editor controls, including existing dialogs and review steps.
 
-Camera factory bindings are **W**, **S**, **A**, **D**, **E** and **Q**,
-respectively. Camera directions allow single strokes only. Their binding
-**Shift** stays off because holding **Shift** independently boosts movement
-speed. Held movement stops when the originating key is released, even if its
-modifiers have changed.
+Camera factory bindings use the physical positions **KeyW**, **KeyS**, **KeyA**,
+**KeyD**, **KeyE** and **KeyQ**, respectively. To switch a saved camera binding,
+choose **Physical key** under **Key type** and select the corresponding position.
+Camera directions allow single strokes only. Hold <kbd>Shift</kbd> to boost
+movement speed. Release the original key to stop movement. **Frame selection**
+uses the physical position **KeyF** by default.
+
+**Undo** uses logical <kbd>Ctrl</kbd>+<kbd>Z</kbd> by default. To use the same key
+position across layouts, choose **Physical key**, **KeyZ** and **Ctrl** for
+**Undo**. Click the viewport before undoing a map edit. In a text field,
+<kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the last text edit.
 
 ## Limits
 
@@ -72,7 +78,7 @@ modifiers have changed.
   physical bindings reject when they could match the same key input.
 - Projection, selection-mode, display, transform, authoring and editor-visibility
   commands start unbound. Older files retain their existing bindings and add
-  the new file, clipboard and camera factory bindings.
+  the original file, clipboard and logical camera bindings for any missing fields.
 - Hide requires selected objects and committed geometry. Show all restores only
   temporary editor-hidden objects, including during a preview.
 - Changing Objects/Faces clears obsolete selection and drafts. Faces also stops

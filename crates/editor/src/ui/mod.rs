@@ -4242,6 +4242,6 @@ fn create_document_window(
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{
-    bind_material_reload_with_access, common_face_number, preview_image, refresh_material_catalog,
-    refresh_material_window, review_material_choice,
+    bind_material_reload_with_access, bind_material_search_input, common_face_number,
+    preview_image, refresh_material_catalog, refresh_material_window, review_material_choice,
 };

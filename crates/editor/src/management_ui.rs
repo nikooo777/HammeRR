@@ -449,6 +449,7 @@ fn bind_material(
     access: &DocumentAccess,
 ) -> Result<MaterialWindow, slint::PlatformError> {
     let window = MaterialWindow::new()?;
+    crate::ui::bind_material_search_input(&window);
     crate::ui::bind_material_reload_with_access(&window, access);
     let target = Rc::new(RefCell::new(None::<(u64, String)>));
     parent.on_pick_material({

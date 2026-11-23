@@ -44,11 +44,11 @@ Highlighted rows contain the current selection. Large groups show their first 50
 
 | Action | Control |
 | --- | --- |
-| Fly | Hold the right mouse button to look. Move with <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>, and <kbd>Q</kbd> / <kbd>E</kbd> for down and up; change them in [Keyboard shortcuts](keyboard-shortcuts.md). The cursor locks and hides until you release the button. |
+| Fly | Hold the right mouse button to look. Move with the physical <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> positions, and <kbd>Q</kbd> / <kbd>E</kbd> for down and up. Change them in [Keyboard shortcuts](keyboard-shortcuts.md). The cursor locks and hides until you release the button. |
 | Fly faster | Hold <kbd>Shift</kbd> while flying. |
 | Planar pan / zoom | Right-drag / mouse wheel. |
 | Change projection | Use the projection menu in the viewport header: **Perspective**, **Top · XY**, **Front · XZ**, **Side · YZ**. |
-| Frame the selection | <kbd>F</kbd>, or **Frame selection** in the viewport header. With no selection, frame the map. |
+| Frame the selection | The physical <kbd>F</kbd> position, or **Frame selection** in the viewport header. With no selection, frame the map. |
 | Select / toggle | Click / <kbd>Ctrl</kbd>+click. |
 | Select an area | Drag on empty space; release to select. |
 | Duplicate / delete | <kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Del</kbd>. |

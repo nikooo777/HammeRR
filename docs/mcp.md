@@ -156,6 +156,8 @@ Each chord requires `key`, `control` and `shift`. Optional `alt`, `meta` and
 otherwise use a reported logical key such as `G`. Each stroke has its own exact
 modifiers. Sequences contain exactly two chords. Camera direction bindings allow
 one stroke and require `shift:false`; Shift independently boosts held movement.
+Factory bindings for camera directions and **Frame selection** use physical key
+positions. Saved bindings retain their configured key type.
 
 Saving rejects invalid names, duplicate or ambiguous bindings, single strokes
 that are also sequence prefixes, and reserved combinations. Escape and exact Ctrl+K stay reserved.

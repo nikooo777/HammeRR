@@ -259,13 +259,17 @@ pub struct Bindings {
 }
 
 fn chord(key: &str, control: bool, shift: bool) -> Option<Binding> {
+    chord_with_key_type(key, control, shift, false)
+}
+
+fn chord_with_key_type(key: &str, control: bool, shift: bool, physical: bool) -> Option<Binding> {
     Some(Binding::Single(Chord {
         key: key.into(),
         control,
         shift,
         alt: false,
         meta: false,
-        physical: false,
+        physical,
     }))
 }
 
@@ -321,6 +325,10 @@ fn camera_down_default() -> Slots {
     [chord("Q", false, false), None]
 }
 
+fn physical_position(key: &str) -> Slots {
+    [chord_with_key_type(key, false, false, true), None]
+}
+
 impl Default for Bindings {
     fn default() -> Self {
         Self {
@@ -333,7 +341,7 @@ impl Default for Bindings {
             paste: paste_default(),
             undo: [chord("Z", true, false), None],
             redo: [chord("Z", true, true), chord("Y", true, false)],
-            frame_selection: [chord("F", false, false), None],
+            frame_selection: physical_position("KeyF"),
             delete_selection: [
                 chord("Delete", false, false),
                 chord("Backspace", false, false),
@@ -357,12 +365,12 @@ impl Default for Bindings {
             clip_mode: [None, None],
             hide_selection_in_editor: [None, None],
             show_all_editor_hidden: [None, None],
-            camera_forward: camera_forward_default(),
-            camera_backward: camera_backward_default(),
-            camera_left: camera_left_default(),
-            camera_right: camera_right_default(),
-            camera_up: camera_up_default(),
-            camera_down: camera_down_default(),
+            camera_forward: physical_position("KeyW"),
+            camera_backward: physical_position("KeyS"),
+            camera_left: physical_position("KeyA"),
+            camera_right: physical_position("KeyD"),
+            camera_up: physical_position("KeyE"),
+            camera_down: physical_position("KeyQ"),
         }
     }
 }

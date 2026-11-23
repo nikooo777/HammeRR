@@ -1,6 +1,7 @@
 use super::*;
 use editor_core::runtime::{DocumentAccess, DocumentContinuation};
 use slint::Model;
+use std::time::Duration;
 
 pub(crate) fn preview_image(preview: &session::MaterialPreview) -> slint::Image {
     preview
@@ -156,6 +157,7 @@ fn with_material_window<R>(
         Err(error) => {
             window.set_detail(error.into());
             window.set_shader_scan_pending(false);
+            window.set_search_pending(false);
             None
         }
     }
@@ -181,6 +183,28 @@ fn bind_material_preview_with_access(window: &MaterialWindow, access: &DocumentA
                 refresh_material_window(window, &mut lock(shared));
             });
         }
+    });
+}
+
+pub(crate) fn bind_material_search_input(window: &MaterialWindow) {
+    let window_ref = window.as_weak();
+    let timer = slint::Timer::default();
+    window.on_queue_search(move || {
+        let window_ref = window_ref.clone();
+        timer.start(
+            slint::TimerMode::SingleShot,
+            Duration::from_millis(160),
+            move || {
+                if let Some(window) = window_ref.upgrade()
+                    && window.get_search_pending()
+                {
+                    window.set_search_pending(false);
+                    if window.window().is_visible() {
+                        window.invoke_search();
+                    }
+                }
+            },
+        );
     });
 }
 
@@ -216,6 +240,7 @@ fn bind_material_search_with_access(
             };
             if !alive() {
                 window.set_shader_scan_pending(false);
+                window.set_search_pending(false);
                 return;
             }
             with_material_window(&window.as_weak(), &target, |window, shared| {
@@ -990,6 +1015,7 @@ fn refresh_material_catalog_with_favorites(
     session: &mut Session,
     favorites: &material_favorites::Snapshot,
 ) {
+    window.set_search_pending(false);
     window.set_favorites_revision(favorites.serial.to_string().into());
     window.set_fgd_definitions_state(definitions_state(session).into());
     refresh_favorites_status(window, favorites);
@@ -1347,6 +1373,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         };
         let access = file_access(ui);
         let owner = Rc::downgrade(ui);
+        bind_material_search_input(&window);
         bind_material_search_with_access(&window, &access, {
             let owner = owner.clone();
             move || owner.upgrade().is_some()

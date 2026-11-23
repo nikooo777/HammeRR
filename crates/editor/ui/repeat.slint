@@ -34,7 +34,7 @@ component RangeRow inherits HorizontalLayout {
 export component RepeatWindow inherits Window {
     background: Theme.panel;
     default-font-size: Theme.font;
-    title: root.scatter-mode ? "Surface scatter" : "Repeat array";
+    title: (root.scatter-mode ? "Surface scatter" : "Repeat array") + " - HammeRR";
     preferred-width: Theme.workspace-dialog-width;
     preferred-height: Theme.workspace-dialog-height;
     in property <bool> scatter-mode;

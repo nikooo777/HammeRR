@@ -3,7 +3,7 @@ import { Button, LineEdit, ScrollView } from "widgets.slint";
 import { FieldRow, SectionHeader } from "kit.slint";
 
 export component BulkEntitiesWindow inherits Window {
-    title: root.move-to-world ? "Move to world" : "Change entity classes";
+    title: (root.move-to-world ? "Move to world" : "Change entity classes") + " - HammeRR";
     background: Theme.panel;
     default-font-size: Theme.font;
     preferred-width: 660px;

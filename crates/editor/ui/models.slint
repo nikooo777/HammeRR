@@ -3,7 +3,7 @@ import {Button, CheckBox, ComboBox, ListView} from "widgets.slint";
 
 export component ModelWindow inherits Window {
     background: Theme.panel;
-    title:"Model details";
+    title:"Model details - HammeRR";
     preferred-width:620px;
     preferred-height:min(850px, 380px + root.materials.length * 20px + root.bodygroups.length * 40px + (root.attachments.length>0 ? 170px : 0px));
     in property <string> model-path;

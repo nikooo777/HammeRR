@@ -17,6 +17,19 @@ Show small surface detail without adding geometry.
 For authored lights, set **Overlays → Lighting → Quality** to **Detail · per-fragment**. Fast lighting cannot use normal maps.
 Use **Reload material assets** after changing material files.
 
+## Preview model highlights
+
+1. Add `models/props_combine/combine_mine01.mdl` or a supported Phong model.
+2. Choose **Textured** and enable **Normal map preview**.
+3. Open **Overlays**. Enable **Unshadowed authored lighting** under **Lighting**.
+4. Select **Detail · per-fragment**, then move the camera around the model.
+
+Opaque `VertexLitGeneric` models can use fixed-exponent Phong with the mask in
+the bump texture alpha. The material needs explicit `$phong`, `$phongexponent`,
+`$phongboost` and `$phongfresnelranges`. The highlight uses direct authored
+lights. Exponent textures, alternate masks, environments and material proxies
+are outside this profile.
+
 ## Limits
 
 - Flat `LightmappedGeneric` brush faces and world or `func_detail` terrain. Terrain also supports plain two-base `WorldVertexTransition`.
@@ -26,7 +39,7 @@ Use **Reload material assets** after changing material files.
 - Authored static and reference-pose models require **Normal** render mode, plain opaque `VertexLitGeneric`, and valid tangents in the VVD. The tangent cache holds up to 32 MiB.
 - Two-base terrain and models require identity texture transforms. `LightmappedGeneric` requires an identity base transform and supports positive normal-map scale and translation with zero rotation.
 - At most 1,048,576 expanded terrain triangle vertices per prepared scene. Other terrain stays explicitly unavailable for this effect.
-- No specular, reflections, animation or game brightness match.
+- No environment reflections, animation or game brightness match.
 - Unsupported surfaces keep their ordinary display and report why the effect is unavailable.
 
 <!-- page-nav -->

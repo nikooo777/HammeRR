@@ -11,13 +11,32 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmt::{Material, material_path, texture_path};
 use source_formats::vtf::Vtf;
 
+pub(crate) mod detail;
 mod emission;
+mod phong;
+pub(crate) mod uv;
 
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
 pub const MAX_RELOAD_FAILURES: usize = 100;
 // Point/clamp sampling, normal/procedural/cube/target/vertex textures, SSBump and border flags.
-const TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
+const ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
+
+fn validate_ordinary_color_texture(texture: &Vtf, maximum_axis: u32) -> Result<(), String> {
+    crate::normal_maps::validate_static_texture(texture, maximum_axis)?;
+    if !crate::normal_maps::ordinary_ldr_format(texture.format)
+        || texture.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0
+        || texture.first_frame != 0
+    {
+        return Err("Requires an ordinary static repeat-sampled LDR texture".into());
+    }
+    for mip in 0..texture.mip_count {
+        texture
+            .image_data(mip, 0, 0)
+            .map_err(|error| format!("Invalid texture mip {mip}: {error}"))?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Emission {
@@ -34,15 +53,18 @@ struct DisplayTextures {
 #[derive(Debug)]
 pub struct MaterialInfo {
     pub(crate) reference: bool,
+    pub(crate) detail: detail::Layer,
     pub emission: Option<Emission>,
     emission_error: Option<String>,
     pub(crate) emission_model_only: bool,
+    pub(crate) base_transform: Result<Option<uv::BaseTransform>, String>,
     pub lighting_error: Option<String>,
     pub terrain_lighting_error: Option<String>,
     pub(crate) terrain_blend_bumped: bool,
     pub(crate) declares_normals: bool,
     pub(crate) model_bumped: bool,
     pub(crate) model_normal_error: Option<String>,
+    pub(crate) model_phong: Option<phong::ModelPhong>,
     pub model_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
@@ -111,11 +133,22 @@ impl MaterialInfo {
                 textures.blend,
                 textures.base_path,
             )),
-            Err(error) if limits.is_none() => Ok(Self::failed(
-                name,
-                error,
-                material.as_ref().is_some_and(emission::requested),
-            )),
+            Err(error) if limits.is_none() => {
+                let resolved = material.as_ref();
+                let mut failed = Self::failed(
+                    name,
+                    error.clone(),
+                    resolved.is_some_and(emission::requested),
+                );
+                if resolved.is_some_and(|material| material.get("$basetexturetransform").is_some())
+                {
+                    failed.base_transform = Err(format!("Base texture transform: {error}"));
+                }
+                if resolved.is_some_and(detail::requested) {
+                    failed.detail = detail::Layer::Unavailable(error);
+                }
+                Ok(failed)
+            }
             Err(error) => Err(error),
         }
     }
@@ -190,8 +223,29 @@ impl MaterialInfo {
                 && flags & source_formats::bsp::surf::SKY2D == 0
         });
         let declares_normals = material.is_some_and(crate::normal_maps::declares_normals);
-        let model_bumped = declares_normals
+        let phong_requested = material.is_some_and(phong::requested);
+        let model_bumped = (declares_normals || phong_requested)
             && material.is_some_and(|material| material.shader == "vertexlitgeneric");
+        let (model_phong, phong_error) = match material
+            .filter(|_| phong_requested)
+            .map(phong::resolve)
+            .transpose()
+        {
+            Ok(profile) => (profile, None),
+            Err(error) => (None, Some(error)),
+        };
+        let model_normal_error = phong_error.or_else(|| {
+            material.filter(|_| model_bumped).and_then(|material| {
+                model_lighting_error(
+                    material,
+                    base.as_ref(),
+                    display_texture.as_deref(),
+                    true,
+                    false,
+                    model_phong.is_some(),
+                )
+            })
+        });
         let (emission, emission_error) = match material.map_or(Ok(None), |material| {
             emission::resolve(material, base.as_ref(), display_texture.as_deref())
         }) {
@@ -199,9 +253,17 @@ impl MaterialInfo {
             Err(error) => (None, Some(error)),
         };
         let masked_emission = emission.is_some_and(|emission| emission.base_alpha);
+        let base_transform = material.map_or(Ok(None), |material| {
+            uv::resolve(material, base.as_ref(), display_texture.as_deref())
+        });
+        let detail = material.map_or(detail::Layer::Absent, |material| {
+            detail::Layer::resolve(material, base.as_ref(), display_texture.as_deref())
+        });
+        let static_detail = matches!(detail, detail::Layer::Declared(_));
 
         Self {
             reference: false,
+            detail,
             emission,
             emission_error,
             emission_model_only: material
@@ -209,46 +271,62 @@ impl MaterialInfo {
             material_identity: material.map(material_identity),
             lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
-                |material| lighting_error(material, masked_emission),
+                |material| {
+                    if static_detail {
+                        None
+                    } else {
+                        lighting_error(material, masked_emission)
+                    }
+                },
             ),
             terrain_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
-                    terrain_lighting_error(
-                        material,
-                        base.as_ref(),
-                        blend.as_ref(),
-                        display_texture.as_deref(),
-                        masked_emission,
-                    )
+                    if static_detail {
+                        None
+                    } else {
+                        terrain_lighting_error(
+                            material,
+                            base.as_ref(),
+                            blend.as_ref(),
+                            display_texture.as_deref(),
+                            masked_emission,
+                        )
+                    }
                 },
             ),
             terrain_blend_bumped: material.is_some_and(|material| {
                 material.shader == "worldvertextransition" && declares_normals
             }),
-            declares_normals,
+            declares_normals: declares_normals || phong_requested,
             model_bumped,
-            model_normal_error: material.filter(|_| model_bumped).and_then(|material| {
-                model_lighting_error(
-                    material,
-                    base.as_ref(),
-                    display_texture.as_deref(),
-                    true,
-                    false,
-                )
-            }),
-            model_lighting_error: material.map_or_else(
-                || Some("No resolved material".into()),
-                |material| {
-                    model_lighting_error(
-                        material,
-                        base.as_ref(),
-                        display_texture.as_deref(),
-                        false,
-                        masked_emission,
+            model_normal_error: model_normal_error.clone(),
+            model_phong: model_phong.filter(|_| model_normal_error.is_none()),
+            model_lighting_error: if phong_requested {
+                model_normal_error.or_else(|| {
+                    Some(
+                        "Model Phong requires Normal map preview and Detail authored lighting"
+                            .into(),
                     )
-                },
-            ),
+                })
+            } else {
+                material.map_or_else(
+                    || Some("No resolved material".into()),
+                    |material| {
+                        base_transform.as_ref().err().cloned().or_else(|| {
+                            model_lighting_error(
+                                material,
+                                base.as_ref(),
+                                display_texture.as_deref(),
+                                false,
+                                masked_emission,
+                                false,
+                            )
+                        })
+                    },
+                )
+            },
+            base_transform,
             display_texture,
             blend_texture: material
                 .filter(|material| material.shader == "worldvertextransition")
@@ -274,9 +352,11 @@ impl MaterialInfo {
     pub fn untextured(name: &str) -> Self {
         Self {
             reference: false,
+            detail: detail::Layer::Absent,
             emission: None,
             emission_error: None,
             emission_model_only: false,
+            base_transform: Ok(None),
             material_identity: None,
             lighting_error: Some("Editor helper or unavailable material".into()),
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
@@ -284,6 +364,7 @@ impl MaterialInfo {
             declares_normals: false,
             model_bumped: false,
             model_normal_error: None,
+            model_phong: None,
             model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
             blend_texture: None,
@@ -333,6 +414,7 @@ fn model_lighting_error(
     display_texture: Option<&str>,
     normal_preview: bool,
     masked_emission: bool,
+    phong: bool,
 ) -> Option<String> {
     if material.shader != "vertexlitgeneric" {
         return Some("Model authored lighting requires VertexLitGeneric".into());
@@ -340,23 +422,24 @@ fn model_lighting_error(
     if let Some(reason) = diffuse_lighting_error(material, masked_emission) {
         return Some(reason);
     }
-    if let Some((key, _)) = material.params.iter().find(|(key, _)| {
+    if let Some((key, _)) = material.params.iter().find(|(key, value)| {
         !(matches!(
             key.as_str(),
-            "$basetexture" | "$model" | "$surfaceprop" | "$surfaceprop2" | "$nodecal" | "%keywords"
-        ) || normal_preview
-            && matches!(
-                key.as_str(),
-                "$bumpmap" | "$bumptransform" | "$basetexturetransform"
-            )
-            || masked_emission
-                && matches!(
-                    key.as_str(),
-                    "$selfillum" | "$selfillumtint" | "$basetexturetransform"
-                ))
+            "$basetexture"
+                | "$basetexturetransform"
+                | "$model"
+                | "$surfaceprop"
+                | "$surfaceprop2"
+                | "$nodecal"
+                | "%keywords"
+        ) || phong::allowed_parameter(key, value, phong)
+            || normal_preview && matches!(key.as_str(), "$bumpmap" | "$bumptransform")
+            || masked_emission && matches!(key.as_str(), "$selfillum" | "$selfillumtint"))
     }) {
         let key: String = key.chars().take(256).collect();
-        let mode = if normal_preview {
+        let mode = if phong {
+            "Phong"
+        } else if normal_preview {
             "normal preview"
         } else {
             "authored lighting"
@@ -379,7 +462,7 @@ fn model_lighting_error(
         if let Err(error) = crate::normal_maps::validate_static_texture(base, u32::from(u16::MAX)) {
             return Some(format!("Model normal preview base texture: {error}"));
         }
-        if base.flags & TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS != 0 {
+        if base.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0 {
             return Some(
                 "Model normal preview needs an ordinary repeat-sampled base texture".into(),
             );
@@ -462,7 +545,7 @@ fn terrain_blend_lighting_error(
             return Some(format!("Terrain blend {label} base: {error}"));
         }
         if !crate::normal_maps::ordinary_ldr_format(texture.format)
-            || texture.flags & TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS != 0
+            || texture.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0
         {
             return Some(format!(
                 "Terrain blend {label} base requires an ordinary LDR repeat-sampled color texture"
@@ -564,6 +647,7 @@ pub type MaterialId = usize;
 #[derive(Debug)]
 pub struct MaterialLibrary {
     normals: crate::normal_maps::Library,
+    detail_bytes: usize,
     pub icons: crate::icons::Library,
     hdr_skybox: Option<Arc<crate::sky::Skybox>>,
     generation: u64,
@@ -577,6 +661,7 @@ impl Default for MaterialLibrary {
     fn default() -> Self {
         Self {
             normals: crate::normal_maps::Library::default(),
+            detail_bytes: 0,
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             icons: crate::icons::Library::default(),
             hdr_skybox: None,
@@ -625,6 +710,7 @@ impl MaterialLibrary {
     pub fn reload(&mut self, fs: &GameFs) -> ReloadReport {
         let mut report = ReloadReport::default();
         self.normals.clear();
+        self.detail_bytes = 0;
         self.icons.clear();
         self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
@@ -793,6 +879,9 @@ impl MaterialLibrary {
         }
         let id = if let Some(&id) = self.by_name.get(&key) {
             self.normals.invalidate(&key);
+            if let Some(detail) = self.materials[id].detail.ready() {
+                self.detail_bytes -= detail.cache_bytes();
+            }
             self.materials[id] = material;
             id
         } else {
@@ -836,6 +925,21 @@ impl MaterialLibrary {
 
     pub fn get(&self, id: MaterialId) -> &MaterialInfo {
         &self.materials[id]
+    }
+
+    pub(crate) fn load_detail(&mut self, fs: &GameFs, id: MaterialId) {
+        let layer = &mut self.materials[id].detail;
+        if !matches!(layer, detail::Layer::Declared(_)) {
+            return;
+        }
+        if let detail::Layer::Declared(parameters) = std::mem::replace(layer, detail::Layer::Absent)
+        {
+            *layer = parameters.load(fs, detail::MAX_CACHE_BYTES - self.detail_bytes);
+        }
+        if let Some(asset) = layer.ready() {
+            self.detail_bytes += asset.cache_bytes();
+            self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub fn normal_map(&mut self, fs: &GameFs, id: MaterialId) -> Arc<crate::normal_maps::Asset> {

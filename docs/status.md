@@ -19,7 +19,7 @@ or automatic mounting by Hammer. See [Portable VMFs](portable-maps.md).
 
 ## Group completion
 
-![Estimated implementation: 91.53% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 91.71% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -33,7 +33,7 @@ Other partial-group scores remain estimates.
 | --- | ---: | ---: | ---: |
 | G07 · Plane clipping | 21 | 21 | 100% |
 | C05 · Displacements | 13 | 17 | 76.47% |
-| P02 · Source material fidelity | 9 | 16 | 56.25% |
+| P02 · Source material fidelity | 12 | 16 | 75% |
 
 <details>
 <summary>C05 · Displacement workflows</summary>
@@ -76,14 +76,14 @@ Workflows use the supported geometry, material and resource limits in
 | P02-06 | Preview tangent-space normal maps on single-base terrain | Complete |
 | P02-07 | Preview two-base terrain normal maps | Complete |
 | P02-08 | Preview model normal maps | Complete |
-| P02-09 | Preview specular material response | Open |
+| P02-09 | Preview specular material response | Complete |
 | P02-10 | Preview environment reflections | Open |
 | P02-11 | Preview material emission | Complete |
 | P02-12 | Preview animated and proxy-driven material effects | Open |
 | P02-13 | Preview refraction and native water shading | Open |
-| P02-14 | Preview detail texture layers | Open |
+| P02-14 | Preview detail texture layers | Complete |
 | P02-15 | Preview SSBump and other special normal encodings | Open |
-| P02-16 | Preview extended material texture transforms | Open |
+| P02-16 | Preview extended material texture transforms | Complete |
 
 Completed workflows retain the limits in [Materials](textures.md) and
 [Normal maps](normal-maps.md). They do not establish full native shader parity.

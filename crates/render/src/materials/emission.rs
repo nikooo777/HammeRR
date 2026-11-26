@@ -1,11 +1,11 @@
 use source_formats::{
     gamefs::asset_relative,
     vmf::parse_vec3,
-    vmt::{DuplicateOperations, Material, texture_path, texture_transform},
+    vmt::{Material, texture_path},
     vtf::{ImageFormat, Vtf},
 };
 
-use super::{Emission, TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS};
+use super::{Emission, ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS};
 
 pub(super) fn resolve(
     material: &Material,
@@ -60,11 +60,7 @@ pub(super) fn resolve(
     if !unlit && !enabled {
         return Err("Self-illumination tint requires $selfillum 1".into());
     }
-    if texture_transform::<f32>(
-        material.get("$basetexturetransform"),
-        DuplicateOperations::Reject,
-    ) != Ok([1.0, 1.0, 0.0, 0.0])
-    {
+    if !super::uv::is_axis_identity(material.get("$basetexturetransform")) {
         return Err("Material emission requires an identity base texture transform".into());
     }
     let declared = material
@@ -77,7 +73,7 @@ pub(super) fn resolve(
     };
     crate::normal_maps::validate_static_texture(base, u32::from(u16::MAX))
         .map_err(|error| format!("Material emission base texture: {error}"))?;
-    if base.flags & TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS != 0
+    if base.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0
         || !(crate::normal_maps::ordinary_ldr_format(base.format)
             || base.format == ImageFormat::Dxt1OneBitAlpha)
     {
@@ -108,7 +104,9 @@ pub(super) fn resolve(
         return Err("Self-illumination requires a native base texture alpha mask".into());
     }
     Ok(Some(Emission {
-        tint: material.get("$selfillumtint").map_or(Ok([1.0; 3]), tint)?,
+        tint: material
+            .get("$selfillumtint")
+            .map_or(Ok([1.0; 3]), |value| tint(value, "$selfillumtint"))?,
         base_alpha: true,
     }))
 }
@@ -121,7 +119,7 @@ pub(super) fn requested(material: &Material) -> bool {
         })
 }
 
-fn tint(value: &str) -> Result<[f32; 3], String> {
+pub(super) fn tint(value: &str, key: &str) -> Result<[f32; 3], String> {
     let value = value.trim();
     let (components, maximum) = if let Some(raw) = value
         .strip_prefix('[')
@@ -141,5 +139,5 @@ fn tint(value: &str) -> Result<[f32; 3], String> {
         .flatten()
         .filter(|rgb| rgb.is_finite() && rgb.min_element() >= 0.0 && rgb.max_element() <= maximum)
         .map(|rgb| (rgb.as_vec3() * (1.0 / maximum as f32)).to_array())
-        .ok_or_else(|| "$selfillumtint requires three bounded channels in [0–1] or {0–255}".into())
+        .ok_or_else(|| format!("{key} requires three bounded channels in [0–1] or {{0–255}}"))
 }

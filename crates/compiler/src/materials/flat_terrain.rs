@@ -14,7 +14,6 @@ use crate::brush_shadow_casters::{opaque_parameters, static_material_raw};
 const MAX_PATH_BYTES: usize = 259;
 const MAX_TEXTURE_EDGE: u32 = 32768;
 const MAX_DETAIL_SCALAR_BYTES: usize = 32;
-const DEFAULT_DETAIL_SCALE: f32 = 4.0;
 const MAX_DETAIL_BLEND_MODE: u32 = 3;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x80 | 0x800 | 0x4000 | 0x8000 | 0x1_0000 | 0x800_0000;
 const MATERIAL_PARAMETERS: [&str; 6] = [
@@ -268,7 +267,7 @@ fn detail_parameters(material: &Material) -> Result<Option<f32>, String> {
     }
     material
         .get("$detailscale")
-        .map_or(Ok(DEFAULT_DETAIL_SCALE), detail_scale)
+        .map_or(Ok(vmt::DEFAULT_DETAIL_SCALE), detail_scale)
         .map(Some)
 }
 

@@ -48,7 +48,8 @@ Use **Reload material assets** after changing materials.
 - Supported opaque brush faces, terrain and authored model meshes receive either channel.
 - Two-base terrain needs both exact declared static single-frame 2D color textures in RGB888, BGR888, RGBA8888, BGRA8888 or DXT1/3/5 format, with repeat sampling. `%tooltexture` cannot replace either base.
 - Single- and two-base terrain support [normal-map preview](normal-maps.md) in **Detail · per-fragment** quality. Enable **Normal map preview** for bumped two-base materials.
-- Unsupported texture transforms, blend modulation, detail, proxies, fallback blocks, transparency and alpha tests remain unavailable.
+- Supported [static detail layers and base transforms](textures.md#preview-static-material-layers) act before lighting. Other material transforms, proxies, transparency and alpha tests remain unavailable.
+- Supported [model highlights](normal-maps.md#preview-model-highlights) use direct lights in **Detail · per-fragment**. Constant sky ambient adds diffuse light only.
 - Excluded receivers keep their ordinary display and report a reason.
 - Exceeding the light or radiance budget disables the preview with an error.
 - No native exposure adaptation or brightness and tone-map match. Compile to inspect game lighting.

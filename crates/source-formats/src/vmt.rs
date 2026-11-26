@@ -15,6 +15,7 @@ use crate::keyvalues::{self, Node, Value};
 
 /// Maximum number of Patch include edges followed from a root material.
 pub const MAX_PATCH_DEPTH: usize = 8;
+pub const DEFAULT_DETAIL_SCALE: f32 = 4.0;
 pub const DEFAULT_ALPHA_TEST_REFERENCE: f64 = 0.7;
 pub const DEFAULT_ALPHA_TEST_REFERENCE_BYTE: u8 =
     (DEFAULT_ALPHA_TEST_REFERENCE as f32 * u8::MAX as f32) as u8;

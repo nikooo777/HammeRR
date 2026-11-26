@@ -774,9 +774,7 @@ fn material_binding(
         Some(NormalEncoding::Tangent) => 1,
         Some(NormalEncoding::SsBump) => 2,
     };
-    let transform = |rows: &[[[f32; 3]; 2]; 2]| {
-        rows.map(|transform| transform.map(|row| [row[0], row[1], row[2], 0.0]))
-    };
+    let transform = |rows: &[[[f32; 3]; 2]; 2]| rows.map(crate::materials::uv::gpu_rows);
     let params = MaterialParams {
         options: [
             match source.kind {

@@ -1,7 +1,7 @@
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use source_formats::model::Part;
 
-use super::Vertex;
+use super::{MODEL_PHONG_FRAME, Vertex};
 use crate::{materials::MaterialInfo, models::Instance, normal_maps::Report};
 
 const MODEL_NORMAL_FRAME: u32 = 2;
@@ -38,12 +38,16 @@ impl Admission {
         self.error.is_none()
     }
 
-    pub(super) fn finish_part(&mut self, material: &str, result: Result<(), String>) -> bool {
+    pub(super) fn finish_part(
+        &mut self,
+        material: &str,
+        result: Result<(), String>,
+    ) -> Result<(), &str> {
         if let Err(error) = result {
-            self.error = Some((material.to_owned(), error));
-            return false;
+            let (_, reason) = self.error.insert((material.to_owned(), error));
+            return Err(reason.as_str());
         }
-        true
+        Ok(())
     }
 
     pub(super) fn finish(self, instance: &Instance, vertices: &mut [Vertex], report: &mut Report) {
@@ -53,7 +57,7 @@ impl Admission {
         if let Some((material, reason)) = self.error {
             for vertex in vertices {
                 vertex.tangent = [0.0; 4];
-                vertex.texture_flags &= !MODEL_NORMAL_FRAME;
+                vertex.texture_flags &= !(MODEL_NORMAL_FRAME | MODEL_PHONG_FRAME);
             }
             report.models.excluded_instances += 1;
             report.models.excluded_parts += self.parts;
@@ -94,6 +98,7 @@ pub(super) fn prepare_part(
     vertices: &mut [Vertex],
     tangents: &[[f32; 4]],
     transform: [f32; 4],
+    phong: bool,
 ) -> Result<(), String> {
     crate::normal_maps::validate_uvs(
         part.indices
@@ -104,16 +109,25 @@ pub(super) fn prepare_part(
     for &index in &part.indices {
         let index = index as usize;
         let vertex = &mut vertices[index];
-        if vertex.tangent[3] != 0.0 {
-            continue;
-        }
-        let [x, y, z, handedness] = tangents[index];
-        let rotated = (instance.rotation * DVec3::new(f64::from(x), f64::from(y), f64::from(z)))
+        if vertex.tangent[3] == 0.0 {
+            let [x, y, z, handedness] = tangents[index];
+            let rotated = (instance.rotation
+                * DVec3::new(f64::from(x), f64::from(y), f64::from(z)))
             .try_normalize()
             .ok_or("Model normal preview needs finite nonzero drawn tangent directions")?
             .as_vec3();
-        vertex.tangent = [rotated.x, rotated.y, rotated.z, handedness];
-        vertex.texture_flags |= MODEL_NORMAL_FRAME;
+            vertex.tangent = [rotated.x, rotated.y, rotated.z, handedness];
+            vertex.texture_flags |= MODEL_NORMAL_FRAME;
+        }
+        if phong && vertex.texture_flags & MODEL_PHONG_FRAME == 0 {
+            let [x, y, z, _] = vertex.tangent;
+            let bitangent = Vec3::from_array(vertex.normal).cross(Vec3::new(x, y, z));
+            let squared = bitangent.length_squared();
+            if !squared.is_finite() || squared < 1e-12 {
+                return Err("Model Phong needs finite nonsingular drawn tangent frames".into());
+            }
+            vertex.texture_flags |= MODEL_PHONG_FRAME;
+        }
     }
     Ok(())
 }

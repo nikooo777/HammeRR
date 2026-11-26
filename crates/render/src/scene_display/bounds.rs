@@ -3,7 +3,7 @@ use crate::compiled_details::{
 };
 use crate::compiled_faces::materials::{Kind, Material, MaterialLighting, NormalEncoding, Texture};
 use crate::lighting::{Light, Preview};
-use crate::scene::{Batch, Vertex};
+use crate::scene::{Batch, DETAIL_LAYER, MODEL_PHONG_FRAME, Vertex};
 use crate::{Camera, MaterialLibrary, SceneMesh, ViewOptions};
 
 use super::MAX_HDR_RADIANCE;
@@ -22,7 +22,7 @@ pub struct SourceRadianceBounds {
 struct Bounds {
     batches: Vec<BatchBounds>,
     compiled_details: Result<(), String>,
-    authored: Result<[f64; 3], String>,
+    authored: Result<AuthoredBounds, String>,
     authored_active: bool,
     sky: Option<(crate::sky::Channel, Result<[f64; 3], String>)>,
     miniature: Option<Result<(), String>>,
@@ -32,12 +32,20 @@ struct Bounds {
 struct BatchBounds {
     radiance: Result<[f64; 3], String>,
     authored: bool,
+    phong_gain: f64,
+    authored_detail_gain: [f64; 3],
     reference: bool,
     rope: bool,
     tool: bool,
     sky: bool,
     sky3d_eligible: bool,
     helper: bool,
+}
+
+#[derive(Debug)]
+struct AuthoredBounds {
+    diffuse: [f64; 3],
+    direct: [f64; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +76,8 @@ impl SourceRadianceBounds {
         let bounds = self.source.as_ref().map_err(Clone::clone)?;
         bounds.compiled_details.as_ref().map_err(Clone::clone)?;
         let mut needs_authored = false;
+        let mut phong_gain = 0.0_f64;
+        let mut authored_detail_gain = [1.0_f64; 3];
         let mut needs_sky = false;
         let mut needs_miniature = false;
         for batch in &bounds.batches {
@@ -89,14 +99,35 @@ impl SourceRadianceBounds {
                     *batch.radiance.as_ref().map_err(Clone::clone)?,
                 )?;
                 needs_authored |= batch.authored;
+                phong_gain = phong_gain.max(batch.phong_gain);
+                for (maximum, gain) in authored_detail_gain
+                    .iter_mut()
+                    .zip(batch.authored_detail_gain)
+                {
+                    *maximum = maximum.max(gain);
+                }
             }
             needs_miniature |= batch.sky3d_eligible && options.sky3d_preview;
         }
         if needs_authored && options.lighting_preview && bounds.authored_active {
+            let authored = bounds.authored.as_ref().map_err(Clone::clone)?;
             admit(
                 "Authored lighting",
-                *bounds.authored.as_ref().map_err(Clone::clone)?,
+                std::array::from_fn(|channel| {
+                    authored.diffuse[channel] * authored_detail_gain[channel]
+                }),
             )?;
+            if phong_gain > 0.0
+                && options.normal_maps
+                && options.lighting_quality == crate::lighting::Quality::Detail
+            {
+                admit(
+                    "Authored lighting with model Phong",
+                    std::array::from_fn(|channel| {
+                        authored.diffuse[channel] + authored.direct[channel] * phong_gain
+                    }),
+                )?;
+            }
         }
         if needs_sky {
             let (channel, bound) = bounds
@@ -140,19 +171,37 @@ impl Bounds {
             let baked = mesh.baked_face_batches.contains(&index);
             let info = (!baked).then(|| library.get(batch.material));
             let vertices = batch_vertices(mesh, batch);
-            let authored = vertices.as_ref().is_ok_and(|indices| {
-                indices.iter().any(|&index| {
-                    mesh.vertices[index as usize].lighting_receiver == AUTHORED_RECEIVER
-                })
-            });
+            let mut authored = false;
+            let mut authored_flags = 0;
+            if let Ok(indices) = &vertices {
+                for &index in *indices {
+                    let vertex = &mesh.vertices[index as usize];
+                    if vertex.lighting_receiver == AUTHORED_RECEIVER {
+                        authored = true;
+                        authored_flags |= vertex.texture_flags;
+                    }
+                }
+            }
+            let phong_gain = info
+                .and_then(|info| info.model_phong)
+                .filter(|_| authored_flags & MODEL_PHONG_FRAME != 0)
+                .map_or(0.0, |phong| phong.gain_bound());
+            let detail = info.and_then(|info| info.detail.ready());
+            let detail_gain = detail.map_or([1.0; 3], |asset| asset.maximum_gain());
             let radiance = if baked {
                 baked_bound(mesh, batch, &faces, &materials)
             } else {
-                ordinary_bound(mesh, batch)
+                vertices.and_then(|indices| ordinary_bound(mesh, indices, detail_gain))
             };
             batches.push(BatchBounds {
                 radiance,
                 authored,
+                phong_gain,
+                authored_detail_gain: if authored_flags & DETAIL_LAYER != 0 {
+                    detail_gain
+                } else {
+                    [1.0; 3]
+                },
                 reference: info.is_some_and(|info| info.reference),
                 rope: batch.rope,
                 tool: info.is_some_and(|info| info.tool),
@@ -205,11 +254,20 @@ fn batch_vertices<'a>(mesh: &'a SceneMesh, batch: &Batch) -> Result<&'a [u32], S
     Ok(indices)
 }
 
-fn ordinary_bound(mesh: &SceneMesh, batch: &Batch) -> Result<[f64; 3], String> {
+fn ordinary_bound(
+    mesh: &SceneMesh,
+    indices: &[u32],
+    detail_gain: [f64; 3],
+) -> Result<[f64; 3], String> {
     let mut bound = [1.0_f64; 3];
-    for &index in batch_vertices(mesh, batch)? {
+    for &index in indices {
         let vertex = &mesh.vertices[index as usize];
         validate_vertex(vertex)?;
+        if vertex.texture_flags & DETAIL_LAYER != 0 {
+            for (maximum, gain) in bound.iter_mut().zip(detail_gain) {
+                *maximum = maximum.max(gain * COMPOSITION_HEADROOM);
+            }
+        }
         match vertex.lighting_receiver & LIGHTING_RECEIVER_KIND_MASK {
             0..=2 | crate::scene::projected_overlays::UNLIT_RECEIVER => {}
             BAKED_RADIANCE_RECEIVER => {
@@ -475,18 +533,35 @@ fn nonnegative(producer: &str, value: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn authored_bound(preview: &Preview) -> Result<[f64; 3], String> {
+fn authored_bound(preview: &Preview) -> Result<AuthoredBounds, String> {
     if preview.lights.len() > crate::lighting::MAX_LIGHTS {
         return Err("HDR authored lighting exceeds the admitted light count".into());
     }
-    let mut bound = [0.0_f64; 3];
+    let mut bounds = AuthoredBounds {
+        diffuse: [0.0; 3],
+        direct: [0.0; 3],
+    };
     for light in &preview.lights {
-        let contribution = light_bound(light)?;
-        for channel in 0..3 {
-            bound[channel] += contribution[channel];
+        let direct = light_bound(light)?;
+        for (channel, direct) in direct.into_iter().enumerate() {
+            let ambient = if light.coefficients_spot[3] == crate::lighting::SUN_KIND {
+                let ambient = f64::from(light.origin_radius[channel]);
+                nonnegative("Authored sky ambient", ambient)?;
+                ambient
+            } else {
+                0.0
+            };
+            bounds.diffuse[channel] += direct + ambient;
+            bounds.direct[channel] += direct;
         }
     }
-    Ok(bound.map(|value| value * BYTE_NORMALIZATION * COMPOSITION_HEADROOM))
+    bounds.diffuse = bounds
+        .diffuse
+        .map(|value| value * BYTE_NORMALIZATION * COMPOSITION_HEADROOM);
+    bounds.direct = bounds
+        .direct
+        .map(|value| value * BYTE_NORMALIZATION * COMPOSITION_HEADROOM);
+    Ok(bounds)
 }
 
 fn light_bound(light: &Light) -> Result<[f64; 3], String> {
@@ -521,13 +596,7 @@ fn light_bound(light: &Light) -> Result<[f64; 3], String> {
         }
     }
     if light.coefficients_spot[3] == crate::lighting::SUN_KIND {
-        let ambient = light.origin_radius[..3].iter().copied().map(f64::from);
-        let mut result = intensity;
-        for (channel, ambient) in ambient.enumerate() {
-            nonnegative("Authored sky ambient", ambient)?;
-            result[channel] += ambient;
-        }
-        return Ok(result);
+        return Ok(intensity);
     }
     if ![crate::lighting::POINT_KIND, crate::lighting::SPOT_KIND]
         .contains(&light.coefficients_spot[3])

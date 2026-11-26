@@ -12,6 +12,8 @@ use crate::materials::{MaterialId, MaterialLibrary};
 
 pub(crate) const MATERIAL_EMISSION: u32 = 4;
 const MODEL_SURFACE: u32 = 8;
+pub(crate) const MODEL_PHONG_FRAME: u32 = 16;
+pub(crate) const DETAIL_LAYER: u32 = 32;
 
 mod model_lighting;
 mod model_normals;
@@ -294,7 +296,7 @@ struct Builder<'a> {
     selection_tint: bool,
     lighting: crate::lighting::Preview,
     normal_maps: crate::normal_maps::Report,
-    emission: bool,
+    textured: bool,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
     displayed_icons: Vec<crate::icons::Instance>,
     helper_bounds: Vec<Vec3>,
@@ -337,7 +339,7 @@ impl Builder<'_> {
 
     fn material_emission(&self, material: MaterialId, model: bool) -> Result<u32, String> {
         let info = self.library.get(material);
-        if !self.emission || info.tool && !self.tool_textures {
+        if !self.textured || info.tool && !self.tool_textures {
             return Ok(0);
         }
         match info.emission_for(model) {
@@ -348,6 +350,45 @@ impl Builder<'_> {
             Ok(true) => Ok(MATERIAL_EMISSION),
             Ok(false) => Ok(0),
             Err(reason) => Err(format!("{}: {reason}", info.name)),
+        }
+    }
+
+    fn base_transform(
+        &self,
+        material: MaterialId,
+        model: bool,
+        coordinates: impl Iterator<Item = [f32; 2]>,
+    ) -> Result<u32, String> {
+        let info = self.library.get(material);
+        if !self.textured || info.tool && !self.tool_textures {
+            return Ok(0);
+        }
+        let error = match &info.base_transform {
+            Ok(None) => return Ok(0),
+            Ok(Some(transform)) if transform.model == model => {
+                if crate::materials::uv::fits_gpu(transform.rows, coordinates) {
+                    return Ok(crate::materials::uv::FLAG);
+                }
+                "Base texture transform coordinates exceed finite GPU range"
+            }
+            Ok(Some(_)) => "Base texture transform requires its matching brush or model shader",
+            Err(error) => error,
+        };
+        Err(format!("{}: {error}", info.name))
+    }
+
+    fn surface_base_transform(
+        &mut self,
+        material: MaterialId,
+        face: FaceId,
+        coordinates: impl Iterator<Item = [f32; 2]>,
+    ) -> u32 {
+        match self.base_transform(material, false, coordinates) {
+            Ok(flags) => flags,
+            Err(message) => {
+                self.issues.push(SceneIssue::Surface { face, message });
+                0
+            }
         }
     }
 
@@ -366,6 +407,52 @@ impl Builder<'_> {
                 0
             }
         }
+    }
+
+    fn surface_detail(
+        &mut self,
+        material: MaterialId,
+        face: FaceId,
+        supported: bool,
+        coordinates: impl Iterator<Item = [f32; 2]>,
+    ) -> u32 {
+        use crate::materials::detail::Layer;
+
+        let info = self.library.get(material);
+        if !self.textured
+            || info.tool && !self.tool_textures
+            || matches!(info.detail, Layer::Absent)
+        {
+            return 0;
+        }
+        let message = if !supported {
+            format!(
+                "{}: Terrain detail layers require world or func_detail terrain",
+                info.name
+            )
+        } else {
+            self.library.load_detail(self.fs, material);
+            let info = self.library.get(material);
+            match &info.detail {
+                Layer::Ready(asset) => {
+                    let scale = asset.parameters.scale;
+                    if crate::materials::uv::fits_gpu(
+                        [[scale, 0.0, 0.0], [0.0, scale, 0.0]],
+                        coordinates,
+                    ) {
+                        return DETAIL_LAYER;
+                    }
+                    format!(
+                        "{}: Detail layer coordinates exceed finite GPU range",
+                        info.name
+                    )
+                }
+                Layer::Unavailable(reason) => format!("{}: {reason}", info.name),
+                _ => return 0,
+            }
+        };
+        self.issues.push(SceneIssue::Surface { face, message });
+        0
     }
 
     fn push_vertex(&mut self, vertex: Vertex) -> u32 {
@@ -638,8 +725,13 @@ impl Builder<'_> {
         let material = self.material(name);
         let emission = self.surface_emission(material, face, true);
         let info = self.library.get(material);
-        let tool = info.tool;
         let size = glam::DVec2::new(f64::from(info.width), f64::from(info.height));
+        let uv = |point| (texel_uv(side, point) / size).as_vec2().to_array();
+        let base_transform =
+            self.surface_base_transform(material, face, points.iter().copied().map(uv));
+        let detail = self.surface_detail(material, face, true, points.iter().copied().map(uv));
+        let info = self.library.get(material);
+        let tool = info.tool;
         let dimensions = [info.width, info.height];
         let missing_base = info.base.is_none() || info.missing;
         let mut lighting_receiver = 0;
@@ -700,12 +792,12 @@ impl Builder<'_> {
             self.push_vertex(Vertex {
                 position: point.as_vec3().to_array(),
                 normal: normal.as_vec3().to_array(),
-                uv: (texel_uv(side, point) / size).as_vec2().to_array(),
+                uv: uv(point),
                 color: [tint[0], tint[1], tint[2], 0],
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
-                texture_flags: emission,
+                texture_flags: emission | base_transform | detail,
                 tangent,
                 baked_irradiance: [0.0; 3],
                 lighting_receiver,
@@ -825,6 +917,10 @@ impl Builder<'_> {
             .copied()
             .map(uv)
             .collect::<Vec<_>>();
+        let base_transform =
+            self.surface_base_transform(material, face, coordinates.iter().copied());
+        let detail =
+            self.surface_detail(material, face, owner_supported, coordinates.iter().copied());
         let info = self.library.get(material);
         let tool = info.tool;
         let dimensions = [info.width, info.height];
@@ -929,7 +1025,7 @@ impl Builder<'_> {
             lightmap: lightmap_vertex(side, mesh.base_positions[i]),
             smoothing: side.smoothing_groups.unwrap_or(0),
             opacity: 1.0,
-            texture_flags: emission,
+            texture_flags: emission | base_transform | detail,
             tangent,
             baked_irradiance: [0.0; 3],
             lighting_receiver,
@@ -1212,6 +1308,7 @@ impl Builder<'_> {
             .then(|| model_lighting::Admission::new(instance));
         let mut normals = (self.normal_maps.active && material_override.is_none())
             .then(model_normals::Admission::default);
+        let mut base_transforms_valid = true;
         let materials = instance.asset.materials();
         for part in model.parts_for_body(instance.body) {
             let material_index = model.skins[instance.skin][part.material];
@@ -1233,6 +1330,48 @@ impl Builder<'_> {
                 }
             };
             if material_override.is_none() {
+                match self.base_transform(
+                    material,
+                    true,
+                    part.indices
+                        .iter()
+                        .map(|&index| model.vertices[index as usize].uv),
+                ) {
+                    Ok(0) => {}
+                    Ok(flags) => {
+                        for &index in &part.indices {
+                            self.vertices[first as usize + index as usize].texture_flags |= flags;
+                        }
+                    }
+                    Err(message) => {
+                        base_transforms_valid = false;
+                        let entity = match instance.id {
+                            ObjectId::Entity(id) => Some(id),
+                            _ => None,
+                        };
+                        self.issues.push(SceneIssue::Model {
+                            entity,
+                            message: format!(
+                                "{message}. All base transforms on this model are unavailable."
+                            ),
+                        });
+                    }
+                }
+                let info = self.library.get(material);
+                if self.textured && !matches!(info.detail, crate::materials::detail::Layer::Absent)
+                {
+                    let entity = match instance.id {
+                        ObjectId::Entity(id) => Some(id),
+                        _ => None,
+                    };
+                    self.issues.push(SceneIssue::Model {
+                        entity,
+                        message: format!(
+                            "{}: Detail layers require a brush or terrain surface",
+                            info.name
+                        ),
+                    });
+                }
                 match self.material_emission(material, true) {
                     Ok(0) => {}
                     Ok(flags)
@@ -1258,13 +1397,13 @@ impl Builder<'_> {
                     }
                 }
             }
-            let normal_ready = if let Some(normals) = &mut normals
+            let normal_result = if let Some(normals) = &mut normals
                 && normals.begin_part(part, self.library.get(material), self.tool_textures)
             {
                 let result = self.prepare_model_normals(instance, part, material, first as usize);
-                normals.finish_part(&self.library.get(material).name, result)
+                Some(normals.finish_part(&self.library.get(material).name, result))
             } else {
-                false
+                None
             };
             if let Some(lighting) = &mut lighting {
                 lighting.part(
@@ -1272,7 +1411,7 @@ impl Builder<'_> {
                     self.library.get(material),
                     &self.vertices[first as usize..],
                     self.tool_textures,
-                    normal_ready,
+                    normal_result,
                 );
             }
             let indices = part.indices.iter().map(|&index| first + index);
@@ -1296,6 +1435,11 @@ impl Builder<'_> {
                             }
                         }));
                 }
+            }
+        }
+        if !base_transforms_valid {
+            for vertex in &mut self.vertices[first as usize..] {
+                vertex.texture_flags &= !crate::materials::uv::FLAG;
             }
         }
         if selected {
@@ -1335,6 +1479,7 @@ impl Builder<'_> {
             &mut self.vertices[first..],
             tangents,
             asset.report.transform,
+            self.library.get(material).model_phong.is_some(),
         )
     }
 
@@ -1900,7 +2045,7 @@ impl SceneMesh {
         selection_tint: bool,
         normal_maps: bool,
         lighting: bool,
-        emission: bool,
+        textured: bool,
         reference_models: &[crate::models::Instance],
         authored_surfaces: bool,
         entity_helpers: bool,
@@ -1926,7 +2071,7 @@ impl SceneMesh {
             selection_tint,
             normal_maps,
             lighting,
-            emission,
+            textured,
             reference_models,
             authored_surfaces,
             entity_helpers,
@@ -1956,7 +2101,7 @@ impl SceneMesh {
         selection_tint: bool,
         normal_maps: bool,
         lighting: bool,
-        emission: bool,
+        textured: bool,
         reference_models: &[crate::models::Instance],
         authored_surfaces: bool,
         entity_helpers: bool,
@@ -1999,7 +2144,7 @@ impl SceneMesh {
                 active: normal_maps,
                 ..Default::default()
             },
-            emission,
+            textured,
             icons,
             displayed_icons: Vec::new(),
             helper_bounds: Vec::new(),
@@ -2076,7 +2221,7 @@ impl SceneMesh {
         builder.lighting.report.active = false;
         let normal_maps_active = builder.normal_maps.active;
         builder.normal_maps.active = false;
-        builder.emission = false;
+        builder.textured = false;
         for instance in reference_models {
             builder.add_model(instance, selected.contains(&instance.id));
         }

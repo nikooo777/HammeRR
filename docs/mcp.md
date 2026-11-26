@@ -651,6 +651,8 @@ limits. `report.terrain_vertices` counts expanded triangle vertices against
 Plain `VertexLitGeneric` models in Normal render mode use stored VVD tangents in
 their selected static or reference pose. Missing textures or unsafe frames report
 an error and leave ordinary display. Special normal encodings remain unsupported.
+Supported fixed-exponent model Phong uses the normal texture alpha as its mask.
+Enable `normal_maps:true` with `lighting_preview:true` and `lighting_quality:"detail"`.
 
 ## Preview authored lighting
 
@@ -666,7 +668,11 @@ The default lighting channel is `"ldr"`. Inspection reports the selected channel
 Plain two-base `WorldVertexTransition` terrain uses vertex-alpha texture blending.
 Both exact static 2D LDR color bases must load. For bumped blends, enable
 `normal_maps:true` with Detail quality. Display overrides, unsupported transforms,
-detail, blend modulation, proxies and opacity effects remain excluded.
+blend modulation, proxies and opacity effects remain excluded for two-base terrain.
+Ordinary single-base brushes and models display supported base transforms.
+Plain `LightmappedGeneric` brushes and terrain can display mode-0 detail layers.
+`render_view.preview_issues` locates unavailable declarations. Use
+`reload_material_assets` to load changed VMTs and textures.
 `render_view` with `surface:"textured"` also displays supported material
 self-illumination and plain unlit materials. Apply the material with
 `set_material`. Read `preview_issues` for unavailable effects.

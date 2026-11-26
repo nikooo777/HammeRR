@@ -2,6 +2,8 @@ use std::{io, sync::Arc};
 
 use source_formats::{bsp::PakArchive, vmt, vtf::ImageFormat};
 
+use crate::materials::uv::checked_matrix as transform;
+
 mod normals;
 pub use normals::{validate_directional_inputs, validate_directional_inputs_controlled};
 
@@ -271,7 +273,7 @@ fn load_inner(
     {
         diffuse[1] =
             Some(load_texture(detail, TextureMode::Diffuse, pak, read, control, budget)?.0);
-        let scale = scalar(&material, "$detailscale", 4.0)?;
+        let scale = scalar(&material, "$detailscale", vmt::DEFAULT_DETAIL_SCALE)?;
         if scale == 0.0 {
             return Err("WorldTwoTextureBlend requires nonzero $detailscale".into());
         }
@@ -379,16 +381,6 @@ pub fn read_asset(
     }
     control().map_err(io::Error::other)?;
     Ok(bytes)
-}
-
-fn transform(value: Option<&str>) -> Result<Transform, String> {
-    let rows = vmt::texture_transform_matrix(value, vmt::DuplicateOperations::Reject)
-        .map_err(|error| format!("Invalid static texture transform: {error:?}"))?;
-    let determinant = rows[0][0] * rows[1][1] - rows[0][1] * rows[1][0];
-    if !determinant.is_finite() || determinant.abs() < 1e-12 {
-        return Err("Static texture transform must be nonsingular".into());
-    }
-    Ok(rows.map(|row| row.map(|value| value as f32)))
 }
 
 fn flag(material: &vmt::Material, key: &str) -> Result<bool, String> {

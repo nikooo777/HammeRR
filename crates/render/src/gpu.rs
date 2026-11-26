@@ -1287,8 +1287,12 @@ impl Renderer {
                 if self.icon_bindings.len() >= crate::icons::MAX_ASSETS {
                     self.icon_bindings.clear();
                 }
-                let binding =
-                    self.material_bind_group_with_sampler(ctx, material, false, &self.icon_sampler);
+                let binding = self.material_bind_group_with_sampler(
+                    ctx,
+                    material,
+                    false,
+                    &self.icon_sampler,
+                )?;
                 self.icon_bindings.insert(id, binding);
             }
             let half = instance.world_size.map(|size| size * 0.5);
@@ -1349,7 +1353,7 @@ impl Renderer {
                     &self.icon_sampler,
                     texture,
                     None,
-                );
+                )?;
                 self.reference_image_bindings
                     .insert(identity.clone(), binding);
             }
@@ -1584,9 +1588,9 @@ impl Renderer {
                     .ok_or_else(|| {
                         format!("Overlay material {} could not be uploaded", info.name)
                     })?;
-                self.material_bind_group_with_base(ctx, info, false, &self.sampler, base, None)
+                self.material_bind_group_with_base(ctx, info, false, &self.sampler, base, None)?
             } else {
-                self.material_bind_group(ctx, info, id == MaterialLibrary::EDITOR)
+                self.material_bind_group(ctx, info, id == MaterialLibrary::EDITOR)?
             });
         }
         Ok(())
@@ -1597,7 +1601,7 @@ impl Renderer {
         ctx: &GpuContext,
         info: &MaterialInfo,
         editor: bool,
-    ) -> wgpu::BindGroup {
+    ) -> Result<wgpu::BindGroup, String> {
         self.material_bind_group_with_sampler(ctx, info, editor, &self.sampler)
     }
 
@@ -1607,7 +1611,7 @@ impl Renderer {
         info: &MaterialInfo,
         editor: bool,
         sampler: &wgpu::Sampler,
-    ) -> wgpu::BindGroup {
+    ) -> Result<wgpu::BindGroup, String> {
         let (white, missing) = (&self.white, &self.missing);
         let untextured = info.base.is_none() && !info.missing;
         let base = match &info.base {
@@ -1626,19 +1630,26 @@ impl Renderer {
         sampler: &wgpu::Sampler,
         base: wgpu::Texture,
         alpha_reference: Option<f32>,
-    ) -> wgpu::BindGroup {
+    ) -> Result<wgpu::BindGroup, String> {
         let white = &self.white;
         let untextured = info.base.is_none() && !info.missing;
-        let blend = info
-            .blend
-            .as_ref()
-            .and_then(|vtf| upload_vtf(ctx, vtf))
-            .unwrap_or_else(|| base.clone());
+        let detail = info.detail.ready();
+        let secondary = if let Some(detail) = detail {
+            upload_vtf_color_space(ctx, &detail.texture, false)
+                .ok_or_else(|| format!("Detail layer for {} could not be uploaded", info.name))?
+        } else {
+            info.blend
+                .as_ref()
+                .and_then(|vtf| upload_vtf(ctx, vtf))
+                .unwrap_or_else(|| base.clone())
+        };
         let flag = |on: bool| if on { 1.0f32 } else { 0.0 };
         let normal_asset = info.normal.as_ref().filter(|asset| asset.image.is_some());
         let second_normal = normal_asset.and_then(|asset| asset.secondary_image.as_ref());
         let normal_layers = flag(normal_asset.is_some()) + flag(second_normal.is_some());
-        let transform = normal_asset.map_or([1.0, 1.0, 0.0, 0.0], |asset| asset.report.transform);
+        let transform = normal_asset.map_or(crate::materials::uv::IDENTITY_AXIS, |asset| {
+            asset.report.transform
+        });
         let emission = info.emission.as_ref().map_or([0.0; 4], |emission| {
             let [r, g, b] = emission.tint;
             let mode = if emission.base_alpha {
@@ -1648,23 +1659,48 @@ impl Renderer {
             };
             [r, g, b, mode]
         });
+        let base_uv_transform = crate::materials::uv::gpu_rows(
+            info.base_transform
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .map_or(crate::materials::uv::IDENTITY, |transform| transform.rows),
+        );
+        let phong = info
+            .model_phong
+            .filter(|_| normal_asset.is_some())
+            .map_or([[0.0; 4]; 2], |phong| phong.uniform());
+        let (detail_tint, detail_factor, detail_scale) =
+            detail.map_or(([1.0; 3], 0.0, 1.0), |asset| {
+                let parameters = &asset.parameters;
+                (parameters.tint, parameters.factor, parameters.scale)
+            });
         let params = [
-            flag(info.alpha_test),
-            flag(info.blend.is_some()),
-            flag(info.translucent),
-            flag(untextured),
-            alpha_reference.unwrap_or(0.5),
-            flag(editor || info.sky || info.reference),
-            normal_layers,
-            flag(surface_shading_material(info, editor)),
-            transform[0],
-            transform[1],
-            transform[2],
-            transform[3],
-            emission[0],
-            emission[1],
-            emission[2],
-            emission[3],
+            [
+                flag(info.alpha_test),
+                flag(info.blend.is_some()),
+                flag(info.translucent),
+                flag(untextured),
+            ],
+            [
+                alpha_reference.unwrap_or(0.5),
+                flag(editor || info.sky || info.reference),
+                normal_layers,
+                flag(surface_shading_material(info, editor)),
+            ],
+            transform,
+            emission,
+            base_uv_transform[0],
+            base_uv_transform[1],
+            phong[0],
+            phong[1],
+            [
+                detail_tint[0],
+                detail_tint[1],
+                detail_tint[2],
+                detail_factor,
+            ],
+            [detail_scale, 0.0, 0.0, 0.0],
         ];
         let params = ctx
             .device
@@ -1674,7 +1710,7 @@ impl Renderer {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let base_view = base.create_view(&Default::default());
-        let blend_view = blend.create_view(&Default::default());
+        let secondary_view = secondary.create_view(&Default::default());
         let normal_textures = [
             normal_asset.and_then(|asset| asset.image.as_ref()),
             second_normal,
@@ -1686,7 +1722,7 @@ impl Renderer {
                 .unwrap_or(white)
                 .create_view(&Default::default())
         });
-        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        Ok(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&info.name),
             layout: &self.material_layout,
             entries: &[
@@ -1696,7 +1732,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&blend_view),
+                    resource: wgpu::BindingResource::TextureView(&secondary_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1715,7 +1751,7 @@ impl Renderer {
                     resource: wgpu::BindingResource::TextureView(&second_normal_view),
                 },
             ],
-        })
+        }))
     }
 
     /// Draws the scene into `target`, which must be `COLOR_FORMAT`.
@@ -1864,7 +1900,14 @@ impl Renderer {
                 .view_projection_with_far(aspect, crate::fog::far_z(options.fog, camera))
                 .to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
-            eye: camera.position.extend(1.0).to_array(),
+            eye: camera
+                .position
+                .extend(if camera.projection == crate::Projection::Perspective {
+                    1.0
+                } else {
+                    0.0
+                })
+                .to_array(),
             fog_color,
             fog_range,
             forward: camera.forward().extend(0.0).to_array(),
@@ -2589,19 +2632,26 @@ fn upload_hdr_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
 /// Uploads every mip of a VTF's first frame. DXT data goes up as-is when
 /// the device supports BC; other formats are decoded to RGBA8.
 fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
+    upload_vtf_color_space(ctx, vtf, true)
+}
+
+fn upload_vtf_color_space(ctx: &GpuContext, vtf: &Vtf, srgb: bool) -> Option<wgpu::Texture> {
+    use wgpu::TextureFormat::*;
+
     let block_format = match vtf.format {
         ImageFormat::Dxt1 | ImageFormat::Dxt1OneBitAlpha => {
-            Some((wgpu::TextureFormat::Bc1RgbaUnormSrgb, 8))
+            Some((Bc1RgbaUnorm, Bc1RgbaUnormSrgb, 8))
         }
-        ImageFormat::Dxt3 => Some((wgpu::TextureFormat::Bc2RgbaUnormSrgb, 16)),
-        ImageFormat::Dxt5 => Some((wgpu::TextureFormat::Bc3RgbaUnormSrgb, 16)),
+        ImageFormat::Dxt3 => Some((Bc2RgbaUnorm, Bc2RgbaUnormSrgb, 16)),
+        ImageFormat::Dxt5 => Some((Bc3RgbaUnorm, Bc3RgbaUnormSrgb, 16)),
         _ => None,
     }
     .filter(|_| ctx.supports_bc() && vtf.width.is_multiple_of(4) && vtf.height.is_multiple_of(4));
     let mips = u32::from(vtf.mip_count);
     let size = (vtf.width, vtf.height);
 
-    if let Some((format, block_bytes)) = block_format {
+    if let Some((linear, gamma, block_bytes)) = block_format {
+        let format = if srgb { gamma } else { linear };
         let texture = texture_2d(ctx, "vtf", size, mips, format);
         for mip in 0..vtf.mip_count {
             let data = vtf.image_data(mip, 0, 0).ok()?;
@@ -2620,7 +2670,8 @@ fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
         return Some(texture);
     }
 
-    let texture = texture_2d(ctx, "vtf", size, mips, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let format = if srgb { Rgba8UnormSrgb } else { Rgba8Unorm };
+    let texture = texture_2d(ctx, "vtf", size, mips, format);
     for mip in 0..vtf.mip_count {
         let image = vtf.decode_rgba8(mip, 0, 0).ok()?;
         write_mip(

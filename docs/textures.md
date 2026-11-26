@@ -46,6 +46,25 @@ See [material source](material-source.md#inspect-image-layers-and-alpha) to insp
 | --- | --- |
 | ![Native blend material display image](images/blend-layer-1.png) | ![Declared basetexture2 image](images/blend-layer-2.png) |
 
+## Preview static material layers
+
+1. Apply a material and choose **Textured** in the viewport header.
+2. For a base texture transform, use an opaque `LightmappedGeneric` brush
+   material or an opaque `VertexLitGeneric` model material. Set
+   `$basetexturetransform` to `center U V scale U V rotate degrees translate U V`.
+3. For a detail layer, use opaque `LightmappedGeneric` on a brush or world or
+   `func_detail` terrain. Try `carpet/offflrb` or `de_dust/dutile9`.
+4. Click **Reload material assets** after editing a VMT or VTF. Check the
+   viewport status if a declared effect is unavailable.
+
+Base transforms act on the material UVs. They leave face texture axes and
+model UVs as authored. The **Source…** window still shows the source image.
+
+Detail mode 0 uses a repeat-sampled RGB detail texture before lighting. The
+default scale is 4 and the default blend factor is 1. Use `$detailtint` for a
+color tint. Detail needs an identity base transform. These previews require
+static textures and exclude proxies, alternate modes and combined effects.
+
 ## Use FGD directory rules
 
 1. Load an FGD through **Entity… → Load FGD…**.

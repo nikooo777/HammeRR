@@ -651,6 +651,17 @@ distortion. A supported nonzero reflection tint adds a mirrored pass with
 its own color target. Check `preview_issues` for the affected pool face.
 See [Water and slime](water.md#preview-water-reflections-and-refraction).
 
+## Preview particles
+
+1. Use a Perspective camera in Legacy Textured view with world fog off.
+2. Set `particle_preview` to `selected` or `all` and `particle_time` to a time
+   from 0 to 20 seconds. Use `set_view` for the shared view or `render_view`
+   for temporary overrides. `get_view` returns the shared settings.
+3. Read `render_view.preview_issues` for unavailable effects. Call
+   `reload_particle_assets` after changing the mounted particle assets.
+
+Set `particle_preview` to `off` to hide the preview. See [Particle effects](particles.md#preview-in-the-viewport).
+
 ## Preview normal maps
 
 1. Enable `normal_maps:true` with `set_view` in Textured view, or pass the same

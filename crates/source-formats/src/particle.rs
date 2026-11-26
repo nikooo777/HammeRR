@@ -12,6 +12,7 @@ const MAX_ATTRIBUTES: usize = 262144;
 const MAX_VALUES: usize = 1048576;
 const MAX_STRING: usize = 4096;
 const MAX_METADATA_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROGRAM_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ManifestFile {
@@ -32,6 +33,30 @@ pub struct Definition {
 pub struct File {
     pub definitions: Vec<Definition>,
     pub elements: usize,
+}
+
+#[derive(Clone, Debug)]
+pub enum Property {
+    Text(String),
+    Int(i32),
+    Float(f32),
+    Bool(bool),
+    Color([u8; 4]),
+    Vector([f32; 3]),
+    Unsupported,
+}
+
+#[derive(Debug)]
+pub struct Operator {
+    pub name: String,
+    pub properties: BTreeMap<String, Property>,
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub name: String,
+    pub properties: BTreeMap<String, Property>,
+    pub functions: BTreeMap<String, Vec<Operator>>,
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -135,8 +160,7 @@ impl<'a> Reader<'a> {
 
 #[derive(Debug)]
 enum Attribute {
-    Text(String),
-    Int(i32),
+    Value(Property),
     Reference(Option<usize>),
     References(Vec<Option<usize>>),
     Other,
@@ -175,6 +199,15 @@ const FIELD_NAMES: [&str; 12] = [
 ];
 type FieldKeys = [Option<usize>; FIELD_NAMES.len()];
 
+const FUNCTION_FIELDS: [(Field, &str); 6] = [
+    (Field::Renderers, "renderers"),
+    (Field::Operators, "operators"),
+    (Field::Initializers, "initializers"),
+    (Field::Emitters, "emitters"),
+    (Field::Forces, "forces"),
+    (Field::Constraints, "constraints"),
+];
+
 struct Element {
     kind: usize,
     name: String,
@@ -206,7 +239,13 @@ fn reference(reader: &mut Reader<'_>, count: usize) -> io::Result<Option<usize>>
     }
 }
 
-pub fn parse(data: &[u8]) -> io::Result<File> {
+struct Decoded {
+    strings: Vec<String>,
+    elements: Vec<Element>,
+    fields: FieldKeys,
+}
+
+fn decode(data: &[u8]) -> io::Result<Decoded> {
     if data.len() > MAX_FILE_BYTES {
         return Err(invalid("Particle PCF exceeds 16 MiB"));
     }
@@ -294,7 +333,7 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
                 if array {
                     Attribute::Other
                 } else {
-                    Attribute::Text(text.unwrap())
+                    Attribute::Value(Property::Text(text.unwrap()))
                 }
             } else if kind == 6 {
                 for _ in 0..count {
@@ -302,8 +341,26 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
                     reader.take(size)?;
                 }
                 Attribute::Other
-            } else if kind == 2 && !array {
-                Attribute::Int(reader.int()?)
+            } else if !array && matches!(kind, 2 | 3 | 4 | 8 | 10) {
+                let property = match kind {
+                    2 => Property::Int(reader.int()?),
+                    3 => Property::Float(f32::from_le_bytes(reader.take(4)?.try_into().unwrap())),
+                    4 => match reader.take(1)?[0] {
+                        0 => Property::Bool(false),
+                        1 => Property::Bool(true),
+                        _ => Property::Unsupported,
+                    },
+                    8 => Property::Color(reader.take(4)?.try_into().unwrap()),
+                    10 => {
+                        let mut vector = [0.0; 3];
+                        for axis in &mut vector {
+                            *axis = f32::from_le_bytes(reader.take(4)?.try_into().unwrap());
+                        }
+                        Property::Vector(vector)
+                    }
+                    _ => unreachable!(),
+                };
+                Attribute::Value(property)
             } else {
                 let width = match kind {
                     2 | 3 | 8 => 4,
@@ -342,6 +399,155 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
             "Particle PCF root has no particleSystemDefinitions",
         ));
     }
+    Ok(Decoded {
+        strings,
+        elements,
+        fields: field_keys,
+    })
+}
+
+fn definition_name(element: &Element, strings: &[String]) -> io::Result<()> {
+    if strings[element.kind] != "DmeParticleSystemDefinition"
+        || element.name.is_empty()
+        || element.name.len() > 255
+        || element.name.contains(['\"', '\r', '\n'])
+    {
+        return Err(invalid("Particle definition type or name is invalid"));
+    }
+    Ok(())
+}
+
+fn function_name<'a>(
+    function: &'a Element,
+    strings: &[String],
+    field_keys: &FieldKeys,
+) -> io::Result<&'a str> {
+    if strings[function.kind] != "DmeParticleOperator" {
+        return Err(invalid("Particle function has an unexpected element type"));
+    }
+    let name = match function.field(field_keys, Field::FunctionName) {
+        Some(Attribute::Value(Property::Text(value))) => value.as_str(),
+        None => &function.name,
+        _ => return Err(invalid("Particle functionName must be a string")),
+    };
+    if name.is_empty() {
+        return Err(invalid("Particle function name is empty"));
+    }
+    Ok(name)
+}
+
+fn properties(
+    element: &Element,
+    strings: &[String],
+    omit: &[Option<usize>],
+    remaining: &mut usize,
+) -> io::Result<BTreeMap<String, Property>> {
+    let mut result = BTreeMap::new();
+    for (&key, value) in &element.attributes {
+        if omit.contains(&Some(key)) {
+            continue;
+        }
+        let name = &strings[key];
+        let text_bytes = match value {
+            Attribute::Value(Property::Text(text)) => text.len(),
+            _ => 0,
+        };
+        *remaining = remaining
+            .checked_sub(name.len() + text_bytes + size_of::<(String, Property)>())
+            .ok_or_else(|| invalid("Particle preview program exceeds 1 MiB"))?;
+        let property = match value {
+            Attribute::Value(property) => property.clone(),
+            _ => Property::Unsupported,
+        };
+        result.insert(name.to_ascii_lowercase(), property);
+    }
+    Ok(result)
+}
+
+pub fn program(data: &[u8], name: &str) -> io::Result<Program> {
+    let Decoded {
+        strings,
+        elements,
+        fields,
+    } = decode(data)?;
+    let mut selected = None;
+    for index in elements[0].references(&fields, Field::Definitions)? {
+        let index = index.ok_or_else(|| invalid("Particle definition root is null"))?;
+        let root = &elements[index];
+        definition_name(root, &strings)?;
+        if root.name.eq_ignore_ascii_case(name) && selected.replace(root).is_some() {
+            return Err(invalid("Particle preview definition is ambiguous"));
+        }
+    }
+    let root = selected.ok_or_else(|| invalid("Particle preview definition was not found"))?;
+    for field in [Field::Children, Field::Forces, Field::Constraints] {
+        if !root.references(&fields, field)?.is_empty() {
+            return Err(invalid(
+                "Particle preview excludes child systems, forces and constraints",
+            ));
+        }
+    }
+    let mut functions = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    let mut remaining = MAX_PROGRAM_BYTES;
+    for (field, category) in FUNCTION_FIELDS {
+        let mut operators = Vec::new();
+        let refs = root.references(&fields, field)?;
+        if refs.len() > 32 {
+            return Err(invalid(
+                "Particle preview permits up to 32 operations per category",
+            ));
+        }
+        for index in refs {
+            let index = index.ok_or_else(|| invalid("Particle function reference is null"))?;
+            if !seen.insert(index) {
+                return Err(invalid("Particle preview repeats an operator element"));
+            }
+            let function = &elements[index];
+            if function.field(&fields, Field::FunctionName).is_none() {
+                return Err(invalid(
+                    "Particle preview operator requires an explicit functionName",
+                ));
+            }
+            let name = function_name(function, &strings, &fields)?;
+            remaining = remaining
+                .checked_sub(name.len())
+                .ok_or_else(|| invalid("Particle preview program exceeds 1 MiB"))?;
+            operators.push(Operator {
+                name: name.to_owned(),
+                properties: properties(
+                    function,
+                    &strings,
+                    &[fields[Field::FunctionName as usize]],
+                    &mut remaining,
+                )?,
+            });
+        }
+        functions.insert(category.to_owned(), operators);
+    }
+    let omitted = [
+        Field::Children,
+        Field::Renderers,
+        Field::Operators,
+        Field::Initializers,
+        Field::Emitters,
+        Field::Forces,
+        Field::Constraints,
+    ]
+    .map(|field| fields[field as usize]);
+    Ok(Program {
+        name: root.name.clone(),
+        properties: properties(root, &strings, &omitted, &mut remaining)?,
+        functions,
+    })
+}
+
+pub fn parse(data: &[u8]) -> io::Result<File> {
+    let Decoded {
+        strings,
+        elements,
+        fields: field_keys,
+    } = decode(data)?;
     let mut metadata_bytes = 0usize;
     let mut definitions = Vec::new();
     let mut roots = BTreeSet::new();
@@ -351,37 +557,14 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
             return Err(invalid("Particle definition root is repeated"));
         }
         let element = &elements[index];
-        if strings[element.kind] != "DmeParticleSystemDefinition"
-            || element.name.is_empty()
-            || element.name.len() > 255
-            || element.name.contains(['\"', '\r', '\n'])
-        {
-            return Err(invalid("Particle definition type or name is invalid"));
-        }
+        definition_name(element, &strings)?;
         let mut functions = BTreeMap::new();
-        for (field, category) in [
-            (Field::Renderers, "renderers"),
-            (Field::Operators, "operators"),
-            (Field::Initializers, "initializers"),
-            (Field::Emitters, "emitters"),
-            (Field::Forces, "forces"),
-            (Field::Constraints, "constraints"),
-        ] {
+        for (field, category) in FUNCTION_FIELDS {
             let mut names = Vec::new();
             for index in element.references(&field_keys, field)? {
                 let index = index.ok_or_else(|| invalid("Particle function reference is null"))?;
                 let function = &elements[index];
-                if strings[function.kind] != "DmeParticleOperator" {
-                    return Err(invalid("Particle function has an unexpected element type"));
-                }
-                let name = match function.field(&field_keys, Field::FunctionName) {
-                    Some(Attribute::Text(value)) => value.as_str(),
-                    None => &function.name,
-                    _ => return Err(invalid("Particle functionName must be a string")),
-                };
-                if name.is_empty() {
-                    return Err(invalid("Particle function name is empty"));
-                }
+                let name = function_name(function, &strings, &field_keys)?;
                 metadata_bytes += name.len();
                 if metadata_bytes > MAX_METADATA_BYTES {
                     return Err(invalid("Particle definition metadata exceeds 8 MiB"));
@@ -415,12 +598,12 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
             children.push(name.clone());
         }
         let material = match element.field(&field_keys, Field::Material) {
-            Some(Attribute::Text(value)) => Some(value.clone()),
+            Some(Attribute::Value(Property::Text(value))) => Some(value.clone()),
             None => None,
             _ => return Err(invalid("Particle material must be a string")),
         };
         let max_particles = match element.field(&field_keys, Field::MaxParticles) {
-            Some(Attribute::Int(value)) => Some(*value),
+            Some(Attribute::Value(Property::Int(value))) => Some(*value),
             None => None,
             _ => return Err(invalid("Particle maximum count must be an integer")),
         };
@@ -441,6 +624,6 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
     }
     Ok(File {
         definitions,
-        elements: element_count,
+        elements: elements.len(),
     })
 }

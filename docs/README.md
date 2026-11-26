@@ -92,14 +92,13 @@ More in this section:
 <tr>
 <td width="33%" valign="top"><a href="models.md"><img src="images/thumbs/model-scales.jpg" width="260" alt=""></a><br><a href="models.md"><b>Models</b></a><br>Place Source model meshes with their materials, skins and reference poses.</td>
 <td width="33%" valign="top"><a href="sprite-guides.md"><img src="images/thumbs/sprite-guides.jpg" width="260" alt=""></a><br><a href="sprite-guides.md"><b>Sprite guides</b></a><br>Show a sprite image at its authored size while editing.</td>
-<td width="33%"></td>
+<td width="33%" valign="top"><a href="particles.md"><img src="images/thumbs/particle-preview.jpg" width="260" alt=""></a><br><a href="particles.md"><b>Particle effects</b></a><br>Assign an effect and preview its timeline.</td>
 </tr>
 </table>
 
 More in this section:
 
 - [Material source](material-source.md) — Read the material declaration and find its mounted files.
-- [Particle effects](particles.md) — Find a named particle system and assign it to an entity.
 - [Sounds](sounds.md) — Find a sound, listen to a short preview, and assign it to an entity.
 
 ## Entities and organization

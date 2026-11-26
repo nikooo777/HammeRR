@@ -53,6 +53,7 @@ struct PaneState {
     color_correction_error: Option<String>,
     sky3d_error: Option<String>,
     water_error: Option<String>,
+    particle_error: Option<String>,
 }
 
 impl Default for PaneState {
@@ -71,6 +72,7 @@ impl Default for PaneState {
             color_correction_error: None,
             sky3d_error: None,
             water_error: None,
+            particle_error: None,
         }
     }
 }
@@ -102,6 +104,7 @@ impl PaneState {
             self.color_correction_error.as_deref(),
             self.sky3d_error.as_deref(),
             self.water_error.as_deref(),
+            self.particle_error.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -435,6 +438,7 @@ impl Viewport {
         pane.color_correction_error = None;
         pane.sky3d_error = None;
         pane.water_error = None;
+        pane.particle_error = None;
         if display.active
             && let Some(error) = correction_error
         {
@@ -477,6 +481,9 @@ impl Viewport {
         pane.sky3d_error = self.renderer.last_sky3d_error().map(str::to_owned);
         pane.water_error = scene
             .water_preview_issue(&request.camera, &options, request.size, display)
+            .map(|issue| issue.description());
+        pane.particle_error = options
+            .particle_preview_issue(&request.camera)
             .map(|issue| issue.description());
         let renderer_error = self.renderer.last_color_correction_error();
         pane.color_correction_error = match (correction_error, renderer_error) {

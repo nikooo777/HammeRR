@@ -43,4 +43,4 @@ Cached first/second images retain the texture paths and material declaration ide
 
 ---
 
-[← Sprite guides](sprite-guides.md) · [Manual](README.md) · [Particle effects →](particles.md)
+[← Particle effects](particles.md) · [Manual](README.md) · [Sounds →](sounds.md)

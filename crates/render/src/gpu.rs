@@ -16,6 +16,7 @@ mod color_correction;
 mod detail_radiance;
 mod environment;
 mod miniature;
+mod particles;
 mod scene_display;
 mod water;
 
@@ -262,6 +263,8 @@ pub struct ViewOptions {
     pub lighting_quality: crate::lighting::Quality,
     pub lighting_exposure_ev: f32,
     pub material_animation_time: f32,
+    pub particle_preview: crate::particle_preview::Scope,
+    pub particle_time: f32,
     pub normal_maps: bool,
     pub surface_shading: bool,
     pub surface: SurfaceView,
@@ -311,6 +314,8 @@ impl Default for ViewOptions {
             lighting_quality: crate::lighting::Quality::Detail,
             lighting_exposure_ev: 0.0,
             material_animation_time: 0.0,
+            particle_preview: Default::default(),
+            particle_time: 0.0,
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
@@ -350,6 +355,7 @@ pub struct SceneKey {
     pub reference_images_serial: u64,
     pub instance_contents_serial: u64,
     pub rope_preview_serial: u64,
+    pub particle_preview_serial: u64,
     selection_tint: bool,
     sky_channel: crate::sky::Channel,
     entity_images: bool,
@@ -368,9 +374,36 @@ pub struct SceneKey {
     preview_tool_textures: bool,
     additive_sprite_guides: bool,
     instance_contents: bool,
+    particles: (crate::particle_preview::Scope, bool),
 }
 
 impl ViewOptions {
+    pub fn particle_surfaces(&self) -> bool {
+        self.surface == SurfaceView::Textured && self.scene_display == crate::SceneDisplay::Legacy
+    }
+
+    fn particle_view_error(&self, camera: &Camera) -> Option<&'static str> {
+        if camera.projection != crate::Projection::Perspective {
+            Some("Particle preview needs a Perspective camera")
+        } else if crate::fog::for_color(self.fog, camera, self.surface).is_some() {
+            Some("Turn off world fog to preview these particles")
+        } else {
+            None
+        }
+    }
+
+    pub fn particle_preview_issue(&self, camera: &Camera) -> Option<crate::scene::SceneIssue> {
+        if self.particle_preview == crate::particle_preview::Scope::Off || !self.particle_surfaces()
+        {
+            return None;
+        }
+        self.particle_view_error(camera)
+            .map(|reason| crate::scene::SceneIssue::Particle {
+                entity: None,
+                message: reason.into(),
+            })
+    }
+
     fn surface_uniforms(&self) -> [u32; 4] {
         [
             match self.surface {
@@ -398,6 +431,12 @@ impl ViewOptions {
             reference_images_serial: 0,
             instance_contents_serial: 0,
             rope_preview_serial: 0,
+            particle_preview_serial: 0,
+            particles: if self.particle_preview != crate::particle_preview::Scope::Off {
+                (self.particle_preview, self.particle_surfaces())
+            } else {
+                Default::default()
+            },
             selection_tint: self.selection_tint,
             sky_channel: self.sky_channel,
             entity_images: self.entity_images,
@@ -462,6 +501,7 @@ struct IconVertex {
     offset: [f32; 2],
     uv: [f32; 2],
     opacity: f32,
+    color: [u8; 4],
 }
 struct IconDraw {
     center: glam::Vec3,
@@ -493,6 +533,7 @@ pub struct GpuScene {
     lighting: crate::lighting::Preview,
     icons: Option<wgpu::Buffer>,
     icon_draws: Vec<IconDraw>,
+    particles: Vec<particles::Emitter>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     skybox: Option<wgpu::BindGroup>,
@@ -637,6 +678,7 @@ pub struct Renderer {
     icon_sampler: wgpu::Sampler,
     icon_pipeline: wgpu::RenderPipeline,
     additive_icon_pipeline: wgpu::RenderPipeline,
+    culled_icon_pipeline: wgpu::RenderPipeline,
     icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
     reference_image_bindings: std::collections::HashMap<String, wgpu::BindGroup>,
     line_pipeline: wgpu::RenderPipeline,
@@ -646,6 +688,8 @@ pub struct Renderer {
         std::collections::HashMap<(String, crate::sky::Channel, u64), Option<wgpu::BindGroup>>,
     /// Bind groups by [`MaterialId`], uploaded on first use.
     materials: Vec<Option<MaterialBinding>>,
+    particle_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
+    particle_vertices: Option<wgpu::Buffer>,
     material_generation: Option<u64>,
     white: wgpu::Texture,
     black_cube: wgpu::TextureView,
@@ -1092,7 +1136,7 @@ impl Renderer {
         };
 
         let icon_shader = scene_shader(device, "icon shader", include_str!("icons.wgsl"));
-        let icon_pipeline = |label, blend| {
+        let icon_pipeline = |label, blend, cull_mode| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
@@ -1103,10 +1147,10 @@ impl Renderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<IconVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32, 4 => Unorm8x4],
                 })],
             },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            primitive: wgpu::PrimitiveState { front_face: wgpu::FrontFace::Cw, cull_mode, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
@@ -1143,8 +1187,15 @@ impl Renderer {
                     operation: wgpu::BlendOperation::Add,
                 },
             },
+            None,
         );
-        let icon_pipeline = icon_pipeline("FGD editor icons", wgpu::BlendState::ALPHA_BLENDING);
+        let culled_icon_pipeline = icon_pipeline(
+            "Oriented translucent particles",
+            wgpu::BlendState::ALPHA_BLENDING,
+            Some(wgpu::Face::Back),
+        );
+        let icon_pipeline =
+            icon_pipeline("FGD editor icons", wgpu::BlendState::ALPHA_BLENDING, None);
 
         let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lines"),
@@ -1209,6 +1260,7 @@ impl Renderer {
             icon_sampler,
             icon_pipeline,
             additive_icon_pipeline,
+            culled_icon_pipeline,
             icon_bindings: std::collections::HashMap::new(),
             reference_image_bindings: std::collections::HashMap::new(),
             line_pipeline,
@@ -1216,6 +1268,8 @@ impl Renderer {
             sky_sampler,
             skyboxes: std::collections::HashMap::new(),
             materials: Vec::new(),
+            particle_bindings: Default::default(),
+            particle_vertices: None,
             material_generation: None,
             white: solid_texture(ctx, [255, 255, 255, 255]),
             black_cube: environment::empty(ctx),
@@ -1458,6 +1512,7 @@ impl Renderer {
                     offset,
                     uv,
                     opacity: 1.0,
+                    color: [255; 4],
                 });
             }
             icon_draws.push(IconDraw {
@@ -1524,6 +1579,7 @@ impl Renderer {
                     offset: [0.0; 2],
                     uv,
                     opacity: plane.opacity,
+                    color: [255; 4],
                 });
             }
             icon_draws.push(IconDraw {
@@ -1532,6 +1588,42 @@ impl Renderer {
                 binding: self.reference_image_bindings[identity].clone(),
                 blend: crate::icons::Blend::Alpha,
                 views: plane.views,
+            });
+        }
+        self.particle_bindings
+            .retain(|id, _| mesh.particles.iter().any(|emitter| emitter.asset.id == *id));
+        let mut particles = Vec::with_capacity(mesh.particles.len());
+        for emitter in &mesh.particles {
+            let binding = if let Some(binding) = self.particle_bindings.get(&emitter.asset.id) {
+                binding.clone()
+            } else {
+                let material = emitter.asset.material();
+                let texture = material
+                    .base
+                    .as_ref()
+                    .and_then(|texture| upload_vtf(ctx, texture))
+                    .ok_or_else(|| {
+                        format!("Could not upload particle material {}", material.name)
+                    })?;
+                let binding = self.material_bind_group_with_base(
+                    ctx,
+                    material,
+                    false,
+                    if emitter.asset.clamp_edges() {
+                        &self.icon_sampler
+                    } else {
+                        &self.sampler
+                    },
+                    texture.into(),
+                    None,
+                )?;
+                self.particle_bindings
+                    .insert(emitter.asset.id, binding.clone());
+                binding
+            };
+            particles.push(particles::Emitter {
+                source: emitter.clone(),
+                binding,
             });
         }
         let icons = (!icon_vertices.is_empty()).then(|| {
@@ -1584,6 +1676,7 @@ impl Renderer {
             lighting: mesh.lighting.clone(),
             icons,
             icon_draws,
+            particles,
             skybox,
             sky_fog_background_error: mesh
                 .skybox
@@ -2214,6 +2307,22 @@ impl Renderer {
                 .write_buffer(&self.overlay, 0, bytemuck::cast_slice(&overlay));
         }
 
+        let particle_draws = if !hdr
+            && options.particle_preview != crate::particle_preview::Scope::Off
+            && options.particle_surfaces()
+            && options.particle_view_error(camera).is_none()
+        {
+            particles::prepare(
+                ctx,
+                &scene.particles,
+                camera,
+                options.particle_time,
+                &mut self.particle_vertices,
+            )?
+        } else {
+            Vec::new()
+        };
+
         if options.surface == SurfaceView::Wireframe
             && let Some(buffer) = &scene.detail_billboard_lines
         {
@@ -2316,6 +2425,19 @@ impl Renderer {
                 water_draw.as_ref(),
             );
             if !hdr {
+                if let Some(vertices) = &self.particle_vertices
+                    && !particle_draws.is_empty()
+                {
+                    pass.set_vertex_buffer(0, vertices.slice(..));
+                    for draw in particle_draws {
+                        pass.set_pipeline(match draw.blend {
+                            crate::icons::Blend::Alpha => &self.culled_icon_pipeline,
+                            crate::icons::Blend::Additive => &self.additive_icon_pipeline,
+                        });
+                        pass.set_bind_group(1, draw.binding, &[]);
+                        pass.draw(draw.vertices, 0..1);
+                    }
+                }
                 self.draw_overlays(&mut pass, scene, camera, options, overlay.len(), grid_count);
             }
         }

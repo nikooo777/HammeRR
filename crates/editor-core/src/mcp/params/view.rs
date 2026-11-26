@@ -327,7 +327,7 @@ pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
         render::SceneDisplay::Legacy => ("legacy", None),
         render::SceneDisplay::Hdr { exposure_ev } => ("hdr", Some(exposure_ev)),
     };
-    json!({"scene_display":scene_display,"scene_exposure_ev":scene_exposure_ev,"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"material_animation_time":view.material_animation_time,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_fog_initial_radial_context":view.sky_fog_initial_radial_context.name(),"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"scene_display":scene_display,"scene_exposure_ev":scene_exposure_ev,"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"material_animation_time":view.material_animation_time,"particle_preview":view.particle_preview.name(),"particle_time":view.particle_time,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_fog_initial_radial_context":view.sky_fog_initial_radial_context.name(),"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -490,6 +490,10 @@ pub struct SetViewArgs {
     pub lighting_exposure_ev: Option<f64>,
     /// Material animation time in seconds from 0 to 3600. No automatic playback.
     pub material_animation_time: Option<f64>,
+    /// Particle preview scope: off, selected or all visible authored entities.
+    pub particle_preview: Option<String>,
+    /// Particle preview time in seconds, from 0 through 20.
+    pub particle_time: Option<f64>,
 
     /// Opt-in authored mode5 Sprite resource guides with SRC_ALPHA/ONE RGB; raw guides remain the default. Requires Entity images.
     pub additive_sprite_guides: Option<bool>,
@@ -554,6 +558,10 @@ pub struct RenderArgs {
     pub lighting_exposure_ev: Option<f64>,
     /// Temporary Material animation time in seconds from 0 to 3600. Shared view time is unchanged.
     pub material_animation_time: Option<f64>,
+    /// Temporary particle preview scope: off, selected or all.
+    pub particle_preview: Option<String>,
+    /// Temporary particle time in seconds from 0 through 20.
+    pub particle_time: Option<f64>,
 
     /// Temporary authored Additive Sprite guide override; no shared settings or literal-icon changes.
     pub additive_sprite_guides: Option<bool>,
@@ -704,6 +712,8 @@ macro_rules! view_update {
                     lighting_quality: self.lighting_quality.as_deref(),
                     lighting_exposure_ev: self.lighting_exposure_ev,
                     material_animation_time: self.material_animation_time,
+                    particle_preview: self.particle_preview.as_deref(),
+                    particle_time: self.particle_time,
                     additive_sprite_guides: self.additive_sprite_guides,
                     normal_maps: self.normal_maps,
                     surface_shading: self.surface_shading,

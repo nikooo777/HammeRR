@@ -37,4 +37,4 @@ Use **Reload sounds** after changing files or scripts, then reopen the browser.
 
 ---
 
-[← Particle effects](particles.md) · [Manual](README.md) · [Entities and logic →](entities.md)
+[← Material source](material-source.md) · [Manual](README.md) · [Entities and logic →](entities.md)

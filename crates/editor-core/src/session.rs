@@ -2176,6 +2176,8 @@ impl Session {
         without_resource_changes.lighting_quality = previous.lighting_quality;
         without_resource_changes.lighting_exposure_ev = previous.lighting_exposure_ev;
         without_resource_changes.material_animation_time = previous.material_animation_time;
+        without_resource_changes.particle_preview = previous.particle_preview;
+        without_resource_changes.particle_time = previous.particle_time;
         without_resource_changes.scene_display = previous.scene_display;
         if without_resource_changes == previous {
             self.view = view;
@@ -3093,6 +3095,12 @@ impl Session {
             .document(self)
             .unwrap_or(self.geometry.document(&self.document));
         let evaluation = self.working_evaluation(document);
+        let particle_targets = particles::preview_targets(
+            document.vmf(),
+            view,
+            |id| evaluation.objects.contains(&id),
+            |id| selected.contains(&id),
+        );
         let icons = self.fgd_icon_instances(
             document,
             &evaluation,
@@ -3280,6 +3288,7 @@ impl Session {
         self.append_carve_preview_diagnostic(&mut mesh);
         self.append_terrain_removal_diagnostic(&mut mesh);
         self.append_face_terrain_context_diagnostic(&mut mesh);
+        self.append_particle_preview(&mut mesh, particle_targets);
         mesh
     }
 

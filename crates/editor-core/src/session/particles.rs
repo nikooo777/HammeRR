@@ -1,9 +1,12 @@
 use super::{Actor, Session};
 use map_core::ObjectId;
 use serde_json::{Value, json};
+use source_formats::vmf::Entity;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod catalog;
+mod preview;
+pub(super) use preview::targets as preview_targets;
 
 const MAX_CHOICE_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 type EntityChanges = Vec<(u32, Vec<(String, Option<String>)>)>;
@@ -29,14 +32,15 @@ impl State {
     }
 }
 
-pub(super) const LIMITS: &str = "Definition metadata only; no animation or viewport preview. Global active particle manifest only; map manifests, includes, external element references and other DMX encodings/versions are unsupported.";
+pub(super) const LIMITS: &str = "The catalog reports definition metadata from the active global particle manifest. Map manifests, includes, external element references and other DMX encodings or versions are unsupported.";
 
 #[derive(Default)]
 pub(super) struct State {
     catalog: Option<catalog::Catalog>,
-    assets: u64,
+    pub(super) assets: u64,
     serial: u64,
     draft: Option<Draft>,
+    previews: preview::Cache,
 }
 
 struct Draft {
@@ -57,6 +61,7 @@ impl State {
     }
 
     pub(super) fn materials_reloaded(&mut self, previous: u64, current: u64) {
+        self.previews.clear();
         if let Some(draft) = &mut self.draft
             && draft.scene == previous
         {
@@ -70,6 +75,25 @@ fn target_report(token: u64, entities: &[u32]) -> Value {
         "entity":(entities.len()==1).then(||format!("entity:{}",entities[0])),
         "entities":entities.iter().map(|id|format!("entity:{id}")).collect::<Vec<_>>(),
         "count":entities.len()})
+}
+
+fn is_particle_entity(entity: &Entity) -> bool {
+    entity
+        .classname()
+        .is_some_and(|class| class.eq_ignore_ascii_case("info_particle_system"))
+}
+
+fn validate_particle_entity(entity: &Entity) -> Result<(), String> {
+    if !entity.solids.is_empty() || !is_particle_entity(entity) {
+        return Err("Choose an info_particle_system point entity".into());
+    }
+    if ["classname", "effect_name"]
+        .iter()
+        .any(|key| entity.properties.get_all(key).take(2).count() > 1)
+    {
+        return Err("Repair duplicate classname or effect_name fields first".into());
+    }
+    Ok(())
 }
 
 impl Session {
@@ -228,20 +252,8 @@ impl Session {
         let mut errors = Vec::new();
         for &id in &entities {
             let target = self.document.entity(id).ok_or("Entity is missing")?;
-            let checked = (|| {
-                if !target.solids.is_empty()
-                    || !target
-                        .classname()
-                        .is_some_and(|class| class.eq_ignore_ascii_case("info_particle_system"))
-                {
-                    return Err("choose an info_particle_system point entity".to_owned());
-                }
-                if ["classname", "effect_name"]
-                    .iter()
-                    .any(|key| target.properties.get_all(key).take(2).count() > 1)
-                {
-                    return Err("duplicate classname or effect_name fields must be repaired before choosing particles".into());
-                }
+            let checked: Result<(), String> = (|| {
+                validate_particle_entity(target)?;
                 let property = target
                     .classname()
                     .and_then(|name| self.definitions.class(name))
@@ -452,6 +464,7 @@ impl Session {
     pub fn reload_particle_assets(&mut self) {
         self.particles.catalog = None;
         self.particles.assets += 1;
+        self.particles.previews.clear();
         self.view_serial += 1;
     }
 }

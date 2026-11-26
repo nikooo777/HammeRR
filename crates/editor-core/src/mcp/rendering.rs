@@ -318,6 +318,9 @@ impl EditorServer {
         if let Some(issue) = gpu_scene.water_preview_issue(camera, &view, size, display) {
             frame_issues.prepend(issue);
         }
+        if let Some(issue) = view.particle_preview_issue(camera) {
+            frame_issues.prepend(issue);
+        }
         self.session().verify_scene_display_render(display_guard)?;
         self.session().verify_carve_preview_render()?;
         self.session().verify_terrain_removal_render()?;

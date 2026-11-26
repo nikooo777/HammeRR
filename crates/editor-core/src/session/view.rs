@@ -10,6 +10,8 @@ pub struct ViewUpdate<'a> {
     pub lighting_quality: Option<&'a str>,
     pub lighting_exposure_ev: Option<f64>,
     pub material_animation_time: Option<f64>,
+    pub particle_preview: Option<&'a str>,
+    pub particle_time: Option<f64>,
     pub scene_display: Option<&'a str>,
     pub scene_exposure_ev: Option<f64>,
     pub normal_maps: Option<bool>,
@@ -40,6 +42,9 @@ impl Session {
         key.instance_contents_serial = self.instance_contents_serial();
         key.reference_images_serial = self.reference_images_serial();
         key.rope_preview_serial = self.rope_preview_serial();
+        if view.particle_preview != render::particle_preview::Scope::Off {
+            key.particle_preview_serial = self.particles.assets;
+        }
         key
     }
 
@@ -140,6 +145,12 @@ impl Session {
         }
         if let Some(value) = update.material_animation_time {
             view.material_animation_time = render::checked_material_animation_time(value)?;
+        }
+        if let Some(value) = update.particle_preview {
+            view.particle_preview = render::particle_preview::Scope::parse(value)?;
+        }
+        if let Some(value) = update.particle_time {
+            view.particle_time = render::particle_preview::checked_time(value)?;
         }
         if view.lighting_preview
             && view.normal_maps

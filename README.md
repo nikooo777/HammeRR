@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 91.94% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 92.17% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -165,5 +165,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | --- | --- |
 | ![Custom brick walls restored from one shared VMF](docs/images/portable-map-assets.png) | ![An indoor map cutaway with corridors and raised steps](docs/images/radar-overview.png) |
 | Share one VMF with compressed custom assets that mount on Open. | Generate and pack a CS:S minimap during compilation. |
+
+| [Particle previews](docs/particles.md#preview-in-the-viewport) |
+| --- |
+| ![A ripple ring and a patch of froth in a lit basin](docs/images/particle-preview.jpg) |
+| Step through supported particle effects in the viewport. |
 
 Counter-Strike: Source and its assets are not included.

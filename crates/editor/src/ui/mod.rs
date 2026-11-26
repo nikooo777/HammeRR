@@ -423,6 +423,12 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     );
     app.set_lighting_exposure_ev(session.view().lighting_exposure_ev.to_string().into());
     app.set_material_animation_time(session.view().material_animation_time.to_string().into());
+    app.set_particle_preview_scope(match session.view().particle_preview {
+        render::particle_preview::Scope::Off => 0,
+        render::particle_preview::Scope::Selected => 1,
+        render::particle_preview::Scope::All => 2,
+    });
+    app.set_particle_time(session.view().particle_time.to_string().into());
     app.set_additive_sprite_guides(session.view().additive_sprite_guides);
     app.set_show_tools(session.view().tool_textures);
     app.set_show_leak(session.view().leak_path);
@@ -513,21 +519,54 @@ fn prepare_scene_refresh(
 }
 
 fn apply_material_animation_time(app: AppWindow, shared: &SharedSession) {
-    let mut session = lock(shared);
-    let value = app.get_material_animation_time().parse::<f64>();
-    let result = value
-        .map_err(|_| "Material time requires a number of seconds".to_owned())
-        .and_then(|value| {
-            session.resolve_view_update(editor_core::session::ViewUpdate {
-                material_animation_time: Some(value),
-                ..Default::default()
-            })
+    let update = app
+        .get_material_animation_time()
+        .parse::<f64>()
+        .map(|value| editor_core::session::ViewUpdate {
+            material_animation_time: Some(value),
+            ..Default::default()
         })
+        .map_err(|_| "Material time requires a number of seconds".to_owned());
+    apply_preview_view_update(app, shared, update);
+}
+
+fn apply_particle_preview(app: AppWindow, shared: &SharedSession) {
+    let update = (|| {
+        let scope = match app.get_particle_preview_scope() {
+            0 => "off",
+            1 => "selected",
+            2 => "all",
+            _ => return Err("Choose Off, Selected or All for particle preview".into()),
+        };
+        let particle_time = (scope != "off")
+            .then(|| {
+                app.get_particle_time()
+                    .parse::<f64>()
+                    .map_err(|_| "Particle time requires a number of seconds".to_owned())
+            })
+            .transpose()?;
+        Ok(editor_core::session::ViewUpdate {
+            particle_preview: Some(scope),
+            particle_time,
+            ..Default::default()
+        })
+    })();
+    apply_preview_view_update(app, shared, update);
+}
+
+fn apply_preview_view_update(
+    app: AppWindow,
+    shared: &SharedSession,
+    update: Result<editor_core::session::ViewUpdate<'_>, String>,
+) {
+    let mut session = lock(shared);
+    let result = update
+        .and_then(|update| session.resolve_view_update(update))
         .and_then(|view| session.set_view(view));
     if let Err(error) = result {
         app.set_message(error.into());
     }
-    app.set_material_animation_time(session.view().material_animation_time.to_string().into());
+    refresh_view_controls(&app, &session);
 }
 
 fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
@@ -2400,6 +2439,9 @@ fn create_document_window(
     });
     root_callback!(app, ui, on_material_animation_time_changed, |app| {
         apply_material_animation_time(app.unwrap(), &session_of(&ui));
+    });
+    root_callback!(app, ui, on_particle_preview_changed, |app| {
+        apply_particle_preview(app.unwrap(), &session_of(&ui));
     });
     let instance_contents = instance_contents::bind_with_access(&app, &file_access(&ui));
     let instance_reference = instance_reference::bind_with_access(&app, &file_access(&ui));

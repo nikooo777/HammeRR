@@ -15,6 +15,7 @@ pub mod materials;
 pub use materials::animation::checked_time as checked_material_animation_time;
 pub mod models;
 pub mod normal_maps;
+pub mod particle_preview;
 pub mod presentation;
 pub mod reference_images;
 pub mod references;

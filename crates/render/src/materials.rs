@@ -24,24 +24,43 @@ const FALLBACK_SIZE: u32 = 128;
 pub const MAX_RELOAD_FAILURES: usize = 100;
 // Point/clamp sampling, normal/procedural/cube/target/vertex textures, SSBump and border flags.
 const ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
+const TEXTURE_CLAMP_ST: u32 = 0x0c;
 
 pub(crate) fn validate_ordinary_color_texture(
     texture: &Vtf,
     maximum_axis: u32,
 ) -> Result<(), String> {
+    validate_static_color_texture(texture, maximum_axis, false).map(|_| ())
+}
+
+pub(crate) fn validate_static_color_texture(
+    texture: &Vtf,
+    maximum_axis: u32,
+    allow_clamped_edges: bool,
+) -> Result<bool, String> {
     crate::normal_maps::validate_static_texture(texture, maximum_axis)?;
+    let clamp_flags = texture.flags & TEXTURE_CLAMP_ST;
+    let clamp_edges = allow_clamped_edges && clamp_flags == TEXTURE_CLAMP_ST;
     if !crate::normal_maps::ordinary_ldr_format(texture.format)
-        || texture.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0
+        || clamp_flags != 0 && !clamp_edges
+        || texture.flags & (ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS & !TEXTURE_CLAMP_ST) != 0
         || texture.first_frame != 0
     {
-        return Err("Requires an ordinary static repeat-sampled LDR texture".into());
+        let sampling = if allow_clamped_edges {
+            "repeat or two-axis clamp"
+        } else {
+            "repeat"
+        };
+        return Err(format!(
+            "Requires an ordinary static LDR texture with {sampling} sampling"
+        ));
     }
     for mip in 0..texture.mip_count {
         texture
             .image_data(mip, 0, 0)
             .map_err(|error| format!("Invalid texture mip {mip}: {error}"))?;
     }
-    Ok(())
+    Ok(clamp_edges)
 }
 
 #[derive(Debug, Clone, Copy)]

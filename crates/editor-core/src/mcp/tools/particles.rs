@@ -47,7 +47,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Choose and inspect one unambiguous active-manifest particle system for every captured entity, validating every target against the current loaded definitions before accepting the choice. Does not edit effect_name until apply_particle_choice. Invalid target or particle inspection preserves the prior choice. Definition metadata only; no animation or viewport preview."
+        description = "Choose and inspect one unambiguous active-manifest particle system for every captured entity, validating every target against the current loaded definitions before accepting the choice. Does not edit effect_name until apply_particle_choice. Invalid target or particle inspection preserves the prior choice. Use set_view or render_view for viewport preview."
     )]
     pub(in crate::mcp) fn choose_particle(
         &self,
@@ -57,7 +57,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect exact captured entities, stored effect_name values, mixed state and the shared particle choice. Omit token to discover active/stale targets and validity; explicit token enforces captured map, selection, definitions, content, assets and geometry-preview guards. Definition metadata only; no animation or viewport preview.",
+        description = "Inspect exact captured entities, stored effect_name values, mixed state and the shared particle choice. Omit token to discover active/stale targets and validity; explicit token enforces captured map, selection, definitions, content, assets and geometry-preview guards. Viewport preview uses set_view or render_view.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_particle_choice(

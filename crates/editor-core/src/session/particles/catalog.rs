@@ -31,6 +31,12 @@ pub(super) fn read(game: &GameFs, path: &str, limit: usize) -> Result<Vec<u8>, S
         .ok_or_else(|| format!("{path} is missing from the content mounts"))
 }
 
+pub(super) fn fingerprint(data: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
+}
+
 pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
     let manifest = read(
         game,
@@ -58,9 +64,7 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
         if catalog.entries.len() + parsed.definitions.len() > MAX_SYSTEMS {
             return Err("Particle catalog exceeds 16,384 named systems".into());
         }
-        let mut fingerprint = DefaultHasher::new();
-        data.hash(&mut fingerprint);
-        let fingerprint = fingerprint.finish();
+        let fingerprint = fingerprint(&data);
         for definition in parsed.definitions {
             metadata_bytes += definition.name.len()
                 + file.path.len()

@@ -2505,6 +2505,8 @@ export component AppWindow inherits Window {
     in-out property <int> lighting-quality: 1;
     in-out property <string> lighting-exposure-ev: "0";
     in-out property <string> material-animation-time: "0";
+    in-out property <int> particle-preview-scope: 0;
+    in-out property <string> particle-time: "0";
     in property <bool> legacy-exposure-enabled: true;
     in property <string> scene-exposure-context;
     in property <string> lighting-status: "Authored lighting preview is off";
@@ -2716,6 +2718,7 @@ export component AppWindow inherits Window {
     callback property-component-edited(key: string, index: int, value: string);
     callback options-changed();
     callback material-animation-time-changed();
+    callback particle-preview-changed();
     callback property-edited(key: string, value: string);
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
@@ -3806,6 +3809,38 @@ export component AppWindow inherits Window {
                                         OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
                                         OverlaySwitch { text: "Additive sprite guides"; enabled: root.sprite-resources; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
                                         OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
+                                        FieldRow {
+                                            label: "Particles";
+                                            Segmented {
+                                                options: ["Off", "Selected", "All"];
+                                                current: root.particle-preview-scope;
+                                                label: "Particle preview";
+                                                activated(index) => { root.particle-preview-scope = index; root.particle-preview-changed(); }
+                                            }
+                                        }
+                                        if root.particle-preview-scope != 0: FieldRow {
+                                            label: "Particle time";
+                                            Slider {
+                                                minimum: 0;
+                                                maximum: 20;
+                                                step: 0.05;
+                                                value: root.particle-time.to-float();
+                                                accessible-label: "Particle time (s)";
+                                                released(value) => {
+                                                    root.particle-time = "\{value}";
+                                                    root.particle-preview-changed();
+                                                }
+                                            }
+                                            LineEdit {
+                                                width: 64px;
+                                                text <=> root.particle-time;
+                                                input-type: decimal;
+                                                placeholder-text: "0 to 20";
+                                                accessible-label: "Particle time (s)";
+                                                accepted => { root.particle-preview-changed(); }
+                                            }
+                                            Text { text: "s"; color: Theme.text-faint; vertical-alignment: center; }
+                                        }
                                         OverlayNote { text: "Static editor resources · hidden guides keep picking and bounds"; }
                                         if root.helper-presentation-status != "": OverlayNote { text: root.helper-presentation-status; text-color: Theme.warning; }
                                         SectionHeader { text: "SURFACES"; collapsible: false; }

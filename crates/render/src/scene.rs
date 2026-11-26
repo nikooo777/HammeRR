@@ -144,6 +144,7 @@ pub struct SceneMesh {
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub sky3d: Option<std::sync::Arc<crate::sky3d::Scene>>,
     pub icons: Vec<crate::icons::Instance>,
+    pub particles: Vec<crate::particle_preview::Emitter>,
     pub reference_images: Vec<crate::reference_images::Plane>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
@@ -186,6 +187,10 @@ pub enum SceneIssue {
         entity: Option<u32>,
         message: String,
     },
+    Particle {
+        entity: Option<u32>,
+        message: String,
+    },
 }
 
 impl SceneIssue {
@@ -194,20 +199,25 @@ impl SceneIssue {
             Self::Brush { solid, .. } => Some(*solid),
             Self::Surface { face, .. } => Some(face.solid),
             Self::Terrain(issue) => Some(issue.face.solid),
-            Self::Model { .. } | Self::Overlay { .. } => None,
+            Self::Model { .. } | Self::Overlay { .. } | Self::Particle { .. } => None,
         }
     }
 
     pub fn entity(&self) -> Option<u32> {
         match self {
-            Self::Model { entity, .. } | Self::Overlay { entity, .. } => *entity,
+            Self::Model { entity, .. }
+            | Self::Overlay { entity, .. }
+            | Self::Particle { entity, .. } => *entity,
             _ => None,
         }
     }
 
     pub fn face(&self) -> Option<FaceId> {
         match self {
-            Self::Brush { .. } | Self::Model { .. } | Self::Overlay { .. } => None,
+            Self::Brush { .. }
+            | Self::Model { .. }
+            | Self::Overlay { .. }
+            | Self::Particle { .. } => None,
             Self::Surface { face, .. } => Some(*face),
             Self::Terrain(issue) => Some(issue.face),
         }
@@ -220,6 +230,7 @@ impl SceneIssue {
             Self::Terrain(issue) => &issue.message,
             Self::Model { message, .. } => message,
             Self::Overlay { message, .. } => message,
+            Self::Particle { message, .. } => message,
         }
     }
 
@@ -233,6 +244,10 @@ impl SceneIssue {
                 "Terrain face {} on brush {}: {}",
                 issue.face.side, issue.face.solid, issue.message
             ),
+            Self::Particle { entity, message } => match entity {
+                Some(id) => format!("Particle entity {id}: {message}"),
+                None => format!("Particle preview: {message}"),
+            },
             Self::Model { entity, message } => match entity {
                 Some(id) => format!("Model {id} preview: {message}"),
                 None => format!("Model preview: {message}"),
@@ -261,7 +276,7 @@ impl SceneIssues {
         self.entries.insert(0, issue);
     }
 
-    fn push(&mut self, issue: SceneIssue) {
+    pub fn push(&mut self, issue: SceneIssue) {
         if self.entries.len() < MAX_PREVIEW_ISSUES {
             self.entries.push(issue);
         } else {
@@ -2493,6 +2508,7 @@ impl SceneMesh {
             lighting: builder.lighting,
             normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,
+            particles: Vec::new(),
             reference_images: Vec::new(),
             issues: builder.issues,
             skybox,

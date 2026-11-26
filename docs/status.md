@@ -19,7 +19,7 @@ or automatic mounting by Hammer. See [Portable VMFs](portable-maps.md).
 
 ## Group completion
 
-![Estimated implementation: 91.94% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 92.17% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -126,7 +126,7 @@ Completed workflows retain the limits in [Materials](textures.md) and
 | [Point-entity gallery](entity-gallery.md) | Paged FGD point classes, actual helper/icon/model examples and reviewed bulk placement with one Undo step. | 1–32 distinct loaded classes per preview; static/reference-pose visual support and mounted asset limits. |
 | [Models](models.md) | Winning-source filters, captured file origins, multi-entity mesh/skin/bodygroup previews and choices, isolated model images, reference poses, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
 | [Resource previews](sprite-guides.md) | Supported sprites, [rope placement between surfaces, playback, static textures, fixed anchors, world contact and pose-aware bounds](ropes.md), [world fog with radial distance, directional colors, an explicit official-map initial rule, fixed point-parent angles, mixed controller inputs and interrupted player switches, explicit authored fog-trigger touches, prepared underwater context and recorded radial setup history](fog.md), and [LDR/HDR backgrounds and 3D skies with independent static camera fog, whole terrain patches, fixed static props, flat alpha surfaces and guarded consumed asset sources](sky.md). | Complete native effects; runtime sky-camera history, automatic native render-pass history, automatic volume selection, camera/physics trigger contacts, general game I/O and live game-map context. |
-| [Particles](particles.md) | Active manifest metadata and atomic effect assignment to captured entity sets. | Particle rendering and animation. |
+| [Particles](particles.md) | Active manifest metadata, atomic effect assignment and a viewport timeline for supported additive and alpha-blended effects. | Sprite sheets, child systems, live lighting and runtime control points. |
 | [Sounds](sounds.md) | File/script browsing, short audition and atomic multi-entity assignment with source guards, common-field selection and explicit diagnostics. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, prefabs, notes and saved views. | Prefab assets stay external. |
 | [Clipboard](clipboard.md) | Whole-object Copy/Cut/Paste with reviewed XYZ offset, rotation, positive scale and custom pivot; groups, layers, notes and saved face partitions transfer. Shared UI/MCP and one-step Apply Undo. | Stale/opaque partitions and unrepresentable texture plans reject. MDL models require uniform scale; static/detail resizing is unsupported. Hammer/Hammer++ handoff uses VMF files. |

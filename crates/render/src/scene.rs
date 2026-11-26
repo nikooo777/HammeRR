@@ -124,7 +124,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
-    pub(crate) water: Option<(water::Pool, Vec<Batch>)>,
+    pub(crate) water: Option<water::Captures>,
     pub(crate) projected_overlay_batches: std::ops::Range<usize>,
     pub baked_faces: Option<std::sync::Arc<crate::compiled_faces::LightingData>>,
     pub baked_face_materials:
@@ -2513,7 +2513,7 @@ impl SceneMesh {
         };
         if let Some(pool) = builder.water {
             match pool.captures(&mesh, builder.fs, builder.library) {
-                Ok(receivers) => mesh.water = Some((pool, receivers)),
+                Ok(captures) => mesh.water = Some(captures),
                 Err(error) => mesh.issues.push(pool.issue(error)),
             }
         }

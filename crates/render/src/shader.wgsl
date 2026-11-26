@@ -341,7 +341,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         shade = clamp(dot(shading_normal, globals.light_dir.xyz), 0.0, 1.0);
     }
     if in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == UNLIT_PROJECTED_RECEIVER { shade = 1.0; }
-    let capturing_water = globals.water_capture.y > 0.0;
+    let capturing_water = globals.water_capture.y != 0.0;
     var albedo = texel.rgb * select(in.color.rgb, vec3<f32>(1.0), capturing_water);
     if (in.texture_flags & DETAIL_LAYER) != 0u {
         let scale = material.detail_scale;
@@ -379,7 +379,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             color = radiance / (vec3<f32>(1.0) + radiance);
         }
     }
-    if capturing_water {
+    if globals.water_capture.y < 0.0 {
+        if in.world_position.z < globals.water_capture.x {
+            discard;
+        }
+        return vec4<f32>(color, 1.0);
+    }
+    if globals.water_capture.y > 0.0 {
         if any(in.world_position < globals.water_mins.xyz) || any(in.world_position > globals.water_maxs.xyz) {
             discard;
         }

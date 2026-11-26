@@ -513,9 +513,16 @@ pub struct GpuScene {
 struct WaterSurface {
     top: Batch,
     receivers: Vec<Batch>,
+    mirror: Option<crate::scene::water::Mirror>,
     surface: water::Surface,
     fog_color: [f32; 3],
     fog_inverse_range: f32,
+}
+
+struct WaterFrame<'a> {
+    pool: crate::scene::water::Pool,
+    surface: &'a WaterSurface,
+    mirror_camera: Option<Camera>,
 }
 
 impl GpuScene {
@@ -525,7 +532,7 @@ impl GpuScene {
         view: &ViewOptions,
         size: (u32, u32),
         display: crate::ResolvedSceneDisplay,
-    ) -> Result<Option<(crate::scene::water::Pool, &WaterSurface)>, crate::scene::SceneIssue> {
+    ) -> Result<Option<WaterFrame<'_>>, crate::scene::SceneIssue> {
         use crate::scene::water::{CLIP_BIAS, NATIVE_FAR, NATIVE_NEAR};
 
         let Some((pool, water)) = &self.water else {
@@ -572,10 +579,19 @@ impl GpuScene {
         if let Some(reason) = reason {
             return Err(pool.issue(reason));
         }
-        water
+        let surface = water.as_ref().map_err(|error| pool.issue(error.clone()))?;
+        let aspect = size.0 as f32 / size.1.max(1) as f32;
+        let mirror_camera = surface
+            .mirror
             .as_ref()
-            .map(|surface| Some((*pool, surface)))
-            .map_err(|error| pool.issue(error.clone()))
+            .map(|mirror| mirror.camera(*pool, camera, aspect))
+            .transpose()
+            .map_err(|error| pool.issue(error))?;
+        Ok(Some(WaterFrame {
+            pool: *pool,
+            surface,
+            mirror_camera,
+        }))
     }
 
     pub fn water_preview_issue(
@@ -1541,10 +1557,10 @@ impl Renderer {
                 mapped_at_creation: false,
             })
         });
-        let water = mesh.water.as_ref().map(|(pool, receivers)| {
+        let water = mesh.water.as_ref().map(|captures| {
             (
-                *pool,
-                self.prepare_water(ctx, mesh, library, *pool, receivers),
+                captures.pool,
+                self.prepare_water(ctx, mesh, library, captures),
             )
         });
         let scene = GpuScene {
@@ -1604,9 +1620,9 @@ impl Renderer {
         ctx: &GpuContext,
         mesh: &SceneMesh,
         library: &MaterialLibrary,
-        pool: crate::scene::water::Pool,
-        receivers: &[Batch],
+        captures: &crate::scene::water::Captures,
     ) -> Result<WaterSurface, String> {
+        let pool = captures.pool;
         let mut tops = mesh
             .batches
             .iter()
@@ -1630,17 +1646,13 @@ impl Renderer {
             .water
             .ready()
             .ok_or("Water refraction material was not retained")?;
-        let surface = self.water.prepare_surface(
-            ctx,
-            &self.globals_layout,
-            &asset.normal,
-            crate::materials::uv::IDENTITY_AXIS,
-            asset.refract_amount,
-            asset.fog_color,
-        )?;
+        let surface = self
+            .water
+            .prepare_surface(ctx, &self.globals_layout, asset)?;
         Ok(WaterSurface {
             top,
-            receivers: receivers.to_vec(),
+            receivers: captures.refraction.clone(),
+            mirror: captures.reflection.clone(),
             surface,
             fog_color: asset.fog_color,
             fog_inverse_range: asset.fog_inverse_range,
@@ -2244,18 +2256,12 @@ impl Renderer {
             .water_for_view(camera, options, size, display)
             .ok()
             .flatten();
-        let water_draw = if let Some((pool, surface)) = water {
-            self.capture_water(
-                ctx,
-                scene,
-                camera,
-                aspect,
-                &globals,
-                pool,
-                surface,
-                &mut encoder,
-            )?;
-            Some((self.water.draw(ctx, &surface.surface, size)?, surface.top))
+        let water_draw = if let Some(frame) = water {
+            self.capture_water(ctx, scene, camera, aspect, &globals, &frame, &mut encoder)?;
+            Some((
+                self.water.draw(ctx, &frame.surface.surface, size)?,
+                frame.surface.top,
+            ))
         } else {
             None
         };
@@ -2394,13 +2400,13 @@ impl Renderer {
         camera: &Camera,
         aspect: f32,
         globals: &Globals,
-        pool: crate::scene::water::Pool,
-        water: &WaterSurface,
+        frame: &WaterFrame<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), String> {
         use crate::scene::water::{CLIP_BIAS, NATIVE_FAR, NATIVE_NEAR};
 
-        let target = self.water.capture(ctx)?;
+        let pool = frame.pool;
+        let water = frame.surface;
         let clip_maxs = pool.maxs + glam::Vec3::Z * CLIP_BIAS;
         let [r, g, b] = water.fog_color;
         let capture = Globals {
@@ -2419,15 +2425,72 @@ impl Renderer {
             water_maxs: clip_maxs.extend(0.0).to_array(),
             ..*globals
         };
+        self.water_capture_pass(
+            ctx,
+            scene,
+            encoder,
+            water::CaptureKind::Refraction,
+            &capture,
+            &water.receivers,
+        )?;
+        if let Some(mirror) = &water.mirror {
+            let camera = frame
+                .mirror_camera
+                .ok_or("Water reflection lost its mirrored view")?;
+            let reflection = Globals {
+                view_proj: camera
+                    .view_projection_clips(aspect, NATIVE_NEAR, Some(NATIVE_FAR))
+                    .to_cols_array_2d(),
+                eye: camera.position.extend(1.0).to_array(),
+                forward: camera.forward().extend(0.0).to_array(),
+                right: camera.right().extend(0.0).to_array(),
+                up: camera.up().extend(0.0).to_array(),
+                fog_range: [0.0; 4],
+                water_capture: [pool.maxs.z - CLIP_BIAS, -1.0, NATIVE_NEAR, NATIVE_FAR],
+                ..*globals
+            };
+            self.water_capture_pass(
+                ctx,
+                scene,
+                encoder,
+                water::CaptureKind::Reflection,
+                &reflection,
+                &mirror.batches,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn water_capture_pass(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        encoder: &mut wgpu::CommandEncoder,
+        kind: water::CaptureKind,
+        capture: &Globals,
+        batches: &[Batch],
+    ) -> Result<(), String> {
+        let (label, load) = match kind {
+            water::CaptureKind::Refraction => {
+                let [r, g, b, a] = capture.fog_color.map(f64::from);
+                (
+                    "Water refraction capture",
+                    wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+                )
+            }
+            water::CaptureKind::Reflection => ("Water reflection capture", wgpu::LoadOp::Load),
+        };
+        let target = self.water.capture(ctx, kind)?;
         let uniform = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Water refraction view"),
-                contents: bytemuck::bytes_of(&capture),
+                label: Some(label),
+                contents: bytemuck::bytes_of(capture),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Water refraction view"),
+            label: Some(label),
             layout: &self.globals_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -2441,23 +2504,18 @@ impl Renderer {
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Water refraction capture"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target.color,
+                view: target.color,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: f64::from(r),
-                        g: f64::from(g),
-                        b: f64::from(b),
-                        a: 1.0,
-                    }),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &target.depth,
+                view: target.depth,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Discard,
@@ -2470,12 +2528,12 @@ impl Renderer {
         pass.set_bind_group(0, &bind, &[]);
         pass.set_vertex_buffer(0, scene.vertices.slice(..));
         pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-        for batch in &water.receivers {
+        for batch in batches {
             let material = self
                 .materials
                 .get(batch.material)
                 .and_then(Option::as_ref)
-                .ok_or("Water refraction lost a qualified receiver binding")?;
+                .ok_or("Water capture lost a qualified brush material binding")?;
             pass.set_bind_group(1, &material.ordinary, &[]);
             pass.draw_indexed(
                 batch.first_index..batch.first_index + batch.index_count,

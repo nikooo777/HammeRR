@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 91.88% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 91.94% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -109,7 +109,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![Ropes hung between lantern-lit posts](docs/images/rope-placement.png) |
-| Preview refraction and build water or slime pools with reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
+| Preview water reflections and refraction. Build water or slime with fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
 
 | [3D sky terrain](docs/sky.md#add-terrain-to-the-miniature) | [3D sky models and materials](docs/sky.md#add-fixed-models-to-the-miniature) |
 | --- | --- |

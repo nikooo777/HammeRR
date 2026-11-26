@@ -1,7 +1,8 @@
 use std::{mem::offset_of, ops::Range};
 
-use source_formats::vtf::Vtf;
 use wgpu::util::DeviceExt;
+
+use crate::materials::water::{Asset, Reflection};
 
 use super::{
     COLOR_FORMAT, DEPTH_FORMAT, GpuContext, Vertex, scene_display, scene_shader, uniform_entry,
@@ -10,15 +11,22 @@ use super::{
 
 pub(super) const CAPTURE_SIZE: (u32, u32) = (1024, 1024);
 
+pub(super) enum CaptureKind {
+    Refraction,
+    Reflection,
+}
+
 #[derive(Default)]
 pub(super) struct State {
-    capture: Option<Capture>,
+    refraction: Option<wgpu::TextureView>,
+    reflection: Option<wgpu::TextureView>,
+    depth: Option<wgpu::TextureView>,
     pipeline: Option<Pipeline>,
 }
 
-pub(super) struct Capture {
-    pub(super) color: wgpu::TextureView,
-    pub(super) depth: wgpu::TextureView,
+pub(super) struct Capture<'a> {
+    pub(super) color: &'a wgpu::TextureView,
+    pub(super) depth: &'a wgpu::TextureView,
 }
 
 struct Pipeline {
@@ -30,9 +38,9 @@ struct Pipeline {
 
 pub(super) struct Surface {
     normal: wgpu::TextureView,
-    bump_transform: [f32; 4],
     refract_amount: f32,
     fog_color: [f32; 3],
+    reflection: Option<Reflection>,
 }
 
 pub(super) struct Draw<'a> {
@@ -55,37 +63,86 @@ impl Draw<'_> {
 }
 
 impl State {
-    pub(super) fn capture(&mut self, ctx: &GpuContext) -> Result<&Capture, String> {
-        if self.capture.is_none() {
-            scene_display::target_bytes(ctx, CAPTURE_SIZE, 8)?;
-            let capture = checked_gpu(ctx, "Water refraction capture", || Capture::new(ctx))?;
-            self.capture = Some(capture);
+    pub(super) fn capture(
+        &mut self,
+        ctx: &GpuContext,
+        kind: CaptureKind,
+    ) -> Result<Capture<'_>, String> {
+        let (color, other_present, label) = match kind {
+            CaptureKind::Refraction => (
+                &mut self.refraction,
+                self.reflection.is_some(),
+                "Water refraction capture",
+            ),
+            CaptureKind::Reflection => (
+                &mut self.reflection,
+                self.refraction.is_some(),
+                "Water reflection capture",
+            ),
+        };
+        if color.is_none() {
+            scene_display::target_bytes(ctx, CAPTURE_SIZE, if other_present { 12 } else { 8 })?;
+            let (new_color, new_depth) = checked_gpu(ctx, label, || {
+                let color = capture_view(
+                    ctx,
+                    label,
+                    COLOR_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+                let depth = self.depth.is_none().then(|| {
+                    capture_view(
+                        ctx,
+                        "Water capture depth",
+                        DEPTH_FORMAT,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    )
+                });
+                (color, depth)
+            })?;
+            *color = Some(new_color);
+            if let Some(depth) = new_depth {
+                self.depth = Some(depth);
+            }
         }
-        self.capture
-            .as_ref()
-            .ok_or_else(|| "Water refraction capture is unavailable".into())
+        Ok(Capture {
+            color: color
+                .as_ref()
+                .ok_or_else(|| format!("{label} is unavailable"))?,
+            depth: self
+                .depth
+                .as_ref()
+                .ok_or("Water capture depth is unavailable")?,
+        })
     }
 
     pub(super) fn prepare_surface(
         &mut self,
         ctx: &GpuContext,
         globals_layout: &wgpu::BindGroupLayout,
-        normal: &Vtf,
-        bump_transform: [f32; 4],
-        refract_amount: f32,
-        fog_color: [f32; 3],
+        asset: &Asset,
     ) -> Result<Surface, String> {
-        if !refract_amount.is_finite()
-            || bump_transform.iter().any(|value| !value.is_finite())
-            || fog_color.iter().any(|value| !(0.0..=1.0).contains(value))
+        if !asset.refract_amount.is_finite()
+            || asset
+                .fog_color
+                .iter()
+                .any(|value| !(0.0..=1.0).contains(value))
         {
             return Err("Water refraction inputs must be finite and fog RGB must fit 0–1".into());
         }
+        if asset.reflection.is_some_and(|reflection| {
+            !reflection.amount.is_finite()
+                || reflection
+                    .tint
+                    .iter()
+                    .any(|value| !(0.0..=1.0).contains(value))
+        }) {
+            return Err("Water reflection inputs must be finite and tint RGB must fit 0–1".into());
+        }
         let needs_pipeline = self.pipeline.is_none();
-        let (pipeline, texture) = checked_gpu(ctx, "Water refraction surface", || {
+        let (pipeline, texture) = checked_gpu(ctx, "Water surface", || {
             (
                 needs_pipeline.then(|| Pipeline::new(ctx, globals_layout)),
-                upload_vtf_color_space(ctx, normal, false),
+                upload_vtf_color_space(ctx, &asset.normal, false),
             )
         })?;
         let texture = texture.ok_or("Water normal texture could not be uploaded")?;
@@ -94,9 +151,11 @@ impl State {
         }
         Ok(Surface {
             normal: texture.create_view(&Default::default()),
-            bump_transform,
-            refract_amount,
-            fog_color,
+            refract_amount: asset.refract_amount,
+            fog_color: asset.fog_color,
+            reflection: asset
+                .reflection
+                .filter(|reflection| reflection.tint != [0.0; 3]),
         })
     }
 
@@ -106,42 +165,53 @@ impl State {
         surface: &Surface,
         main_size: (u32, u32),
     ) -> Result<Draw<'_>, String> {
-        let capture = self
-            .capture
+        let refraction = self
+            .refraction
             .as_ref()
             .ok_or("Water refraction has no prepared capture")?;
+        let (reflection, reflect_tint, reflect_amount) = match surface.reflection {
+            Some(settings) => (
+                self.reflection
+                    .as_ref()
+                    .ok_or("Water reflection has no prepared capture")?,
+                settings.tint,
+                settings.amount,
+            ),
+            None => (refraction, [0.0; 3], 0.0),
+        };
         let pipeline = self
             .pipeline
             .as_ref()
-            .ok_or("Water refraction has no prepared surface pipeline")?;
+            .ok_or("Water has no prepared surface pipeline")?;
         if main_size.0 == 0 || main_size.1 == 0 {
             return Err("Water refraction requires a nonempty main target".into());
         }
-        let [r, g, b] = surface.fog_color;
+        let [fog_r, fog_g, fog_b] = surface.fog_color;
+        let [reflect_r, reflect_g, reflect_b] = reflect_tint;
         let settings = [
             [
                 (main_size.0 as f32).recip(),
                 (main_size.1 as f32).recip(),
                 surface.refract_amount,
-                0.0,
+                reflect_amount,
             ],
-            surface.bump_transform,
-            [r, g, b, 0.0],
+            [fog_r, fog_g, fog_b, 0.0],
+            [reflect_r, reflect_g, reflect_b, 0.0],
         ];
         let buffer = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Water refraction parameters"),
+                label: Some("Water surface parameters"),
                 contents: bytemuck::cast_slice(&settings),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let bindings = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Water refraction surface"),
+            label: Some("Water surface"),
             layout: &pipeline.layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&capture.color),
+                    resource: wgpu::BindingResource::TextureView(refraction),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -159,6 +229,10 @@ impl State {
                     binding: 4,
                     resource: buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(reflection),
+                },
             ],
         });
         Ok(Draw {
@@ -168,66 +242,56 @@ impl State {
     }
 }
 
-impl Capture {
-    fn new(ctx: &GpuContext) -> Self {
-        let create = |label, format, usage| {
-            ctx.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: CAPTURE_SIZE.0,
-                        height: CAPTURE_SIZE.1,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
-        Self {
-            color: create(
-                "Water refraction color and height",
-                COLOR_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            ),
-            depth: create(
-                "Water refraction depth",
-                DEPTH_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            ),
-        }
-    }
+fn capture_view(
+    ctx: &GpuContext,
+    label: &str,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+) -> wgpu::TextureView {
+    ctx.device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: CAPTURE_SIZE.0,
+                height: CAPTURE_SIZE.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
 }
 
 impl Pipeline {
     fn new(ctx: &GpuContext, globals_layout: &wgpu::BindGroupLayout) -> Self {
         let device = &ctx.device;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Water refraction surface"),
+            label: Some("Water surface"),
             entries: &[
                 texture_entry(0),
                 sampler_entry(1),
                 texture_entry(2),
                 sampler_entry(3),
                 uniform_entry(4, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(5),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Water refraction surface"),
+            label: Some("Water surface"),
             bind_group_layouts: &[Some(globals_layout), Some(&layout)],
             immediate_size: 0,
         });
         let shader = scene_shader(
             device,
-            "Water refraction shader",
+            "Water surface shader",
             include_str!("../water.wgsl"),
         );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Water refraction surface"),
+            label: Some("Water surface"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -283,7 +347,7 @@ impl Pipeline {
             cache: None,
         });
         let capture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Water refraction capture clamp"),
+            label: Some("Water capture clamp"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,

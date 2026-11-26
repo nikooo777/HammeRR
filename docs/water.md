@@ -25,23 +25,30 @@ Use [Water transition](overlays.md#place-a-water-transition) to add a projected 
 | --- | --- |
 | ![Native water reflection and refraction](images/water-native-close.png) | ![The pool viewed underwater](images/water-native-underwater.png) |
 
-## Preview water refraction
+## Preview water reflections and refraction
 
 1. Create one rectangular world pool with five `tools/toolsnodraw` sides.
-2. Apply a supported static `Water` material to the top. Use
-   `$abovewater 1`, `$forceexpensive 1`, `_rt_WaterRefraction`,
-   `_rt_WaterReflection` and `$reflecttint [0 0 0]`.
-3. Use the same static texture for `$normalmap` and `%tooltexture`. Keep the
-   bump transform at identity. Set `$fogenable 1`, fog start and end, and
-   a fog color with channels 0 or 1. Name a mounted below-water material.
-4. Choose **Perspective** and **Textured**. Turn off **Overlays → Tool textures**.
-5. Look down into the pool from above. See the position of the submerged faces
-   change as you move the camera. Use **Reload material assets** after asset edits.
+2. Apply a static `Water` material to the top with `%compilewater 1`,
+   `$abovewater 1` and `$forceexpensive 1`. Set `$refracttexture` to
+   `_rt_WaterRefraction`, `$reflecttexture` to `_rt_WaterReflection` and
+   `$refractamount` to the distortion scale. Use `$reflecttint [0 0 0]`
+   for refraction alone.
+3. Use the same static RGBA or BGRA normal for `$normalmap` and `%tooltexture`.
+   Try `nature/water_coast01_normal`. Keep the bump transform at identity.
+   Set `$fogenable 1`, fog start and end, and fog RGB with channels 0 or 1.
+   Set `$bottommaterial` to a mounted `Water` material with `$abovewater 0`.
+4. For planar reflections, use an RGB tint with channels 0 or 1, set
+   `$reflectamount` and `$reflectentities 0`, and build an opaque ceiling over
+   the room. The ceiling must cover the full mirrored view.
+5. Choose **Perspective** and **Textured**. Turn off **Overlays → Tool textures**.
+6. Look down into the pool from above. Move the camera to see the water distort
+   the submerged and reflected surfaces. Use **Reload material assets** after asset edits.
 
 The preview uses Legacy display and fixed shading. Submerged geometry requires
-plain opaque `LightmappedGeneric` world or `func_detail` brush faces. HDR,
-planar reflections, underwater views, animated water, terrain and world fog
-remain unavailable in this preview. Compile and play for native water effects.
+plain opaque `LightmappedGeneric` world or `func_detail` brush faces. Planar
+reflections use the same surface limits above the water. HDR, underwater views,
+animated water, terrain, sky reflections and world fog remain unavailable in
+this preview. Compile and play for the wider native effects.
 
 ## Create a slime pool
 

@@ -19,7 +19,7 @@ or automatic mounting by Hammer. See [Portable VMFs](portable-maps.md).
 
 ## Group completion
 
-![Estimated implementation: 91.88% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 91.94% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -33,7 +33,7 @@ Other partial-group scores remain estimates.
 | --- | ---: | ---: | ---: |
 | G07 · Plane clipping | 21 | 21 | 100% |
 | C05 · Displacements | 13 | 17 | 76.47% |
-| P02 · Source material fidelity | 15 | 16 | 93.75% |
+| P02 · Source material fidelity | 16 | 16 | 100% |
 
 <details>
 <summary>C05 · Displacement workflows</summary>
@@ -80,7 +80,7 @@ Workflows use the supported geometry, material and resource limits in
 | P02-10 | Preview named static environment reflections | Complete |
 | P02-11 | Preview material emission | Complete |
 | P02-12 | Preview fixed base frames and looping AnimatedTexture | Complete |
-| P02-13 | Preview refraction and native water shading | Open · static above-water refraction works |
+| P02-13 | Preview static above-water reflection and refraction | Complete |
 | P02-14 | Preview detail texture layers | Complete |
 | P02-15 | Preview SSBump and linear half-float normals | Complete |
 | P02-16 | Preview extended material texture transforms | Complete |

@@ -11,7 +11,7 @@ const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
 const MAX_AXIS: u32 = 1024;
 const MAX_PATH_BYTES: usize = 240;
 const MAX_FOG_DISTANCE: f32 = 32_768.0;
-const MAX_REFRACT_AMOUNT: f32 = 16.0;
+const MAX_DISTORTION_AMOUNT: f32 = 16.0;
 const TRILINEAR: u32 = 0x0000_0002;
 const NORMAL: u32 = 0x0000_0080;
 const NOLOD: u32 = 0x0000_0200;
@@ -33,6 +33,13 @@ pub(crate) struct Declaration {
     fog_color: [f32; 3],
     fog_inverse_range: f32,
     refract_amount: f32,
+    reflection: Option<Reflection>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Reflection {
+    pub(crate) tint: [f32; 3],
+    pub(crate) amount: f32,
 }
 
 #[derive(Debug)]
@@ -42,6 +49,7 @@ pub(crate) struct Asset {
     pub(crate) fog_color: [f32; 3],
     pub(crate) fog_inverse_range: f32,
     pub(crate) refract_amount: f32,
+    pub(crate) reflection: Option<Reflection>,
 }
 
 impl Layer {
@@ -136,12 +144,12 @@ impl Declaration {
         for (key, value) in &material.params {
             match key.as_str() {
                 "%compilewater" | "%tooltexture" | "%keywords" | "$surfaceprop" | "$abovewater"
-                | "$forceexpensive" | "$reflecttexture" | "$reflecttint" | "$refracttexture"
-                | "$refracttint" | "$refractamount" | "$normalmap" | "$bumptransform"
-                | "$fogenable" | "$fogstart" | "$fogend" | "$fogcolor" | "$bottommaterial" => {}
+                | "$forceexpensive" | "$reflecttexture" | "$reflecttint" | "$reflectamount"
+                | "$refracttexture" | "$refracttint" | "$refractamount" | "$normalmap"
+                | "$bumptransform" | "$fogenable" | "$fogstart" | "$fogend" | "$fogcolor"
+                | "$bottommaterial" => {}
                 "$forcecheap" | "$reflectentities" | "$blurrefract" | "$bumpframe"
                     if value.trim() == "0" => {}
-                "$reflectamount" if value.trim() == "0" => {}
                 _ => {
                     let key: String = key.chars().take(128).collect();
                     return Err(format!(
@@ -171,9 +179,7 @@ impl Declaration {
                 return Err(format!("Water refraction requires {key} {target}"));
             }
         }
-        if color(material, "$reflecttint")? != [0.0; 3] {
-            return Err("Water refraction requires zero $reflecttint".into());
-        }
+        let reflection = Reflection::resolve(material)?;
         if material.get("$refracttint").is_some() && color(material, "$refracttint")? != [1.0; 3] {
             return Err("Water refraction requires identity $refracttint".into());
         }
@@ -204,8 +210,8 @@ impl Declaration {
         let refract_amount = scalar(
             material,
             "$refractamount",
-            -MAX_REFRACT_AMOUNT,
-            MAX_REFRACT_AMOUNT,
+            -MAX_DISTORTION_AMOUNT,
+            MAX_DISTORTION_AMOUNT,
         )?;
         Ok(Self {
             path,
@@ -213,6 +219,7 @@ impl Declaration {
             fog_color,
             fog_inverse_range: range.recip(),
             refract_amount,
+            reflection,
         })
     }
 
@@ -239,11 +246,56 @@ impl Declaration {
             fog_color: self.fog_color,
             fog_inverse_range: self.fog_inverse_range,
             refract_amount: self.refract_amount,
+            reflection: self.reflection,
         };
         if asset.cache_bytes() > remaining_budget {
             return Err(cache_limit());
         }
         Ok(asset)
+    }
+}
+
+impl Reflection {
+    fn resolve(material: &Material) -> Result<Option<Self>, String> {
+        let key = "$reflecttint";
+        let value = material
+            .get(key)
+            .ok_or("Water refraction requires explicit $reflecttint")?
+            .trim();
+        let tint = super::emission::tint(value, key)?;
+        if tint == [0.0; 3] {
+            if material
+                .get("$reflectamount")
+                .map(str::trim)
+                .is_some_and(|amount| amount != "0")
+            {
+                return Err(
+                    "Water with zero $reflecttint requires $reflectamount 0 if declared".into(),
+                );
+            }
+            return Ok(None);
+        }
+        let (components, high) = if value.starts_with('[') {
+            (value.trim_start_matches('[').trim_end_matches(']'), 1.0)
+        } else {
+            (value.trim_start_matches('{').trim_end_matches('}'), 255.0)
+        };
+        if !components
+            .split_whitespace()
+            .all(|component| matches!(component.parse::<f64>(), Ok(value) if value == 0.0 || value == high))
+        {
+            return Err("Water reflection requires endpoint $reflecttint channels (0 or 1, or byte values 0 or 255)".into());
+        }
+        if material.get("$reflectentities").map(str::trim) != Some("0") {
+            return Err("Water reflection requires explicit $reflectentities 0".into());
+        }
+        let amount = scalar(
+            material,
+            "$reflectamount",
+            -MAX_DISTORTION_AMOUNT,
+            MAX_DISTORTION_AMOUNT,
+        )?;
+        Ok(Some(Self { tint, amount }))
     }
 }
 

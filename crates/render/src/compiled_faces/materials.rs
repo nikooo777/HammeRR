@@ -608,7 +608,7 @@ fn load_texture(
             "{path}: clamp, point, border, procedural, environment, render-target or sRGB-normal texture flags are outside the static matrix"
         ));
     }
-    let encoded_ssbump = texture.flags & 0x0800_0000 != 0;
+    let encoded_ssbump = texture.flags & source_formats::vtf::FLAG_SSBUMP != 0;
     if !normal && encoded_ssbump {
         return Err(format!("{path}: SSBump cannot serve as a diffuse texture"));
     }

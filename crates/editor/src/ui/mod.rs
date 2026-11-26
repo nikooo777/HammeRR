@@ -422,6 +422,7 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
         },
     );
     app.set_lighting_exposure_ev(session.view().lighting_exposure_ev.to_string().into());
+    app.set_material_animation_time(session.view().material_animation_time.to_string().into());
     app.set_additive_sprite_guides(session.view().additive_sprite_guides);
     app.set_show_tools(session.view().tool_textures);
     app.set_show_leak(session.view().leak_path);
@@ -509,6 +510,24 @@ fn prepare_scene_refresh(
     }
     *options = view;
     Some(next)
+}
+
+fn apply_material_animation_time(app: AppWindow, shared: &SharedSession) {
+    let mut session = lock(shared);
+    let value = app.get_material_animation_time().parse::<f64>();
+    let result = value
+        .map_err(|_| "Material time requires a number of seconds".to_owned())
+        .and_then(|value| {
+            session.resolve_view_update(editor_core::session::ViewUpdate {
+                material_animation_time: Some(value),
+                ..Default::default()
+            })
+        })
+        .and_then(|view| session.set_view(view));
+    if let Err(error) = result {
+        app.set_message(error.into());
+    }
+    app.set_material_animation_time(session.view().material_animation_time.to_string().into());
 }
 
 fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
@@ -2378,6 +2397,9 @@ fn create_document_window(
     });
     root_callback!(app, ui, on_options_changed, |app| {
         apply_view_controls(app.unwrap(), &session_of(&ui));
+    });
+    root_callback!(app, ui, on_material_animation_time_changed, |app| {
+        apply_material_animation_time(app.unwrap(), &session_of(&ui));
     });
     let instance_contents = instance_contents::bind_with_access(&app, &file_access(&ui));
     let instance_reference = instance_reference::bind_with_access(&app, &file_access(&ui));

@@ -65,6 +65,29 @@ default scale is 4 and the default blend factor is 1. Use `$detailtint` for a
 color tint. Detail needs an identity base transform. These previews require
 static textures and exclude proxies, alternate modes and combined effects.
 
+## Preview environment reflections
+
+1. Apply an opaque `LightmappedGeneric` material with a named `$envmap` cube
+   to a flat brush face. Try `shadertest/lightmappedenvmappedtexture`.
+2. Choose **Textured** and move the camera. The cube follows the view direction.
+3. Use **Reload material assets** after editing the cube or material.
+
+Static LDR cubes use `$envmaptint` and `$fresnelreflection`. Runtime
+`env_cubemap`, masks, bump layers, models and terrain are outside this preview.
+
+## Preview animated base textures
+
+1. Apply a supported material. Try `effects/tp_eyefx/tp_eyefx_eli`.
+2. Choose **Textured** in the viewport header and open **Overlays**.
+3. Under **Surfaces**, enter seconds in **Material time** and press <kbd>Enter</kbd>.
+   Try `0`, `0.125`, `0.25` and `0.375` for the example.
+
+Plain opaque `LightmappedGeneric` and `UnlitGeneric` use a fixed `$frame` or a
+single looping `AnimatedTexture` proxy on a brush or world or `func_detail`
+terrain. Time is shared across panes and stays still until you change it.
+The preview supports 0–3600 seconds, up to 64 frames and textures up to 512×512.
+Other proxies, no-wrap animation and layered materials remain unavailable.
+
 ## Use FGD directory rules
 
 1. Load an FGD through **Entity… → Load FGD…**.

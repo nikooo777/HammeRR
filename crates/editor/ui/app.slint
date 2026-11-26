@@ -2504,6 +2504,7 @@ export component AppWindow inherits Window {
     in-out property <bool> lighting-sky-ambient: false;
     in-out property <int> lighting-quality: 1;
     in-out property <string> lighting-exposure-ev: "0";
+    in-out property <string> material-animation-time: "0";
     in property <bool> legacy-exposure-enabled: true;
     in property <string> scene-exposure-context;
     in property <string> lighting-status: "Authored lighting preview is off";
@@ -2714,6 +2715,7 @@ export component AppWindow inherits Window {
     callback pick-color(key: string);
     callback property-component-edited(key: string, index: int, value: string);
     callback options-changed();
+    callback material-animation-time-changed();
     callback property-edited(key: string, value: string);
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
@@ -3808,12 +3810,23 @@ export component AppWindow inherits Window {
                                         if root.helper-presentation-status != "": OverlayNote { text: root.helper-presentation-status; text-color: Theme.warning; }
                                         SectionHeader { text: "SURFACES"; collapsible: false; }
                                         OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
-                                        if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
+                                        if root.normal-maps: OverlayNote { text: root.normal-map-status; }
                                         OverlaySwitch { text: "Directional surface shading"; checked <=> root.surface-shading; toggled => { root.options-changed(); } }
                                         if root.surface-shading: OverlayNote { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; }
                                         if root.surface-view == 4: FieldRow {
                                             label: "Highlight group";
                                             SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
+                                        }
+                                        if root.surface-view == 0: FieldRow {
+                                            label: "Material time";
+                                            LineEdit {
+                                                text <=> root.material-animation-time;
+                                                input-type: decimal;
+                                                placeholder-text: "0 to 3600";
+                                                accessible-label: "Material time (s)";
+                                                accepted => { root.material-animation-time-changed(); }
+                                            }
+                                            Text { text: "s"; color: Theme.text-faint; vertical-alignment: center; }
                                         }
                                         if root.surface-view >= 3: OverlayNote { text: "Authored settings · baked lighting is pending"; }
                                         SectionHeader { text: "LIGHTING"; collapsible: false; }

@@ -380,7 +380,7 @@ impl Renderer {
                 info,
                 material.unlit,
                 &self.sampler,
-                texture,
+                texture.into(),
                 material.alpha_reference,
             )?);
         }

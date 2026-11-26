@@ -9,6 +9,7 @@ pub struct ViewUpdate<'a> {
     pub lighting_sky_ambient: Option<bool>,
     pub lighting_quality: Option<&'a str>,
     pub lighting_exposure_ev: Option<f64>,
+    pub material_animation_time: Option<f64>,
     pub scene_display: Option<&'a str>,
     pub scene_exposure_ev: Option<f64>,
     pub normal_maps: Option<bool>,
@@ -136,6 +137,9 @@ impl Session {
                 return Err("Lighting exposure must be finite and between -8 and 8 EV".into());
             }
             view.lighting_exposure_ev = value as f32;
+        }
+        if let Some(value) = update.material_animation_time {
+            view.material_animation_time = render::checked_material_animation_time(value)?;
         }
         if view.lighting_preview
             && view.normal_maps

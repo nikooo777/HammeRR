@@ -11,6 +11,8 @@ const MODEL_SURFACE: u32 = 8u;
 const BASE_TEXTURE_TRANSFORM: u32 = 128u;
 const MODEL_PHONG_FRAME: u32 = 16u;
 const DETAIL_LAYER: u32 = 32u;
+const ENVIRONMENT_LAYER: u32 = 64u;
+const ANIMATED_BASE: u32 = 256u;
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
@@ -23,6 +25,8 @@ struct MaterialParams {
     phong_exponent: f32,
     detail_tint_factor: vec4<f32>,
     detail_scale: f32,
+    ssbump: f32,
+    environment: vec4<f32>,
 }
 
 @group(1) @binding(0) var base_texture: texture_2d<f32>;
@@ -31,6 +35,8 @@ struct MaterialParams {
 @group(1) @binding(3) var<uniform> material: MaterialParams;
 @group(1) @binding(4) var normal_texture: texture_2d<f32>;
 @group(1) @binding(5) var second_normal_texture: texture_2d<f32>;
+@group(1) @binding(7) var environment_cube: texture_cube<f32>;
+@group(1) @binding(8) var environment_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -127,7 +133,7 @@ fn authored_lighting(
     return total;
 }
 
-fn model_view_direction(position: vec3<f32>) -> vec3<f32> {
+fn view_direction(position: vec3<f32>) -> vec3<f32> {
     if globals.eye.w > 0.5 {
         let offset = globals.eye.xyz - position;
         let scale = max(max(abs(offset.x), abs(offset.y)), abs(offset.z));
@@ -136,12 +142,27 @@ fn model_view_direction(position: vec3<f32>) -> vec3<f32> {
     return -globals.forward.xyz;
 }
 
+fn environment_reflection(in: VertexOut) -> vec3<f32> {
+    let params = material.environment;
+    if globals.surface_view.x != 0u || all(params.rgb == vec3<f32>(0.0)) {
+        return vec3<f32>(0.0);
+    }
+    let enabled = (in.texture_flags & ENVIRONMENT_LAYER) != 0u;
+    let normal = normalize(select(vec3<f32>(0.0, 0.0, 1.0), in.normal, enabled));
+    let eye = view_direction(in.world_position);
+    let sampled = textureSample(environment_cube, environment_sampler, reflect(-eye, normal)).rgb;
+    let edge = clamp(1.0 - dot(normal, eye), 0.0, 1.0);
+    let squared = edge * edge;
+    let fresnel = params.w + (1.0 - params.w) * squared * squared * edge;
+    return select(vec3<f32>(0.0), sampled * params.rgb * fresnel, enabled);
+}
+
 fn authored_radiance(position: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, phong_mask: f32) -> vec3<f32> {
     let ranges = material.phong_fresnel_boost;
     if phong_mask == 0.0 || ranges.w == 0.0 {
         return albedo * authored_lighting(position, normal, vec3<f32>(0.0), 0.0).diffuse;
     }
-    let eye = model_view_direction(position);
+    let eye = view_direction(position);
     let ndotv = dot(normal, eye);
     let reflection = 2.0 * normal * ndotv - eye;
     let lighting = authored_lighting(position, normal, reflection, material.phong_exponent);
@@ -149,6 +170,13 @@ fn authored_radiance(position: vec3<f32>, normal: vec3<f32>, albedo: vec3<f32>, 
     let q = edge * edge - 0.5;
     let fresnel = ranges.y + q * select(ranges.x, ranges.z, q >= 0.0);
     return albedo * lighting.diffuse + lighting.specular * (phong_mask * ranges.w * fresnel);
+}
+
+fn bump_basis(normal: vec3<f32>, tangent: vec3<f32>, bitangent: vec3<f32>) -> mat3x3<f32> {
+    let up = normal * sqrt(1.0 / 3.0);
+    let back = tangent * -sqrt(1.0 / 6.0);
+    let cross_axis = bitangent * sqrt(1.0 / 2.0);
+    return mat3x3<f32>(tangent * sqrt(2.0 / 3.0) + up, back + cross_axis + up, back - cross_axis + up);
 }
 
 fn detail_billboard_basis(origin: vec3<f32>, vertical: bool) -> mat2x3<f32> {
@@ -233,11 +261,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         base_uv = affine_uv(base_uv, material.base_uv_transform);
     }
     var texel = textureSample(base_texture, texture_sampler, base_uv);
+    let reflected = environment_reflection(in);
     let uv_dx = dpdx(in.uv);
     let uv_dy = dpdy(in.uv);
     let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
     let surface_overlay = surface_diagnostic(in, grid_width);
     if surface_overlay.a > 0.0 { return surface_overlay; }
+    if (in.texture_flags & ANIMATED_BASE) != 0u {
+        texel = textureSampleGrad(blend_texture, texture_sampler, in.uv, uv_dx, uv_dy);
+    }
     let blend_weight = in.color.a;
     if material.flags.y > 0.5 {
         let second = textureSampleGrad(blend_texture, texture_sampler, in.uv, uv_dx, uv_dy);
@@ -257,6 +289,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let model_frame = (in.texture_flags & MODEL_NORMAL_FRAME) != 0u;
     var shading_normal = n;
     var phong_mask = 0.0;
+    var ssbump = false;
     if globals.surface_view.z != 0u && material.helper.z > 0.5 && (model_frame || abs(in.tangent.w) > 0.5) {
         let scale = material.normal_transform.xy;
         let uv = in.uv * scale + material.normal_transform.zw;
@@ -286,7 +319,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             bitangent = cross(frame_normal, tangent) * handedness;
         }
         let mapped = tangent * normal.x + bitangent * normal.y + frame_normal * normal.z;
-        if model_frame {
+        if material.ssbump > 0.5 && !model_frame {
+            ssbump = true;
+            shading_normal = bump_basis(frame_normal, tangent, bitangent) * sampled.rgb;
+        } else if model_frame {
             let squared_length = dot(mapped, mapped);
             var reciprocal_length = 0x1.fffffep+127f;
             if squared_length != 0.0 {
@@ -300,6 +336,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var shade = 0.55 + 0.45 * clamp(dot(shading_normal, globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     if globals.surface_view.w != 0u && material.helper.w > 0.5 {
         shade = 0.3 + 0.7 * max(dot(shading_normal, globals.light_dir.xyz), 0.0);
+    }
+    if ssbump {
+        shade = clamp(dot(shading_normal, globals.light_dir.xyz), 0.0, 1.0);
     }
     if in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == UNLIT_PROJECTED_RECEIVER { shade = 1.0; }
     var albedo = texel.rgb * in.color.rgb;
@@ -317,7 +356,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         && material.emission.w > 0.5 && (!masked_emission || (material.emission.w > 2.5) == model_surface);
     let emission_weight = select(1.0, texel.a, masked_emission);
     let emitted = albedo * material.emission.rgb;
-    var color = albedo * shade;
+    var color = albedo * shade + reflected;
     if globals.lighting_settings.z > 0.5 && in.lighting_receiver == 1u {
         var radiance = albedo * in.authored_irradiance;
         if globals.lighting_settings.y > 0.5 {
@@ -325,6 +364,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         }
         if emission { radiance = mix(radiance, emitted, emission_weight); }
         radiance *= globals.lighting_settings.w;
+        radiance += reflected * (255.0 * globals.lighting_settings.w);
         color = radiance;
         if globals.scene_display.x < 0.5 { color = radiance / (vec3<f32>(1.0) + radiance); }
     } else if emission {
@@ -435,10 +475,8 @@ fn baked_weights(in: VertexOut) -> vec3<f32> {
     let tangent = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
     let bitangent = cross(n, tangent) * in.tangent.w;
     let mapped = tangent * tangent_normal.x + bitangent * tangent_normal.y + n * tangent_normal.z;
-    let b1 = tangent * sqrt(2.0 / 3.0) + n * sqrt(1.0 / 3.0);
-    let b2 = tangent * -sqrt(1.0 / 6.0) + bitangent * sqrt(1.0 / 2.0) + n * sqrt(1.0 / 3.0);
-    let b3 = tangent * -sqrt(1.0 / 6.0) - bitangent * sqrt(1.0 / 2.0) + n * sqrt(1.0 / 3.0);
-    let projected = max(vec3<f32>(dot(mapped, b1), dot(mapped, b2), dot(mapped, b3)), vec3<f32>(0.0));
+    let basis = bump_basis(n, tangent, bitangent);
+    let projected = max(transpose(basis) * mapped, vec3<f32>(0.0));
     let squared = projected * projected;
     return squared / dot(squared, vec3<f32>(1.0));
 }

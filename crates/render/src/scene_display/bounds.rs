@@ -3,7 +3,7 @@ use crate::compiled_details::{
 };
 use crate::compiled_faces::materials::{Kind, Material, MaterialLighting, NormalEncoding, Texture};
 use crate::lighting::{Light, Preview};
-use crate::scene::{Batch, DETAIL_LAYER, MODEL_PHONG_FRAME, Vertex};
+use crate::scene::{Batch, DETAIL_LAYER, ENVIRONMENT_LAYER, MODEL_PHONG_FRAME, Vertex};
 use crate::{Camera, MaterialLibrary, SceneMesh, ViewOptions};
 
 use super::MAX_HDR_RADIANCE;
@@ -34,6 +34,7 @@ struct BatchBounds {
     authored: bool,
     phong_gain: f64,
     authored_detail_gain: [f64; 3],
+    authored_environment: [f64; 3],
     reference: bool,
     rope: bool,
     tool: bool,
@@ -78,6 +79,7 @@ impl SourceRadianceBounds {
         let mut needs_authored = false;
         let mut phong_gain = 0.0_f64;
         let mut authored_detail_gain = [1.0_f64; 3];
+        let mut authored_environment = [0.0_f64; 3];
         let mut needs_sky = false;
         let mut needs_miniature = false;
         for batch in &bounds.batches {
@@ -106,6 +108,12 @@ impl SourceRadianceBounds {
                 {
                     *maximum = maximum.max(gain);
                 }
+                for (maximum, bound) in authored_environment
+                    .iter_mut()
+                    .zip(batch.authored_environment)
+                {
+                    *maximum = maximum.max(bound);
+                }
             }
             needs_miniature |= batch.sky3d_eligible && options.sky3d_preview;
         }
@@ -117,6 +125,15 @@ impl SourceRadianceBounds {
                     authored.diffuse[channel] * authored_detail_gain[channel]
                 }),
             )?;
+            if authored_environment.into_iter().any(|bound| bound > 0.0) {
+                admit(
+                    "Authored lighting with environment reflection",
+                    std::array::from_fn(|channel| {
+                        authored.diffuse[channel]
+                            + authored_environment[channel] * COMPOSITION_HEADROOM
+                    }),
+                )?;
+            }
             if phong_gain > 0.0
                 && options.normal_maps
                 && options.lighting_quality == crate::lighting::Quality::Detail
@@ -188,10 +205,13 @@ impl Bounds {
                 .map_or(0.0, |phong| phong.gain_bound());
             let detail = info.and_then(|info| info.detail.ready());
             let detail_gain = detail.map_or([1.0; 3], |asset| asset.maximum_gain());
+            let environment = info
+                .and_then(|info| info.environment.ready())
+                .map_or([0.0; 3], |asset| asset.radiance_bound());
             let radiance = if baked {
                 baked_bound(mesh, batch, &faces, &materials)
             } else {
-                vertices.and_then(|indices| ordinary_bound(mesh, indices, detail_gain))
+                vertices.and_then(|indices| ordinary_bound(mesh, indices, detail_gain, environment))
             };
             batches.push(BatchBounds {
                 radiance,
@@ -201,6 +221,11 @@ impl Bounds {
                     detail_gain
                 } else {
                     [1.0; 3]
+                },
+                authored_environment: if authored_flags & ENVIRONMENT_LAYER != 0 {
+                    environment
+                } else {
+                    [0.0; 3]
                 },
                 reference: info.is_some_and(|info| info.reference),
                 rope: batch.rope,
@@ -258,6 +283,7 @@ fn ordinary_bound(
     mesh: &SceneMesh,
     indices: &[u32],
     detail_gain: [f64; 3],
+    environment: [f64; 3],
 ) -> Result<[f64; 3], String> {
     let mut bound = [1.0_f64; 3];
     for &index in indices {
@@ -266,6 +292,11 @@ fn ordinary_bound(
         if vertex.texture_flags & DETAIL_LAYER != 0 {
             for (maximum, gain) in bound.iter_mut().zip(detail_gain) {
                 *maximum = maximum.max(gain * COMPOSITION_HEADROOM);
+            }
+        }
+        if vertex.texture_flags & ENVIRONMENT_LAYER != 0 {
+            for (maximum, reflection) in bound.iter_mut().zip(environment) {
+                *maximum = maximum.max((1.0 + reflection) * COMPOSITION_HEADROOM);
             }
         }
         match vertex.lighting_receiver & LIGHTING_RECEIVER_KIND_MASK {

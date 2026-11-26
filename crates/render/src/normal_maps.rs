@@ -6,7 +6,9 @@ use serde::Serialize;
 use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmf::Side;
 use source_formats::vmt::{DuplicateOperations, Material, texture_path, texture_transform};
-use source_formats::vtf::{ImageFormat, RgbaImage, Vtf};
+use source_formats::vtf::{FLAG_SSBUMP, ImageFormat, RgbaImage, Vtf};
+
+use crate::materials::uv::IDENTITY_AXIS as IDENTITY_TRANSFORM;
 
 pub const MAX_ASSETS: usize = 128;
 pub const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
@@ -14,9 +16,7 @@ pub const MAX_AXIS: u32 = 1024;
 pub const MAX_TERRAIN_VERTICES: usize = 1024 * 1024;
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 const MAX_TEXTURE_BYTES: usize = 16 * 1024 * 1024;
-const SSBUMP_FLAG: u32 = 0x0800_0000;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2201_c84d;
-use crate::materials::uv::IDENTITY_AXIS as IDENTITY_TRANSFORM;
 
 pub(crate) fn ordinary_ldr_format(format: ImageFormat) -> bool {
     matches!(
@@ -46,7 +46,7 @@ pub(crate) fn validate_static_texture(texture: &Vtf, maximum_axis: u32) -> Resul
     }
     Ok(())
 }
-pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain. Terrain also supports WorldVertexTransition with two exact static ordinary repeat-sampled LDR color textures and checked normal inputs. Selected-body and selected-skin authored MDL meshes support opaque Normal mode and plain VertexLitGeneric with one ordinary RGB bump map, identity transforms and checked stored tangents on the displayed pose. Sprites, icons, helpers and reference meshes are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear. Normal images repeat with linear filtering at their base mip. Bump alpha masks specular on supported Phong models in Detail authored lighting. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. Brush and terrain normal Z must be at least 128. Model preview uses the stored normal and tangent with the installed shader’s signed bitangent and zero-vector normalization. Signed/swizzled, HDR and SSBump encodings are unsupported. Ordinary LightmappedGeneric uses one bump map. WorldVertexTransition uses the first normal for both colors when only one map is declared. Vertex paint blends both normals when a second map is declared. Missing or invalid declared layers reject normals for the terrain receiver or the selected model instance. Proxies, fallback blocks, detail, animated frames and base display overrides are excluded. WorldVertexTransition uses identity texture transforms. LightmappedGeneric uses an identity base transform and supports positive axis scale and translation with zero rotation for bump maps. Authored face UV rotation and signed scales define the tangent frame. Fixed editor shading or admitted unshadowed authored lights in Detail quality. Plain opaque VertexLitGeneric Phong uses a normalized signed bitangent per vertex, a fixed declared exponent, explicit boost and Fresnel ranges. See Authored lighting preview for Phong limits. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
+pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons and world/func_detail terrain. Terrain also supports WorldVertexTransition with two exact static ordinary repeat-sampled LDR color textures and checked normal inputs. Selected-body and selected-skin authored MDL meshes support opaque Normal mode and plain VertexLitGeneric with one ordinary RGB bump map, identity transforms and checked stored tangents on the displayed pose. Sprites, icons, helpers and reference meshes are excluded. Terrain uses checked packed triangle UV/position tangent frames and prepared border normals; singular frames are excluded. Normal-mapped terrain expands triangle vertices within its explicit shared vertex budget. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear. Normal images repeat with linear filtering at their base mip. Bump alpha masks specular on supported Phong models in Detail authored lighting. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. Brush and terrain normal Z must be at least 128. Model preview uses the stored normal and tangent with the installed shader’s signed bitangent and zero-vector normalization. Plain opaque single-base LightmappedGeneric also supports flagged SSBump RGB coefficients with literal $ssbump 1, or finite biased linear RGBA16F XYZ with Z above 0.5. SSBump uses fixed shading on terrain and fixed or Detail authored lighting on flat brushes. Signed/swizzled formats are unsupported. Ordinary LightmappedGeneric uses one bump map. WorldVertexTransition uses the first normal for both colors when only one map is declared. Vertex paint blends both normals when a second map is declared. Missing or invalid declared layers reject normals for the terrain receiver or the selected model instance. Proxies, fallback blocks, detail, animated frames and base display overrides are excluded. WorldVertexTransition uses identity texture transforms. LightmappedGeneric uses an identity base transform and supports positive axis scale and translation with zero rotation for bump maps. Authored face UV rotation and signed scales define the tangent frame. Fixed editor shading or admitted unshadowed authored lights in Detail quality. Plain opaque VertexLitGeneric Phong uses a normalized signed bitangent per vertex, a fixed declared exponent, explicit boost and Fresnel ranges. See Authored lighting preview for Phong limits. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
 
 #[derive(Serialize)]
 pub struct Limits {
@@ -79,6 +79,7 @@ pub struct AssetReport {
     pub source: Option<crate::icons::Source>,
     pub texture_source: Option<crate::icons::Source>,
     pub dimensions: Option<[u32; 2]>,
+    pub encoding: Option<Encoding>,
     pub transform: [f32; 4],
     pub secondary_texture: Option<String>,
     pub secondary_texture_source: Option<crate::icons::Source>,
@@ -86,12 +87,45 @@ pub struct AssetReport {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Encoding {
+    TangentRgb,
+    TangentRgba16f,
+    SsBump,
+}
+
+#[derive(Debug)]
+pub enum Image {
+    Byte(RgbaImage),
+    Half {
+        dimensions: [u32; 2],
+        pixels: Vec<u8>,
+    },
+}
+
+impl Image {
+    pub(crate) fn dimensions(&self) -> [u32; 2] {
+        match self {
+            Self::Byte(image) => [image.width, image.height],
+            Self::Half { dimensions, .. } => *dimensions,
+        }
+    }
+
+    pub(crate) fn pixels(&self) -> &[u8] {
+        match self {
+            Self::Byte(image) => &image.pixels,
+            Self::Half { pixels, .. } => pixels,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Asset {
     pub retained: bool,
     pub report: AssetReport,
-    pub image: Option<RgbaImage>,
-    pub secondary_image: Option<RgbaImage>,
+    pub image: Option<Image>,
+    pub secondary_image: Option<Image>,
 }
 
 impl Asset {
@@ -99,7 +133,7 @@ impl Asset {
         self.image
             .iter()
             .chain(&self.secondary_image)
-            .map(|image| image.pixels.len())
+            .map(|image| image.pixels().len())
             .sum()
     }
 }
@@ -155,6 +189,7 @@ impl Library {
             source: None,
             texture_source: None,
             dimensions: None,
+            encoding: None,
             transform: IDENTITY_TRANSFORM,
             secondary_texture: None,
             secondary_texture_source: None,
@@ -227,8 +262,16 @@ pub(crate) fn declares_normals(material: &Material) -> bool {
 }
 
 struct Images {
-    primary: RgbaImage,
-    secondary: Option<RgbaImage>,
+    primary: Image,
+    secondary: Option<Image>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageProfile {
+    Brush,
+    SsBump,
+    TerrainBlend,
+    Model,
 }
 
 fn load(
@@ -261,6 +304,12 @@ fn load(
     }
     let terrain_only = material.shader == "worldvertextransition";
     let model_only = material.shader == "vertexlitgeneric";
+    let ssbump = match material.get("$ssbump").map(str::trim) {
+        None | Some("0") => false,
+        Some("1") if material.shader == "lightmappedgeneric" => true,
+        Some("1") => return Err("SSBump preview requires single-base LightmappedGeneric".into()),
+        _ => return Err("SSBump preview requires literal $ssbump 0 or 1".into()),
+    };
     if terrain_only || model_only {
         let display = display.ok_or("Normal preview requires the exact base display textures")?;
         if let Some(error) = &display.error {
@@ -313,21 +362,34 @@ fn load(
     }
     let path = normal_path(bump, terrain_only || model_only)?;
     report.texture = Some(path.clone());
-    let image = read_normal(fs, &path, budget, !model_only, &mut report.texture_source)?;
-    report.dimensions = Some([image.width, image.height]);
+    let profile = if terrain_only {
+        ImageProfile::TerrainBlend
+    } else if model_only {
+        ImageProfile::Model
+    } else if ssbump {
+        ImageProfile::SsBump
+    } else {
+        ImageProfile::Brush
+    };
+    let (image, encoding) = read_normal(fs, &path, budget, profile, &mut report.texture_source)?;
+    if encoding != Encoding::TangentRgb {
+        special_normal_material(&material, display)?;
+    }
+    report.dimensions = Some(image.dimensions());
+    report.encoding = Some(encoding);
     let secondary = if terrain_only && let Some(bump) = material.get("$bumpmap2") {
         let path =
             normal_path(bump, true).map_err(|error| format!("Second normal layer: {error}"))?;
         report.secondary_texture = Some(path.clone());
-        let image = read_normal(
+        let (image, _) = read_normal(
             fs,
             &path,
-            budget - image.pixels.len(),
-            true,
+            budget - image.pixels().len(),
+            ImageProfile::TerrainBlend,
             &mut report.secondary_texture_source,
         )
         .map_err(|error| format!("Second normal layer {path}: {error}"))?;
-        report.secondary_dimensions = Some([image.width, image.height]);
+        report.secondary_dimensions = Some(image.dimensions());
         Some(image)
     } else {
         None
@@ -353,7 +415,7 @@ fn single_layer_material(material: &Material) -> Result<(), String> {
     }
     for (key, _) in &material.params {
         if (key.starts_with("$bump") && !["$bumpmap", "$bumptransform"].contains(&key.as_str()))
-            || key.starts_with("$ssbump")
+            || (key.starts_with("$ssbump") && key != "$ssbump")
             || key.starts_with("$detail")
             || [
                 "$normalmap",
@@ -373,6 +435,50 @@ fn single_layer_material(material: &Material) -> Result<(), String> {
     Ok(())
 }
 
+fn special_normal_material(
+    material: &Material,
+    display: Option<&crate::materials::MaterialInfo>,
+) -> Result<(), String> {
+    if material.is_tool() || material.translucent() || material.alpha_test() {
+        return Err("Special normal encodings require an opaque non-tool surface".into());
+    }
+    if let Some((key, _)) = material.params.iter().find(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            "$basetexture"
+                | "$basetexturetransform"
+                | "$bumpmap"
+                | "$bumptransform"
+                | "$ssbump"
+                | "$surfaceprop"
+                | "$surfaceprop2"
+                | "$nodecal"
+                | "%keywords"
+        )
+    }) {
+        let key: String = key.chars().take(128).collect();
+        return Err(format!(
+            "Special normal encodings do not support material parameter {key}"
+        ));
+    }
+    let display = display.ok_or("Special normal encodings need the exact base VTF")?;
+    if let Some(error) = &display.error {
+        return Err(error.clone());
+    }
+    let path = material
+        .get("$basetexture")
+        .map(str::trim)
+        .filter(|path| !path.is_empty() && asset_relative(path).is_ok())
+        .map(texture_path);
+    let base = display
+        .base
+        .as_ref()
+        .filter(|_| path.is_some() && path == display.display_texture)
+        .ok_or("Special normal encodings need the exact base VTF")?;
+    crate::materials::validate_ordinary_color_texture(base, u32::from(u16::MAX))
+        .map_err(|error| format!("Special normal encoding base: {error}"))
+}
+
 fn normal_path(value: &str, require_relative: bool) -> Result<String, String> {
     if require_relative {
         asset_relative(value.trim()).map_err(|error| error.to_string())?;
@@ -388,9 +494,9 @@ fn read_normal(
     fs: &GameFs,
     path: &str,
     budget: usize,
-    require_upper_hemisphere: bool,
+    profile: ImageProfile,
     source: &mut Option<crate::icons::Source>,
-) -> Result<RgbaImage, String> {
+) -> Result<(Image, Encoding), String> {
     let asset = fs
         .read_asset_limited(path, MAX_TEXTURE_BYTES)
         .map_err(|error| error.to_string())?
@@ -400,20 +506,59 @@ fn read_normal(
     validate_static_texture(&texture, MAX_AXIS).map_err(|_| {
         "Normal preview requires a static single-frame/face/depth VTF with axes 1–1024".to_owned()
     })?;
-    if texture.flags & SSBUMP_FLAG != 0 || !ordinary_ldr_format(texture.format) {
-        return Err("Normal preview requires ordinary RGB tangent-space LDR normals; signed/swizzled, SSBump and HDR encodings are unsupported".into());
+    let ssbump = profile == ImageProfile::SsBump;
+    if (texture.flags & FLAG_SSBUMP != 0) != ssbump {
+        return Err(
+            "SSBump requires both literal $ssbump 1 and a coefficient VTF with its SSBump flag"
+                .into(),
+        );
+    }
+    let half = texture.format == ImageFormat::Rgba16161616F && profile == ImageProfile::Brush;
+    if !half && !ordinary_ldr_format(texture.format) {
+        return Err(
+            "Normal preview needs an ordinary RGB texture or a supported single-base RGBA16F input"
+                .into(),
+        );
+    }
+    if (half || ssbump) && texture.first_frame != 0 {
+        return Err("Special normal encodings require the static frame-zero texture".into());
     }
     if texture.flags & UNSUPPORTED_TEXTURE_FLAGS != 0 {
         return Err("Normal preview does not support clamp/border/point-sample, sRGB, procedural, environment or render-target VTF flags".into());
     }
-    let bytes = texture.width as usize * texture.height as usize * 4;
+    let bytes = texture.width as usize * texture.height as usize * if half { 8 } else { 4 };
     if bytes > budget {
         return Err("Normal-map decoded cache exceeds 64 MiB; reload materials to retry".into());
+    }
+    if half {
+        let pixels = texture
+            .image_data(0, 0, 0)
+            .map_err(|error| error.to_string())?;
+        for pixel in pixels.as_chunks::<8>().0 {
+            let values = [0, 2, 4, 6].map(|offset| {
+                half::f16::from_bits(u16::from_le_bytes([pixel[offset], pixel[offset + 1]]))
+                    .to_f32()
+            });
+            if !values.iter().all(|value| (0.0..=1.0).contains(value)) || values[2] <= 0.5 {
+                return Err(
+                    "RGBA16F normals need finite 0–1 components and biased tangent Z above 0.5"
+                        .into(),
+                );
+            }
+        }
+        return Ok((
+            Image::Half {
+                dimensions: [texture.width, texture.height],
+                pixels: pixels.to_vec(),
+            },
+            Encoding::TangentRgba16f,
+        ));
     }
     let image = texture
         .decode_rgba8(0, 0, 0)
         .map_err(|error| error.to_string())?;
-    if require_upper_hemisphere
+    if profile != ImageProfile::Model
+        && !ssbump
         && image
             .pixels
             .as_chunks::<4>()
@@ -423,7 +568,14 @@ fn read_normal(
     {
         return Err("Normal preview requires RGB normal Z≥128; lower-hemisphere or ambiguous normal encodings are unsupported".into());
     }
-    Ok(image)
+    Ok((
+        Image::Byte(image),
+        if ssbump {
+            Encoding::SsBump
+        } else {
+            Encoding::TangentRgb
+        },
+    ))
 }
 
 pub fn tangent(

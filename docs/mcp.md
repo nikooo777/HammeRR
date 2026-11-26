@@ -630,6 +630,18 @@ the required 0 without changing scene exposure.
 
 See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
 
+## Preview reflections and material frames
+
+1. Use Textured view. Supported named LDR cubes on opaque flat brushes render
+   automatically. Move the camera to change the reflection direction.
+2. Set `material_animation_time` with `set_view`, or pass it as a temporary
+   `render_view` override. `get_view` returns the shared time in seconds.
+3. Read `render_view.preview_issues` for unavailable effects. Call
+   `reload_material_assets` after changing a material or texture.
+
+`material_animation_time` accepts 0–3600 seconds. It selects available frames
+without changing geometry or history. See [Materials](textures.md#preview-animated-base-textures).
+
 ## Preview normal maps
 
 1. Enable `normal_maps:true` with `set_view` in Textured view, or pass the same
@@ -650,7 +662,10 @@ limits. `report.terrain_vertices` counts expanded triangle vertices against
 `limits.terrain_vertices`; exhausted geometry budgets remain explicit exclusions.
 Plain `VertexLitGeneric` models in Normal render mode use stored VVD tangents in
 their selected static or reference pose. Missing textures or unsafe frames report
-an error and leave ordinary display. Special normal encodings remain unsupported.
+an error and leave ordinary display. Plain single-base `LightmappedGeneric` can
+use SSBump coefficients or biased linear RGBA16F normals.
+`report.materials[].encoding` identifies the admitted encoding. SSBump works with
+fixed shading or Detail authored lighting on flat brushes. See [Normal-map preview](normal-maps.md#preview-ssbump-and-half-float-normals).
 Supported fixed-exponent model Phong uses the normal texture alpha as its mask.
 Enable `normal_maps:true` with `lighting_preview:true` and `lighting_quality:"detail"`.
 

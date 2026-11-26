@@ -17,6 +17,17 @@ Show small surface detail without adding geometry.
 For authored lights, set **Overlays → Lighting → Quality** to **Detail · per-fragment**. Fast lighting cannot use normal maps.
 Use **Reload material assets** after changing material files.
 
+## Preview SSBump and half-float normals
+
+1. Apply a plain opaque `LightmappedGeneric` material to a brush or terrain.
+2. For SSBump, set `$ssbump 1` and use a `$bumpmap` VTF with the SSBump flag.
+   For half-float normals, use a linear `RGBA16161616F` VTF with biased XYZ in 0–1 and Z above 0.5.
+3. Choose **Textured** and enable **Normal map preview**.
+
+SSBump uses the three stored light-response coefficients. It uses fixed shading
+on brushes and terrain, or Detail authored lighting on flat brushes. Half-float
+inputs keep their 16-bit channels. The viewport does not sample compiled lightmaps.
+
 ## Preview model highlights
 
 1. Add `models/props_combine/combine_mine01.mdl` or a supported Phong model.
@@ -35,7 +46,7 @@ are outside this profile.
 - Flat `LightmappedGeneric` brush faces and world or `func_detail` terrain. Terrain also supports plain two-base `WorldVertexTransition`.
 - Terrain uses its curved geometry and prepared border normals. Rotated and mirrored face mapping is supported. Singular UVs and unsafe tangent frames are excluded.
 - Two-base terrain blends normals with the painted terrain alpha. If only one normal map is declared, it covers both layers. Both base textures and all declared normal textures must load.
-- Use static LDR RGB normal textures. SSBump, signed textures, proxies, detail and blend modulation are unavailable.
+- Use static linear RGB normals, or the single-base SSBump and half-float profiles above. Signed and swizzled inputs, proxies, detail and blend modulation are unavailable.
 - Authored static and reference-pose models require **Normal** render mode, plain opaque `VertexLitGeneric`, and valid tangents in the VVD. The tangent cache holds up to 32 MiB.
 - Two-base terrain and models require identity texture transforms. `LightmappedGeneric` requires an identity base transform and supports positive normal-map scale and translation with zero rotation.
 - At most 1,048,576 expanded terrain triangle vertices per prepared scene. Other terrain stays explicitly unavailable for this effect.

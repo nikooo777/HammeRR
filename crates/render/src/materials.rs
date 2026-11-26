@@ -11,8 +11,10 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmt::{Material, material_path, texture_path};
 use source_formats::vtf::Vtf;
 
+pub(crate) mod animation;
 pub(crate) mod detail;
 mod emission;
+pub(crate) mod environment;
 mod phong;
 pub(crate) mod uv;
 
@@ -22,7 +24,10 @@ pub const MAX_RELOAD_FAILURES: usize = 100;
 // Point/clamp sampling, normal/procedural/cube/target/vertex textures, SSBump and border flags.
 const ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
 
-fn validate_ordinary_color_texture(texture: &Vtf, maximum_axis: u32) -> Result<(), String> {
+pub(crate) fn validate_ordinary_color_texture(
+    texture: &Vtf,
+    maximum_axis: u32,
+) -> Result<(), String> {
     crate::normal_maps::validate_static_texture(texture, maximum_axis)?;
     if !crate::normal_maps::ordinary_ldr_format(texture.format)
         || texture.flags & ORDINARY_COLOR_UNSUPPORTED_TEXTURE_FLAGS != 0
@@ -54,6 +59,8 @@ struct DisplayTextures {
 pub struct MaterialInfo {
     pub(crate) reference: bool,
     pub(crate) detail: detail::Layer,
+    pub(crate) environment: environment::Layer,
+    pub(crate) animation: animation::Layer,
     pub emission: Option<Emission>,
     emission_error: Option<String>,
     pub(crate) emission_model_only: bool,
@@ -144,8 +151,16 @@ impl MaterialInfo {
                 {
                     failed.base_transform = Err(format!("Base texture transform: {error}"));
                 }
+                if resolved.is_some_and(environment::requested) {
+                    failed.environment = environment::Layer::Unavailable(error.clone());
+                }
                 if resolved.is_some_and(detail::requested) {
-                    failed.detail = detail::Layer::Unavailable(error);
+                    failed.detail = detail::Layer::Unavailable(error.clone());
+                }
+                if resolved.is_some_and(|material| {
+                    material.get("$frame").is_some() || animation::requested(material)
+                }) {
+                    failed.animation = animation::Layer::Unavailable(error);
                 }
                 Ok(failed)
             }
@@ -246,11 +261,27 @@ impl MaterialInfo {
                 )
             })
         });
-        let (emission, emission_error) = match material.map_or(Ok(None), |material| {
-            emission::resolve(material, base.as_ref(), display_texture.as_deref())
-        }) {
-            Ok(emission) => (emission, None),
-            Err(error) => (None, Some(error)),
+        let animation = material.map_or(animation::Layer::Absent, |material| {
+            animation::Layer::resolve(material, base.as_ref(), display_texture.as_deref())
+        });
+        let animated = matches!(animation, animation::Layer::Declared(_));
+        let unlit_animation =
+            animated && material.is_some_and(|material| material.shader == "unlitgeneric");
+        let (emission, emission_error) = if unlit_animation {
+            (
+                Some(Emission {
+                    tint: [1.0; 3],
+                    base_alpha: false,
+                }),
+                None,
+            )
+        } else {
+            match material.map_or(Ok(None), |material| {
+                emission::resolve(material, base.as_ref(), display_texture.as_deref())
+            }) {
+                Ok(emission) => (emission, None),
+                Err(error) => (None, Some(error)),
+            }
         };
         let masked_emission = emission.is_some_and(|emission| emission.base_alpha);
         let base_transform = material.map_or(Ok(None), |material| {
@@ -260,10 +291,15 @@ impl MaterialInfo {
             detail::Layer::resolve(material, base.as_ref(), display_texture.as_deref())
         });
         let static_detail = matches!(detail, detail::Layer::Declared(_));
+        let environment = material.map_or(environment::Layer::Absent, |material| {
+            environment::Layer::resolve(material, base.as_ref(), display_texture.as_deref())
+        });
 
         Self {
             reference: false,
             detail,
+            environment,
+            animation,
             emission,
             emission_error,
             emission_model_only: material
@@ -272,7 +308,7 @@ impl MaterialInfo {
             lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
-                    if static_detail {
+                    if static_detail || animated && material.shader == "lightmappedgeneric" {
                         None
                     } else {
                         lighting_error(material, masked_emission)
@@ -282,7 +318,7 @@ impl MaterialInfo {
             terrain_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
                 |material| {
-                    if static_detail {
+                    if static_detail || animated && material.shader == "lightmappedgeneric" {
                         None
                     } else {
                         terrain_lighting_error(
@@ -353,6 +389,8 @@ impl MaterialInfo {
         Self {
             reference: false,
             detail: detail::Layer::Absent,
+            environment: environment::Layer::Absent,
+            animation: animation::Layer::Absent,
             emission: None,
             emission_error: None,
             emission_model_only: false,
@@ -566,9 +604,11 @@ fn terrain_lighting_error(
         return terrain_blend_lighting_error(material, base, blend, display_texture);
     }
     lighting_error(material, masked_emission).or_else(|| {
-        material.params.iter().find_map(|(key, _)| {
-            if (key.starts_with("$bump") && !["$bumpmap", "$bumptransform"].contains(&key.as_str()))
-                || key.starts_with("$normal") || key.starts_with("$ssbump")
+        material.params.iter().find_map(|(key, value)| {
+            if key == "$ssbump" && value.trim() == "1" {
+                Some("SSBump terrain uses fixed editor shading".into())
+            } else if (key.starts_with("$bump") && !["$bumpmap", "$bumptransform"].contains(&key.as_str()))
+                || key.starts_with("$normal") || (key.starts_with("$ssbump") && (key != "$ssbump" || value.trim() != "0"))
                 || key == "$forcebump" {
                 Some("Terrain authored lighting excludes declared bump and normal maps".into())
             } else if key.starts_with("$detail")
@@ -648,6 +688,9 @@ pub type MaterialId = usize;
 pub struct MaterialLibrary {
     normals: crate::normal_maps::Library,
     detail_bytes: usize,
+    environment_budget: environment::Budget,
+    animation_bytes: usize,
+    animated_materials: usize,
     pub icons: crate::icons::Library,
     hdr_skybox: Option<Arc<crate::sky::Skybox>>,
     generation: u64,
@@ -662,6 +705,9 @@ impl Default for MaterialLibrary {
         Self {
             normals: crate::normal_maps::Library::default(),
             detail_bytes: 0,
+            environment_budget: environment::Budget::default(),
+            animation_bytes: 0,
+            animated_materials: 0,
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             icons: crate::icons::Library::default(),
             hdr_skybox: None,
@@ -711,6 +757,9 @@ impl MaterialLibrary {
         let mut report = ReloadReport::default();
         self.normals.clear();
         self.detail_bytes = 0;
+        self.environment_budget = environment::Budget::default();
+        self.animation_bytes = 0;
+        self.animated_materials = 0;
         self.icons.clear();
         self.hdr_skybox = None;
         for (id, material) in self.materials.iter_mut().enumerate().skip(1) {
@@ -882,6 +931,14 @@ impl MaterialLibrary {
             if let Some(detail) = self.materials[id].detail.ready() {
                 self.detail_bytes -= detail.cache_bytes();
             }
+            if let Some(asset) = self.materials[id].environment.ready() {
+                self.environment_budget.release(asset);
+            }
+            let info = &self.materials[id];
+            if let (Some(playback), Some(texture)) = (info.animation.ready(), info.base.as_ref()) {
+                self.animation_bytes -= playback.payload_bytes(texture);
+                self.animated_materials -= 1;
+            }
             self.materials[id] = material;
             id
         } else {
@@ -927,6 +984,29 @@ impl MaterialLibrary {
         &self.materials[id]
     }
 
+    pub(crate) fn prepare_animation(&mut self, id: MaterialId) {
+        let info = &mut self.materials[id];
+        if let animation::Layer::Declared(playback) = info.animation {
+            let Some(texture) = &info.base else {
+                info.animation = animation::Layer::Unavailable("Base frames are missing".into());
+                return;
+            };
+            let bytes = playback.payload_bytes(texture);
+            if self.animation_bytes + bytes > animation::MAX_CACHE_BYTES
+                || self.animated_materials >= animation::MAX_MATERIALS
+            {
+                info.animation = animation::Layer::Unavailable(
+                    "Base frame cache is full (128 materials or 64 MiB)".into(),
+                );
+                return;
+            }
+            info.animation = animation::Layer::Ready(playback);
+            self.animation_bytes += bytes;
+            self.animated_materials += 1;
+            self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     pub(crate) fn load_detail(&mut self, fs: &GameFs, id: MaterialId) {
         let layer = &mut self.materials[id].detail;
         if !matches!(layer, detail::Layer::Declared(_)) {
@@ -938,6 +1018,21 @@ impl MaterialLibrary {
         }
         if let Some(asset) = layer.ready() {
             self.detail_bytes += asset.cache_bytes();
+            self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn load_environment(&mut self, fs: &GameFs, id: MaterialId) {
+        use environment::Layer;
+
+        let layer = &mut self.materials[id].environment;
+        if !matches!(layer, Layer::Declared(_)) {
+            return;
+        }
+        if let Layer::Declared(declaration) = std::mem::replace(layer, Layer::Absent) {
+            *layer = self.environment_budget.load(fs, declaration);
+        }
+        if layer.ready().is_some() {
             self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         }
     }

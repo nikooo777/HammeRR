@@ -14,6 +14,7 @@ pub(crate) const MATERIAL_EMISSION: u32 = 4;
 const MODEL_SURFACE: u32 = 8;
 pub(crate) const MODEL_PHONG_FRAME: u32 = 16;
 pub(crate) const DETAIL_LAYER: u32 = 32;
+pub(crate) const ENVIRONMENT_LAYER: u32 = 64;
 
 mod model_lighting;
 mod model_normals;
@@ -377,6 +378,39 @@ impl Builder<'_> {
         Err(format!("{}: {error}", info.name))
     }
 
+    fn surface_animation(&mut self, material: MaterialId, face: FaceId, supported: bool) -> u32 {
+        use crate::materials::animation::{FLAG, Layer};
+
+        let info = self.library.get(material);
+        if !self.textured
+            || info.tool && !self.tool_textures
+            || matches!(info.animation, Layer::Absent)
+        {
+            return 0;
+        }
+        if !supported {
+            self.issues.push(SceneIssue::Surface {
+                face,
+                message: format!(
+                    "{}: Terrain base frame preview requires world or func_detail terrain",
+                    info.name
+                ),
+            });
+            return 0;
+        }
+        self.library.prepare_animation(material);
+        let info = self.library.get(material);
+        match &info.animation {
+            Layer::Ready(_) => FLAG,
+            Layer::Unavailable(reason) => {
+                let message = format!("{}: {reason}", info.name);
+                self.issues.push(SceneIssue::Surface { face, message });
+                0
+            }
+            _ => 0,
+        }
+    }
+
     fn surface_base_transform(
         &mut self,
         material: MaterialId,
@@ -452,6 +486,32 @@ impl Builder<'_> {
             }
         };
         self.issues.push(SceneIssue::Surface { face, message });
+        0
+    }
+
+    fn surface_environment(&mut self, material: MaterialId, face: FaceId, flat: bool) -> u32 {
+        use crate::materials::environment::Layer;
+
+        let info = self.library.get(material);
+        if !self.textured
+            || info.tool && !self.tool_textures
+            || matches!(info.environment, Layer::Absent)
+        {
+            return 0;
+        }
+        if flat {
+            self.library.load_environment(self.fs, material);
+        }
+        let info = self.library.get(material);
+        let reason = match &info.environment {
+            Layer::Ready(_) if flat => return ENVIRONMENT_LAYER,
+            Layer::Unavailable(reason) => reason,
+            _ => "Environment preview requires a flat authored brush face",
+        };
+        self.issues.push(SceneIssue::Surface {
+            face,
+            message: format!("{}: {reason}", info.name),
+        });
         0
     }
 
@@ -730,6 +790,8 @@ impl Builder<'_> {
         let base_transform =
             self.surface_base_transform(material, face, points.iter().copied().map(uv));
         let detail = self.surface_detail(material, face, true, points.iter().copied().map(uv));
+        let environment = self.surface_environment(material, face, true);
+        let animation = self.surface_animation(material, face, true);
         let info = self.library.get(material);
         let tool = info.tool;
         let dimensions = [info.width, info.height];
@@ -797,7 +859,7 @@ impl Builder<'_> {
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
-                texture_flags: emission | base_transform | detail,
+                texture_flags: emission | base_transform | detail | environment | animation,
                 tangent,
                 baked_irradiance: [0.0; 3],
                 lighting_receiver,
@@ -921,6 +983,8 @@ impl Builder<'_> {
             self.surface_base_transform(material, face, coordinates.iter().copied());
         let detail =
             self.surface_detail(material, face, owner_supported, coordinates.iter().copied());
+        self.surface_environment(material, face, false);
+        let animation = self.surface_animation(material, face, owner_supported);
         let info = self.library.get(material);
         let tool = info.tool;
         let dimensions = [info.width, info.height];
@@ -1025,7 +1089,7 @@ impl Builder<'_> {
             lightmap: lightmap_vertex(side, mesh.base_positions[i]),
             smoothing: side.smoothing_groups.unwrap_or(0),
             opacity: 1.0,
-            texture_flags: emission | base_transform | detail,
+            texture_flags: emission | base_transform | detail | animation,
             tangent,
             baked_irradiance: [0.0; 3],
             lighting_receiver,
@@ -1358,6 +1422,21 @@ impl Builder<'_> {
                     }
                 }
                 let info = self.library.get(material);
+                if self.textured
+                    && !matches!(info.animation, crate::materials::animation::Layer::Absent)
+                {
+                    let entity = match instance.id {
+                        ObjectId::Entity(id) => Some(id),
+                        _ => None,
+                    };
+                    self.issues.push(SceneIssue::Model {
+                        entity,
+                        message: format!(
+                            "{}: Base frame preview requires a brush or terrain surface",
+                            info.name
+                        ),
+                    });
+                }
                 if self.textured && !matches!(info.detail, crate::materials::detail::Layer::Absent)
                 {
                     let entity = match instance.id {
@@ -1370,6 +1449,26 @@ impl Builder<'_> {
                             "{}: Detail layers require a brush or terrain surface",
                             info.name
                         ),
+                    });
+                }
+                if self.textured
+                    && !matches!(
+                        info.environment,
+                        crate::materials::environment::Layer::Absent
+                    )
+                    && (!info.tool || self.tool_textures)
+                {
+                    let entity = match instance.id {
+                        ObjectId::Entity(id) => Some(id),
+                        _ => None,
+                    };
+                    let reason = match &info.environment {
+                        crate::materials::environment::Layer::Unavailable(reason) => reason,
+                        _ => "Environment preview requires a flat authored brush face",
+                    };
+                    self.issues.push(SceneIssue::Model {
+                        entity,
+                        message: format!("{}: {reason}", info.name),
                     });
                 }
                 match self.material_emission(material, true) {

@@ -12,6 +12,7 @@ pub mod handles;
 pub mod icons;
 pub mod lighting;
 pub mod materials;
+pub use materials::animation::checked_time as checked_material_animation_time;
 pub mod models;
 pub mod normal_maps;
 pub mod presentation;

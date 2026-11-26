@@ -14,6 +14,7 @@ use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 mod baked_faces;
 mod color_correction;
 mod detail_radiance;
+mod environment;
 mod miniature;
 mod scene_display;
 
@@ -256,6 +257,7 @@ pub struct ViewOptions {
     pub lighting_sky_ambient: bool,
     pub lighting_quality: crate::lighting::Quality,
     pub lighting_exposure_ev: f32,
+    pub material_animation_time: f32,
     pub normal_maps: bool,
     pub surface_shading: bool,
     pub surface: SurfaceView,
@@ -304,6 +306,7 @@ impl Default for ViewOptions {
             lighting_sky_ambient: false,
             lighting_quality: crate::lighting::Quality::Detail,
             lighting_exposure_ev: 0.0,
+            material_animation_time: 0.0,
             smoothing_group: 1,
             tool_textures: true,
             sky_preview: false,
@@ -542,12 +545,40 @@ pub struct Renderer {
     skyboxes:
         std::collections::HashMap<(String, crate::sky::Channel, u64), Option<wgpu::BindGroup>>,
     /// Bind groups by [`MaterialId`], uploaded on first use.
-    materials: Vec<Option<wgpu::BindGroup>>,
+    materials: Vec<Option<MaterialBinding>>,
     material_generation: Option<u64>,
     white: wgpu::Texture,
+    black_cube: wgpu::TextureView,
     missing: wgpu::Texture,
     targets: scene_display::Targets,
     overlay: wgpu::Buffer,
+}
+
+struct MaterialBinding {
+    ordinary: wgpu::BindGroup,
+    animated: Option<(crate::materials::animation::Playback, Vec<wgpu::BindGroup>)>,
+}
+
+impl MaterialBinding {
+    fn frame(&self, view: &ViewOptions) -> &wgpu::BindGroup {
+        if view.surface == SurfaceView::Textured
+            && let Some((playback, bindings)) = &self.animated
+        {
+            return &bindings[playback.binding_index(view.material_animation_time)];
+        }
+        &self.ordinary
+    }
+}
+
+struct MaterialTextures {
+    base: wgpu::Texture,
+    frame: Option<wgpu::Texture>,
+}
+
+impl From<wgpu::Texture> for MaterialTextures {
+    fn from(base: wgpu::Texture) -> Self {
+        Self { base, frame: None }
+    }
 }
 
 fn scene_shader(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
@@ -631,6 +662,20 @@ impl Renderer {
                 uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
                 texture_entry(4),
                 texture_entry(5),
+                wgpu::BindGroupLayoutEntry {
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    ..texture_entry(7)
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -1072,6 +1117,7 @@ impl Renderer {
             materials: Vec::new(),
             material_generation: None,
             white: solid_texture(ctx, [255, 255, 255, 255]),
+            black_cube: environment::empty(ctx),
             missing: checkerboard_texture(ctx),
             targets: scene_display::Targets::default(),
             overlay: device.create_buffer(&wgpu::BufferDescriptor {
@@ -1351,7 +1397,7 @@ impl Renderer {
                     &material,
                     true,
                     &self.icon_sampler,
-                    texture,
+                    texture.into(),
                     None,
                 )?;
                 self.reference_image_bindings
@@ -1576,11 +1622,12 @@ impl Renderer {
         projected: bool,
     ) -> Result<(), String> {
         if self.materials.len() <= id {
-            self.materials.resize(id + 1, None);
+            self.materials.resize_with(id + 1, || None);
         }
         if self.materials[id].is_none() {
             let info = library.get(id);
-            self.materials[id] = Some(if projected {
+            let editor = id == MaterialLibrary::EDITOR;
+            let binding = if projected {
                 let base = info
                     .base
                     .as_ref()
@@ -1588,21 +1635,77 @@ impl Renderer {
                     .ok_or_else(|| {
                         format!("Overlay material {} could not be uploaded", info.name)
                     })?;
-                self.material_bind_group_with_base(ctx, info, false, &self.sampler, base, None)?
+                let ordinary = self.material_bind_group_with_base(
+                    ctx,
+                    info,
+                    false,
+                    &self.sampler,
+                    base.into(),
+                    None,
+                )?;
+                MaterialBinding {
+                    ordinary,
+                    animated: None,
+                }
+            } else if let Some(playback) = info.animation.ready() {
+                self.animated_material(ctx, info, playback)?
             } else {
-                self.material_bind_group(ctx, info, id == MaterialLibrary::EDITOR)?
-            });
+                let ordinary =
+                    self.material_bind_group_with_sampler(ctx, info, editor, &self.sampler)?;
+                MaterialBinding {
+                    ordinary,
+                    animated: None,
+                }
+            };
+            self.materials[id] = Some(binding);
         }
         Ok(())
     }
 
-    fn material_bind_group(
+    fn animated_material(
         &self,
         ctx: &GpuContext,
         info: &MaterialInfo,
-        editor: bool,
-    ) -> Result<wgpu::BindGroup, String> {
-        self.material_bind_group_with_sampler(ctx, info, editor, &self.sampler)
+        playback: crate::materials::animation::Playback,
+    ) -> Result<MaterialBinding, String> {
+        let image = info
+            .base
+            .as_ref()
+            .ok_or_else(|| format!("{} lost its base frames", info.name))?;
+        let base = upload_vtf(ctx, image)
+            .ok_or_else(|| format!("{}: Could not upload base frame 0", info.name))?;
+        let ordinary = self.material_bind_group_with_base(
+            ctx,
+            info,
+            false,
+            &self.sampler,
+            base.clone().into(),
+            None,
+        )?;
+        let mut bindings = Vec::with_capacity(playback.frames().len());
+        for index in playback.frames() {
+            if index == 0 {
+                bindings.push(ordinary.clone());
+                continue;
+            }
+            let frame = upload_vtf_frame(ctx, image, true, index)
+                .ok_or_else(|| format!("{}: Could not upload base frame {index}", info.name))?;
+            bindings.push(self.material_bind_group_with_base(
+                ctx,
+                info,
+                false,
+                &self.sampler,
+                MaterialTextures {
+                    base: base.clone(),
+                    frame: Some(frame),
+                },
+                None,
+            )?);
+        }
+        Ok(MaterialBinding {
+            ordinary,
+            animated: Some((playback, bindings)),
+        })
     }
 
     fn material_bind_group_with_sampler(
@@ -1619,7 +1722,7 @@ impl Renderer {
             None if untextured => white.clone(),
             None => missing.clone(),
         };
-        self.material_bind_group_with_base(ctx, info, editor, sampler, base, None)
+        self.material_bind_group_with_base(ctx, info, editor, sampler, base.into(), None)
     }
 
     fn material_bind_group_with_base(
@@ -1628,13 +1731,16 @@ impl Renderer {
         info: &MaterialInfo,
         editor: bool,
         sampler: &wgpu::Sampler,
-        base: wgpu::Texture,
+        textures: MaterialTextures,
         alpha_reference: Option<f32>,
     ) -> Result<wgpu::BindGroup, String> {
+        let MaterialTextures { base, frame } = textures;
         let white = &self.white;
         let untextured = info.base.is_none() && !info.missing;
         let detail = info.detail.ready();
-        let secondary = if let Some(detail) = detail {
+        let secondary = if let Some(frame) = frame {
+            frame
+        } else if let Some(detail) = detail {
             upload_vtf_color_space(ctx, &detail.texture, false)
                 .ok_or_else(|| format!("Detail layer for {} could not be uploaded", info.name))?
         } else {
@@ -1647,6 +1753,9 @@ impl Renderer {
         let normal_asset = info.normal.as_ref().filter(|asset| asset.image.is_some());
         let second_normal = normal_asset.and_then(|asset| asset.secondary_image.as_ref());
         let normal_layers = flag(normal_asset.is_some()) + flag(second_normal.is_some());
+        let ssbump = flag(normal_asset.is_some_and(|asset| {
+            asset.report.encoding == Some(crate::normal_maps::Encoding::SsBump)
+        }));
         let transform = normal_asset.map_or(crate::materials::uv::IDENTITY_AXIS, |asset| {
             asset.report.transform
         });
@@ -1675,6 +1784,13 @@ impl Renderer {
                 let parameters = &asset.parameters;
                 (parameters.tint, parameters.factor, parameters.scale)
             });
+        let environment = info.environment.ready();
+        let cube_view = if let Some(asset) = environment {
+            environment::upload(ctx, &asset.texture)
+                .map_err(|error| format!("{}: {error}", info.name))?
+        } else {
+            self.black_cube.clone()
+        };
         let params = [
             [
                 flag(info.alpha_test),
@@ -1700,7 +1816,8 @@ impl Renderer {
                 detail_tint[2],
                 detail_factor,
             ],
-            [detail_scale, 0.0, 0.0, 0.0],
+            [detail_scale, ssbump, 0.0, 0.0],
+            environment.map_or([0.0; 4], |asset| asset.uniform()),
         ];
         let params = ctx
             .device
@@ -1749,6 +1866,14 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&second_normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&cube_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(&self.sky_sampler),
                 },
             ],
         }))
@@ -2179,6 +2304,7 @@ impl Renderer {
                 let Some(Some(material)) = self.materials.get(draw.batch.material) else {
                     continue;
                 };
+                let material = material.frame(options);
                 let sky3d_draw = draw.sky3d_eligible && options.sky3d_active(camera);
                 if sky3d_draw && sky3d_error {
                     pass.set_pipeline(&pipelines.sky3d_error_pipeline);
@@ -2636,6 +2762,10 @@ fn upload_vtf(ctx: &GpuContext, vtf: &Vtf) -> Option<wgpu::Texture> {
 }
 
 fn upload_vtf_color_space(ctx: &GpuContext, vtf: &Vtf, srgb: bool) -> Option<wgpu::Texture> {
+    upload_vtf_frame(ctx, vtf, srgb, 0)
+}
+
+fn upload_vtf_frame(ctx: &GpuContext, vtf: &Vtf, srgb: bool, frame: u16) -> Option<wgpu::Texture> {
     use wgpu::TextureFormat::*;
 
     let block_format = match vtf.format {
@@ -2654,7 +2784,7 @@ fn upload_vtf_color_space(ctx: &GpuContext, vtf: &Vtf, srgb: bool) -> Option<wgp
         let format = if srgb { gamma } else { linear };
         let texture = texture_2d(ctx, "vtf", size, mips, format);
         for mip in 0..vtf.mip_count {
-            let data = vtf.image_data(mip, 0, 0).ok()?;
+            let data = vtf.image_data(mip, frame, 0).ok()?;
             let (w, h) = vtf.mip_size(mip);
             let (bw, bh) = (w.div_ceil(4), h.div_ceil(4));
             write_mip(
@@ -2673,7 +2803,7 @@ fn upload_vtf_color_space(ctx: &GpuContext, vtf: &Vtf, srgb: bool) -> Option<wgp
     let format = if srgb { Rgba8UnormSrgb } else { Rgba8Unorm };
     let texture = texture_2d(ctx, "vtf", size, mips, format);
     for mip in 0..vtf.mip_count {
-        let image = vtf.decode_rgba8(mip, 0, 0).ok()?;
+        let image = vtf.decode_rgba8(mip, frame, 0).ok()?;
         write_mip(
             ctx,
             &texture,
@@ -2687,22 +2817,21 @@ fn upload_vtf_color_space(ctx: &GpuContext, vtf: &Vtf, srgb: bool) -> Option<wgp
     Some(texture)
 }
 
-fn upload_normal(ctx: &GpuContext, image: &source_formats::vtf::RgbaImage) -> wgpu::Texture {
-    let texture = texture_2d(
-        ctx,
-        "brush normal map",
-        (image.width, image.height),
-        1,
-        wgpu::TextureFormat::Rgba8Unorm,
-    );
+fn upload_normal(ctx: &GpuContext, image: &crate::normal_maps::Image) -> wgpu::Texture {
+    let [width, height] = image.dimensions();
+    let (format, stride) = match image {
+        crate::normal_maps::Image::Byte(_) => (wgpu::TextureFormat::Rgba8Unorm, 4),
+        crate::normal_maps::Image::Half { .. } => (wgpu::TextureFormat::Rgba16Float, 8),
+    };
+    let texture = texture_2d(ctx, "brush normal map", (width, height), 1, format);
     write_mip(
         ctx,
         &texture,
         0,
-        &image.pixels,
-        image.width * 4,
-        image.height,
-        (image.width, image.height),
+        image.pixels(),
+        width * stride,
+        height,
+        (width, height),
     );
     texture
 }

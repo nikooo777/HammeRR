@@ -132,6 +132,7 @@ impl Session {
         camera: &Camera,
     ) -> Result<(), String> {
         view.scene_display.validate()?;
+        render::checked_material_animation_time(f64::from(view.material_animation_time))?;
         for value in [view.lighting_exposure_ev, view.sky_exposure_ev] {
             if !value.is_finite() || !(-8.0..=8.0).contains(&value) {
                 return Err("Component exposure must be finite and between -8 and 8 EV".into());

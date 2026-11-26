@@ -3,6 +3,7 @@
 const SIGNATURE: &[u8; 4] = b"VTF\0";
 const FLAG_ENVMAP: u32 = 0x4000;
 pub const FLAG_NOMIP: u32 = 0x100;
+pub const FLAG_SSBUMP: u32 = 0x0800_0000;
 const RESOURCE_HIGH_RES: [u8; 3] = [0x30, 0, 0];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

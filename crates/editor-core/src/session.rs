@@ -2175,6 +2175,7 @@ impl Session {
         without_resource_changes.lighting_sky_ambient = previous.lighting_sky_ambient;
         without_resource_changes.lighting_quality = previous.lighting_quality;
         without_resource_changes.lighting_exposure_ev = previous.lighting_exposure_ev;
+        without_resource_changes.material_animation_time = previous.material_animation_time;
         without_resource_changes.scene_display = previous.scene_display;
         if without_resource_changes == previous {
             self.view = view;

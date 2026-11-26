@@ -20,6 +20,9 @@ struct Globals {
     lighting_settings: vec4<f32>,
     scene_display: vec4<f32>,
     lighting_lights: array<AuthoredLight, 32>,
+    water_capture: vec4<f32>,
+    water_mins: vec4<f32>,
+    water_maxs: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;

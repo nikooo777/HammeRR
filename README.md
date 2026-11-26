@@ -109,7 +109,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![Ropes hung between lantern-lit posts](docs/images/rope-placement.png) |
-| Build water and opaque slime pools with captured reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
+| Preview refraction and build water or slime pools with reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
 
 | [3D sky terrain](docs/sky.md#add-terrain-to-the-miniature) | [3D sky models and materials](docs/sky.md#add-fixed-models-to-the-miniature) |
 | --- | --- |

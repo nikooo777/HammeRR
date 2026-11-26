@@ -67,6 +67,10 @@ impl Plane {
         self.clip_behind_with_epsilon(points, ON_EPSILON)
     }
 
+    pub fn clip_behind_exact(&self, points: &[DVec3]) -> Vec<DVec3> {
+        self.clip_behind_with_epsilon(points, 0.0)
+    }
+
     pub(crate) fn clip_behind_with_epsilon(&self, points: &[DVec3], epsilon: f64) -> Vec<DVec3> {
         let dists: Vec<f64> = points.iter().map(|&p| self.distance_to(p)).collect();
         if dists.iter().all(|&d| d <= epsilon) {

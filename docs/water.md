@@ -25,6 +25,24 @@ Use [Water transition](overlays.md#place-a-water-transition) to add a projected 
 | --- | --- |
 | ![Native water reflection and refraction](images/water-native-close.png) | ![The pool viewed underwater](images/water-native-underwater.png) |
 
+## Preview water refraction
+
+1. Create one rectangular world pool with five `tools/toolsnodraw` sides.
+2. Apply a supported static `Water` material to the top. Use
+   `$abovewater 1`, `$forceexpensive 1`, `_rt_WaterRefraction`,
+   `_rt_WaterReflection` and `$reflecttint [0 0 0]`.
+3. Use the same static texture for `$normalmap` and `%tooltexture`. Keep the
+   bump transform at identity. Set `$fogenable 1`, fog start and end, and
+   a fog color with channels 0 or 1. Name a mounted below-water material.
+4. Choose **Perspective** and **Textured**. Turn off **Overlays → Tool textures**.
+5. Look down into the pool from above. See the position of the submerged faces
+   change as you move the camera. Use **Reload material assets** after asset edits.
+
+The preview uses Legacy display and fixed shading. Submerged geometry requires
+plain opaque `LightmappedGeneric` world or `func_detail` brush faces. HDR,
+planar reflections, underwater views, animated water, terrain and world fog
+remain unavailable in this preview. Compile and play for native water effects.
+
 ## Create a slime pool
 
 1. Draw the volume inside a sealed room. Keep it as a world brush.
@@ -122,7 +140,7 @@ Movement, parenting, rendered surfaces and authored world current/damping are un
 - Water-shader slime, non-neutral opacity, conditional/proxy blocks, missing or different slime below-view materials and mixed WATER/SLIME contents in one brush are unsupported.
 - Connected compatible liquids share depth metadata. Conflicting overlapping liquids fail.
 - Current and damping are map-wide; per-pool controls remain unavailable.
-- The editor shows the water material's editor image, not native reflection or refraction.
+- Other water materials keep their editor appearance and report unavailable preview effects.
 - Invalid controls, missing required assets and exceeded geometry budgets fail without replacing the previous BSP.
 - Sampled textures must meet the [native texture limits](textures.md#native-texture-files).
 

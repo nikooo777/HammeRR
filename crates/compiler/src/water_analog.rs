@@ -126,43 +126,9 @@ fn source(entity: &Entity, report: &mut Report) -> Result<(), String> {
     }
     let geometry = crate::map::origins::checked_geometry(&entity.solids[0], report)
         .ok_or("the cuboid geometry is invalid")?;
-    let mut normals = BTreeSet::new();
-    let mut corners = BTreeSet::new();
-    for face in &geometry.faces {
-        let axis = (0..3)
-            .find(|&axis| {
-                let mut normal = DVec3::ZERO;
-                normal[axis] = face.plane.normal[axis].signum();
-                face.plane.normal == normal
-            })
-            .ok_or("only axis-aligned cuboids are supported")?;
-        normals.insert((axis, face.plane.normal[axis] > 0.0));
-        for point in &face.vertices {
-            let mut corner = [false; 3];
-            for axis in 0..3 {
-                if (point[axis] - geometry.mins[axis]).abs() <= GEOMETRY_EPSILON {
-                    corner[axis] = false;
-                } else if (point[axis] - geometry.maxs[axis]).abs() <= GEOMETRY_EPSILON {
-                    corner[axis] = true;
-                } else {
-                    return Err("only complete axis-aligned cuboid corners are supported".into());
-                }
-            }
-            corners.insert(corner);
-        }
-    }
-    let size = geometry.maxs - geometry.mins;
-    let volume = size.x * size.y * size.z;
-    if geometry.faces.len() != 6
-        || normals.len() != 6
-        || corners.len() != 8
-        || size.min_element() <= GEOMETRY_EPSILON
-        || !(volume as f32).is_finite()
-        || volume as f32 <= 0.0
-    {
-        return Err("one nondegenerate six-plane, eight-corner cuboid is required".into());
-    }
-    Ok(())
+    geometry
+        .check_axis_aligned_cuboid(GEOMETRY_EPSILON)
+        .map_err(str::to_owned)
 }
 
 pub(crate) fn admit_source(entity: &Entity, report: &mut Report) -> bool {

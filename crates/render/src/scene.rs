@@ -15,11 +15,13 @@ const MODEL_SURFACE: u32 = 8;
 pub(crate) const MODEL_PHONG_FRAME: u32 = 16;
 pub(crate) const DETAIL_LAYER: u32 = 32;
 pub(crate) const ENVIRONMENT_LAYER: u32 = 64;
+const WATER_CAPTURE_BRUSH: u32 = 512;
 
 mod model_lighting;
 mod model_normals;
 pub(crate) mod projected_overlays;
 mod rope_mesh;
+pub(crate) mod water;
 
 pub(crate) mod terrain;
 pub use projected_overlays::{Draft as OverlayDraft, Preview as OverlayPreview};
@@ -32,6 +34,13 @@ enum NormalReceiver {
     Flat,
     Terrain,
     Model,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SolidOwner {
+    World,
+    Detail,
+    Entity,
 }
 
 /// Hammer's color for entities whose editor block has none.
@@ -115,6 +124,7 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub(crate) water: Option<(water::Pool, Vec<Batch>)>,
     pub(crate) projected_overlay_batches: std::ops::Range<usize>,
     pub baked_faces: Option<std::sync::Arc<crate::compiled_faces::LightingData>>,
     pub baked_face_materials:
@@ -291,6 +301,8 @@ pub struct TerrainNormalOverride {
 
 struct Builder<'a> {
     authored_surfaces: bool,
+    water: Option<water::Pool>,
+    water_face: Option<FaceId>,
     entity_helpers: bool,
     issues: SceneIssues,
     tool_textures: bool,
@@ -559,7 +571,8 @@ impl Builder<'_> {
         self.mark_selection_outline(start);
     }
 
-    fn add_solid(&mut self, solid: &Solid, selected: bool, terrain_owner_supported: bool) {
+    fn add_solid(&mut self, solid: &Solid, selected: bool, owner: SolidOwner) {
+        let terrain_owner_supported = matches!(owner, SolidOwner::World | SolidOwner::Detail);
         if let Some(issues) = self.terrain_issues.remove(&solid.id) {
             for issue in issues {
                 self.issues.push(SceneIssue::Terrain(issue));
@@ -608,6 +621,15 @@ impl Builder<'_> {
             };
             let selected = selected || self.selected_faces.contains(&id);
             let material = self.material(&side.material);
+            if self.textured
+                && self.authored_surfaces
+                && !matches!(
+                    self.library.get(material).water,
+                    crate::materials::water::Layer::Absent
+                )
+            {
+                self.record_water(solid, &brush, face, material, owner);
+            }
             if !self.authored_surfaces && !self.library.get(material).sky {
                 if selected {
                     let id = FaceId {
@@ -696,7 +718,7 @@ impl Builder<'_> {
                         .collect::<Vec<_>>();
                     if overlays.is_empty() {
                         let drawn = self.add_polygon(
-                            (id, side),
+                            (id, side, terrain_owner_supported),
                             &face.vertices,
                             face.plane.normal,
                             &side.material,
@@ -720,7 +742,7 @@ impl Builder<'_> {
                                 projected.rotation = projection.rotation;
                             }
                             self.add_polygon(
-                                (id, &projected),
+                                (id, &projected, false),
                                 &overlay.points,
                                 face.plane.normal,
                                 &overlay.material,
@@ -731,6 +753,64 @@ impl Builder<'_> {
                     }
                 }
             }
+        }
+    }
+
+    fn record_water(
+        &mut self,
+        solid: &Solid,
+        brush: &BrushGeometry,
+        face: &map_core::brush::Face,
+        material: MaterialId,
+        owner: SolidOwner,
+    ) {
+        use crate::materials::water::Layer;
+
+        let side = &solid.sides[face.side];
+        let id = FaceId {
+            solid: solid.id,
+            side: side.id,
+        };
+        if self.water_face.replace(id).is_some() {
+            let reason = "Water refraction supports one visible world-pool top";
+            if let Some(pool) = self.water.take() {
+                self.issues.push(pool.issue(reason));
+            }
+            self.issues.push(SceneIssue::Surface {
+                face: id,
+                message: reason.into(),
+            });
+            return;
+        }
+        let result = (|| {
+            if owner != SolidOwner::World
+                || self.overlays.iter().any(|overlay| overlay.source == id)
+            {
+                return Err(
+                    "Water refraction needs an unmodified structural-world brush top".into(),
+                );
+            }
+            self.library.load_water(self.fs, material);
+            let info = self.library.get(material);
+            let asset = match &info.water {
+                Layer::Ready(asset) => asset,
+                Layer::Unavailable(error) => return Err(error.clone()),
+                _ => return Err("Water material was not prepared".into()),
+            };
+            if [info.width, info.height] != asset.texel_size {
+                return Err("Water display and normal texture dimensions differ".into());
+            }
+            map_core::surface::validate_projection(side, face.plane.normal, &face.vertices)
+                .and_then(|()| map_core::surface::validate_lightmap_scale(side.lightmap_scale))
+                .map_err(|error| error.to_string())?;
+            water::Pool::from_brush(solid, brush, face, material, asset.texel_size)
+        })();
+        match result {
+            Ok(pool) => self.water = Some(pool),
+            Err(message) => self.issues.push(SceneIssue::Surface {
+                face: id,
+                message: format!("{}: {message}", side.material),
+            }),
         }
     }
 
@@ -772,7 +852,7 @@ impl Builder<'_> {
 
     fn add_polygon(
         &mut self,
-        (face, side): (FaceId, &source_formats::vmf::Side),
+        (face, side, structural): (FaceId, &source_formats::vmf::Side, bool),
         points: &[DVec3],
         normal: DVec3,
         name: &str,
@@ -818,7 +898,11 @@ impl Builder<'_> {
                 self.lighting.report.admitted_receivers += 1;
             }
         }
-        let mut tangent = [0.0; 4];
+        let mut tangent = self
+            .water
+            .filter(|pool| pool.face == face)
+            .map_or([0.0; 4], |pool| pool.tangent);
+        let water_capture = if structural { WATER_CAPTURE_BRUSH } else { 0 };
         if self.normal_maps.active && !tool {
             let result = self
                 .normal_asset(material, NormalReceiver::Flat)
@@ -859,7 +943,12 @@ impl Builder<'_> {
                 lightmap: lightmap_vertex(side, point),
                 smoothing: side.smoothing_groups.unwrap_or(0),
                 opacity: 1.0,
-                texture_flags: emission | base_transform | detail | environment | animation,
+                texture_flags: emission
+                    | base_transform
+                    | detail
+                    | environment
+                    | animation
+                    | water_capture,
                 tangent,
                 baked_irradiance: [0.0; 3],
                 lighting_receiver,
@@ -2225,6 +2314,8 @@ impl SceneMesh {
             });
         let mut builder = Builder {
             authored_surfaces,
+            water: None,
+            water_face: None,
             entity_helpers,
             issues,
             terrain_issues,
@@ -2284,7 +2375,7 @@ impl SceneMesh {
         for solid in &vmf.world.solids {
             let id = ObjectId::Solid(solid.id);
             if !solid.hidden && include(id) {
-                builder.add_solid(solid, selected.contains(&id), true);
+                builder.add_solid(solid, selected.contains(&id), SolidOwner::World);
             } else {
                 builder.projections.hide_sides(solid);
             }
@@ -2311,7 +2402,11 @@ impl SceneMesh {
                 builder.add_solid(
                     solid,
                     is_selected || selected.contains(&ObjectId::Solid(solid.id)),
-                    entity.classname() == Some("func_detail"),
+                    if entity.classname() == Some("func_detail") {
+                        SolidOwner::Detail
+                    } else {
+                        SolidOwner::Entity
+                    },
                 );
             }
         }
@@ -2381,7 +2476,8 @@ impl SceneMesh {
             (&mut builder.vertices, &mut indices, &mut batches),
             &mut builder.issues,
         );
-        Self {
+        let mut mesh = Self {
+            water: None,
             projected_overlay_batches: first_overlay..batches.len(),
             baked_faces: None,
             baked_face_materials: Vec::new(),
@@ -2414,7 +2510,14 @@ impl SceneMesh {
             mins,
             maxs,
             stats,
+        };
+        if let Some(pool) = builder.water {
+            match pool.captures(&mesh, builder.fs, builder.library) {
+                Ok(receivers) => mesh.water = Some((pool, receivers)),
+                Err(error) => mesh.issues.push(pool.issue(error)),
+            }
         }
+        mesh
     }
 
     pub fn issue_summary(&self) -> String {

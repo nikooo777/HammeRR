@@ -314,6 +314,10 @@ impl EditorServer {
         let pixels = renderer.render_to_rgba_checked_resolved(
             ctx, gpu_scene, camera, &view, size.0, size.1, display,
         )?;
+        let mut frame_issues = issues.clone();
+        if let Some(issue) = gpu_scene.water_preview_issue(camera, &view, size, display) {
+            frame_issues.prepend(issue);
+        }
         self.session().verify_scene_display_render(display_guard)?;
         self.session().verify_carve_preview_render()?;
         self.session().verify_terrain_removal_render()?;
@@ -342,7 +346,7 @@ impl EditorServer {
             lighting: lighting.clone(),
             sprite_guides: sprite_guides.clone(),
             png,
-            issues: issues.clone(),
+            issues: frame_issues,
         })
     }
 }

@@ -17,6 +17,7 @@ mod detail_radiance;
 mod environment;
 mod miniature;
 mod scene_display;
+mod water;
 
 /// The view format the pipelines render into; see [`RenderTarget`].
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -161,6 +162,9 @@ struct Globals {
     lighting_settings: [f32; 4],
     scene_display: [f32; 4],
     lighting_lights: [crate::lighting::Light; crate::lighting::MAX_LIGHTS],
+    water_capture: [f32; 4],
+    water_mins: [f32; 4],
+    water_maxs: [f32; 4],
 }
 
 #[derive(
@@ -469,6 +473,7 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    water: Option<(crate::scene::water::Pool, Result<WaterSurface, String>)>,
     globals_binding: wgpu::BindGroup,
     compiled_detail_hdr: Option<std::sync::Arc<crate::compiled_details::HdrRadiance>>,
     compiled_detail_hdr_ordinals: Vec<u32>,
@@ -503,6 +508,85 @@ pub struct GpuScene {
     tool_wire_lines: Option<(wgpu::Buffer, u32)>,
     rope_wire_lines: Option<(wgpu::Buffer, u32)>,
     rope_lines: Option<(wgpu::Buffer, u32)>,
+}
+
+struct WaterSurface {
+    top: Batch,
+    receivers: Vec<Batch>,
+    surface: water::Surface,
+    fog_color: [f32; 3],
+    fog_inverse_range: f32,
+}
+
+impl GpuScene {
+    fn water_for_view(
+        &self,
+        camera: &Camera,
+        view: &ViewOptions,
+        size: (u32, u32),
+        display: crate::ResolvedSceneDisplay,
+    ) -> Result<Option<(crate::scene::water::Pool, &WaterSurface)>, crate::scene::SceneIssue> {
+        use crate::scene::water::{CLIP_BIAS, NATIVE_FAR, NATIVE_NEAR};
+
+        let Some((pool, water)) = &self.water else {
+            return Ok(None);
+        };
+        if view.surface != SurfaceView::Textured {
+            return Ok(None);
+        }
+        let reason = if camera.projection != crate::Projection::Perspective || display.active {
+            Some("Water refraction requires a Legacy Perspective Textured view")
+        } else if view.tool_textures {
+            Some("Turn off Tool textures to preview water refraction")
+        } else if view.lighting_preview
+            || view.instance_contents
+            || view.sky3d_preview
+            || view.rope_preview
+            || crate::fog::for_color(view.fog, camera, view.surface).is_some()
+            || crate::fog::far_z(view.fog, camera).is_some()
+        {
+            Some(
+                "Water refraction requires fixed shading without world fog, instance, rope or 3D sky previews",
+            )
+        } else {
+            let near_half_height = (camera.fov_y_degrees.to_radians() * 0.5).tan() * NATIVE_NEAR;
+            let near_half_width = near_half_height * (size.0 as f32 / size.1.max(1) as f32);
+            let near_bottom = camera.position.z + camera.forward().z * NATIVE_NEAR
+                - camera.up().z.abs() * near_half_height
+                - camera.right().z.abs() * near_half_width;
+            let low = pool.mins.as_dvec3();
+            let high = pool.maxs.as_dvec3() + glam::DVec3::Z * f64::from(CLIP_BIAS);
+            let forward = camera.forward().as_dvec3();
+            let center = (low + high) * 0.5;
+            let half = (high - low) * 0.5;
+            let farthest_depth =
+                (center - camera.position.as_dvec3()).dot(forward) + half.dot(forward.abs());
+            if near_bottom <= pool.maxs.z + NATIVE_NEAR {
+                Some("Water refraction requires the camera and near plane above the pool")
+            } else if farthest_depth > f64::from(NATIVE_FAR) {
+                Some("Water refraction requires the whole pool within the native far plane")
+            } else {
+                None
+            }
+        };
+        if let Some(reason) = reason {
+            return Err(pool.issue(reason));
+        }
+        water
+            .as_ref()
+            .map(|surface| Some((*pool, surface)))
+            .map_err(|error| pool.issue(error.clone()))
+    }
+
+    pub fn water_preview_issue(
+        &self,
+        camera: &Camera,
+        view: &ViewOptions,
+        size: (u32, u32),
+        display: crate::ResolvedSceneDisplay,
+    ) -> Option<crate::scene::SceneIssue> {
+        self.water_for_view(camera, view, size, display).err()
+    }
 }
 
 struct ScenePipelines {
@@ -551,6 +635,7 @@ pub struct Renderer {
     black_cube: wgpu::TextureView,
     missing: wgpu::Texture,
     targets: scene_display::Targets,
+    water: water::State,
     overlay: wgpu::Buffer,
 }
 
@@ -1120,6 +1205,7 @@ impl Renderer {
             black_cube: environment::empty(ctx),
             missing: checkerboard_texture(ctx),
             targets: scene_display::Targets::default(),
+            water: water::State::default(),
             overlay: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("spatial overlays"),
                 size: 65_536,
@@ -1455,7 +1541,14 @@ impl Renderer {
                 mapped_at_creation: false,
             })
         });
+        let water = mesh.water.as_ref().map(|(pool, receivers)| {
+            (
+                *pool,
+                self.prepare_water(ctx, mesh, library, *pool, receivers),
+            )
+        });
         let scene = GpuScene {
+            water,
             globals_binding,
             compiled_detail_hdr: mesh.compiled_detail_hdr.clone(),
             compiled_detail_hdr_ordinals,
@@ -1504,6 +1597,54 @@ impl Renderer {
             return Err(format!("Scene GPU preparation failed: {error}"));
         }
         Ok(scene)
+    }
+
+    fn prepare_water(
+        &mut self,
+        ctx: &GpuContext,
+        mesh: &SceneMesh,
+        library: &MaterialLibrary,
+        pool: crate::scene::water::Pool,
+        receivers: &[Batch],
+    ) -> Result<WaterSurface, String> {
+        let mut tops = mesh
+            .batches
+            .iter()
+            .copied()
+            .filter(|batch| batch.material == pool.material);
+        let top = tops
+            .next()
+            .filter(|batch| batch.index_count == 6 && !batch.rope && !batch.model_translucent)
+            .ok_or("Water refraction requires the original pool top geometry")?;
+        if tops.next().is_some()
+            || mesh.baked_faces.is_some()
+            || !mesh.detail_parts.is_empty()
+            || !mesh.detail_billboards.is_empty()
+        {
+            return Err(
+                "Water refraction requires one authored pool top without baked surfaces or compiled details".into(),
+            );
+        }
+        let asset = library
+            .get(pool.material)
+            .water
+            .ready()
+            .ok_or("Water refraction material was not retained")?;
+        let surface = self.water.prepare_surface(
+            ctx,
+            &self.globals_layout,
+            &asset.normal,
+            crate::materials::uv::IDENTITY_AXIS,
+            asset.refract_amount,
+            asset.fog_color,
+        )?;
+        Ok(WaterSurface {
+            top,
+            receivers: receivers.to_vec(),
+            surface,
+            fog_color: asset.fog_color,
+            fog_inverse_range: asset.fog_inverse_range,
+        })
     }
 
     fn prepare_detail_hdr(
@@ -2020,6 +2161,9 @@ impl Renderer {
                 },
             ],
             lighting_lights,
+            water_capture: [0.0; 4],
+            water_mins: [0.0; 4],
+            water_maxs: [0.0; 4],
             scene_display: [if hdr { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             view_proj: camera
                 .view_projection_with_far(aspect, crate::fog::far_z(options.fog, camera))
@@ -2096,6 +2240,25 @@ impl Renderer {
         } else {
             None
         };
+        let water = scene
+            .water_for_view(camera, options, size, display)
+            .ok()
+            .flatten();
+        let water_draw = if let Some((pool, surface)) = water {
+            self.capture_water(
+                ctx,
+                scene,
+                camera,
+                aspect,
+                &globals,
+                pool,
+                surface,
+                &mut encoder,
+            )?;
+            Some((self.water.draw(ctx, &surface.surface, size)?, surface.top))
+        } else {
+            None
+        };
         let pipelines = if hdr {
             self.hdr_pipelines.as_ref().unwrap()
         } else {
@@ -2144,6 +2307,7 @@ impl Renderer {
                 sky3d_target.as_ref(),
                 sky3d_error.is_some(),
                 hdr.then_some(false),
+                water_draw.as_ref(),
             );
             if !hdr {
                 self.draw_overlays(&mut pass, scene, camera, options, overlay.len(), grid_count);
@@ -2192,6 +2356,7 @@ impl Renderer {
                 None,
                 false,
                 Some(true),
+                None,
             );
             self.draw_overlays(&mut pass, scene, camera, options, overlay.len(), grid_count);
         }
@@ -2222,6 +2387,106 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn capture_water(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        aspect: f32,
+        globals: &Globals,
+        pool: crate::scene::water::Pool,
+        water: &WaterSurface,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Result<(), String> {
+        use crate::scene::water::{CLIP_BIAS, NATIVE_FAR, NATIVE_NEAR};
+
+        let target = self.water.capture(ctx)?;
+        let clip_maxs = pool.maxs + glam::Vec3::Z * CLIP_BIAS;
+        let [r, g, b] = water.fog_color;
+        let capture = Globals {
+            view_proj: camera
+                .view_projection_clips(aspect, NATIVE_NEAR, Some(NATIVE_FAR))
+                .to_cols_array_2d(),
+            fog_color: [r, g, b, 1.0],
+            fog_range: [0.0; 4],
+            water_capture: [
+                clip_maxs.z,
+                water.fog_inverse_range,
+                NATIVE_NEAR,
+                NATIVE_FAR,
+            ],
+            water_mins: pool.mins.extend(0.0).to_array(),
+            water_maxs: clip_maxs.extend(0.0).to_array(),
+            ..*globals
+        };
+        let uniform = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Water refraction view"),
+                contents: bytemuck::bytes_of(&capture),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Water refraction view"),
+            layout: &self.globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.inert_detail_radiance.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Water refraction capture"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.color,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: f64::from(r),
+                        g: f64::from(g),
+                        b: f64::from(b),
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &target.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        pass.set_pipeline(&self.legacy_pipelines.opaque_pipeline);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.set_vertex_buffer(0, scene.vertices.slice(..));
+        pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
+        for batch in &water.receivers {
+            let material = self
+                .materials
+                .get(batch.material)
+                .and_then(Option::as_ref)
+                .ok_or("Water refraction lost a qualified receiver binding")?;
+            pass.set_bind_group(1, &material.ordinary, &[]);
+            pass.draw_indexed(
+                batch.first_index..batch.first_index + batch.index_count,
+                0,
+                0..1,
+            );
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn draw_surfaces<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
@@ -2232,6 +2497,7 @@ impl Renderer {
         sky3d_target: Option<&'pass wgpu::BindGroup>,
         sky3d_error: bool,
         helper_only: Option<bool>,
+        water_draw: Option<&(water::Draw<'_>, Batch)>,
     ) {
         pass.set_vertex_buffer(0, scene.vertices.slice(..));
         pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -2264,6 +2530,16 @@ impl Renderer {
                     && !(draw.sky && options.sky_preview)
                     && !(draw.sky3d_eligible && options.sky3d_preview)
                 {
+                    continue;
+                }
+                if let Some((water, top)) = water_draw
+                    && draw.batch == *top
+                {
+                    water.run(
+                        pass,
+                        &scene.globals_binding,
+                        top.first_index..top.first_index + top.index_count,
+                    );
                     continue;
                 }
                 if draw.baked_surface {

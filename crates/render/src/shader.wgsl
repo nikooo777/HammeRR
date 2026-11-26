@@ -341,7 +341,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         shade = clamp(dot(shading_normal, globals.light_dir.xyz), 0.0, 1.0);
     }
     if in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == UNLIT_PROJECTED_RECEIVER { shade = 1.0; }
-    var albedo = texel.rgb * in.color.rgb;
+    let capturing_water = globals.water_capture.y > 0.0;
+    var albedo = texel.rgb * select(in.color.rgb, vec3<f32>(1.0), capturing_water);
     if (in.texture_flags & DETAIL_LAYER) != 0u {
         let scale = material.detail_scale;
         let detail_rgb = textureSampleGrad(
@@ -377,6 +378,18 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             let radiance = texel.rgb * in.color.rgb * in.baked_irradiance;
             color = radiance / (vec3<f32>(1.0) + radiance);
         }
+    }
+    if capturing_water {
+        if any(in.world_position < globals.water_mins.xyz) || any(in.world_position > globals.water_maxs.xyz) {
+            discard;
+        }
+        let offset = in.world_position - globals.eye.xyz;
+        let near = globals.water_capture.z;
+        let far = globals.water_capture.w;
+        let clip_z = (dot(offset, globals.forward.xyz) - near) * (far / (far - near));
+        let submerged = clamp((globals.water_capture.x - in.world_position.z) / -offset.z, 0.0, 1.0);
+        let height_fog = clamp(submerged * clip_z * globals.water_capture.y, 0.0, 1.0);
+        return vec4<f32>(mix(color, globals.fog_color.rgb, height_fog), height_fog);
     }
     if material.helper.y < 0.5 {
         color = apply_fog(in.world_position, color);

@@ -642,6 +642,14 @@ See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
 `material_animation_time` accepts 0–3600 seconds. It selects available frames
 without changing geometry or history. See [Materials](textures.md#preview-animated-base-textures).
 
+### Preview water refraction
+
+Render a supported pool above the water with `surface:"textured"`, a
+Perspective camera and `tool_textures:false`. Use Legacy display and fixed
+shading. The shared renderer clips submerged brush faces and uses their
+height fog for distortion. Check `preview_issues` for the affected pool face.
+See [Water and slime](water.md#preview-water-refraction) for the material limits.
+
 ## Preview normal maps
 
 1. Enable `normal_maps:true` with `set_view` in Textured view, or pass the same

@@ -17,6 +17,7 @@ mod emission;
 pub(crate) mod environment;
 mod phong;
 pub(crate) mod uv;
+pub(crate) mod water;
 
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
@@ -61,6 +62,8 @@ pub struct MaterialInfo {
     pub(crate) detail: detail::Layer,
     pub(crate) environment: environment::Layer,
     pub(crate) animation: animation::Layer,
+    pub(crate) water: water::Layer,
+    pub(crate) water_receiver: bool,
     pub emission: Option<Emission>,
     emission_error: Option<String>,
     pub(crate) emission_model_only: bool,
@@ -133,13 +136,19 @@ impl MaterialInfo {
             }
         };
         match Self::display_textures(fs, name, material.as_ref(), limits.map(|limits| limits[1])) {
-            Ok(textures) => Ok(Self::from_resolved(
-                name,
-                material.as_ref(),
-                textures.base,
-                textures.blend,
-                textures.base_path,
-            )),
+            Ok(textures) => {
+                let mut info = Self::from_resolved(
+                    name,
+                    material.as_ref(),
+                    textures.base,
+                    textures.blend,
+                    textures.base_path,
+                );
+                if let Some(material) = &material {
+                    info.water = water::Layer::resolve_from_mount(fs, name, material);
+                }
+                Ok(info)
+            }
             Err(error) if limits.is_none() => {
                 let resolved = material.as_ref();
                 let mut failed = Self::failed(
@@ -156,6 +165,9 @@ impl MaterialInfo {
                 }
                 if resolved.is_some_and(detail::requested) {
                     failed.detail = detail::Layer::Unavailable(error.clone());
+                }
+                if resolved.is_some_and(water::requested) {
+                    failed.water = water::Layer::Unavailable(error.clone());
                 }
                 if resolved.is_some_and(|material| {
                     material.get("$frame").is_some() || animation::requested(material)
@@ -300,6 +312,9 @@ impl MaterialInfo {
             detail,
             environment,
             animation,
+            water: water::Layer::Absent,
+            water_receiver: material
+                .is_some_and(|material| water::is_receiver(material, display_texture.as_deref())),
             emission,
             emission_error,
             emission_model_only: material
@@ -391,6 +406,8 @@ impl MaterialInfo {
             detail: detail::Layer::Absent,
             environment: environment::Layer::Absent,
             animation: animation::Layer::Absent,
+            water: water::Layer::Absent,
+            water_receiver: false,
             emission: None,
             emission_error: None,
             emission_model_only: false,
@@ -688,6 +705,7 @@ pub type MaterialId = usize;
 pub struct MaterialLibrary {
     normals: crate::normal_maps::Library,
     detail_bytes: usize,
+    water_bytes: usize,
     environment_budget: environment::Budget,
     animation_bytes: usize,
     animated_materials: usize,
@@ -705,6 +723,7 @@ impl Default for MaterialLibrary {
         Self {
             normals: crate::normal_maps::Library::default(),
             detail_bytes: 0,
+            water_bytes: 0,
             environment_budget: environment::Budget::default(),
             animation_bytes: 0,
             animated_materials: 0,
@@ -757,6 +776,7 @@ impl MaterialLibrary {
         let mut report = ReloadReport::default();
         self.normals.clear();
         self.detail_bytes = 0;
+        self.water_bytes = 0;
         self.environment_budget = environment::Budget::default();
         self.animation_bytes = 0;
         self.animated_materials = 0;
@@ -931,6 +951,9 @@ impl MaterialLibrary {
             if let Some(detail) = self.materials[id].detail.ready() {
                 self.detail_bytes -= detail.cache_bytes();
             }
+            if let Some(asset) = self.materials[id].water.ready() {
+                self.water_bytes -= asset.cache_bytes();
+            }
             if let Some(asset) = self.materials[id].environment.ready() {
                 self.environment_budget.release(asset);
             }
@@ -1004,6 +1027,23 @@ impl MaterialLibrary {
             self.animation_bytes += bytes;
             self.animated_materials += 1;
             self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn load_water(&mut self, fs: &GameFs, id: MaterialId) {
+        use water::Layer;
+
+        let layer = &mut self.materials[id].water;
+        if matches!(layer, Layer::Declared(_))
+            && let Layer::Declared(declaration) = std::mem::replace(layer, Layer::Absent)
+        {
+            *layer = match declaration.load(fs, water::MAX_CACHE_BYTES - self.water_bytes) {
+                Ok(asset) => {
+                    self.water_bytes += asset.cache_bytes();
+                    Layer::Ready(Box::new(asset))
+                }
+                Err(error) => Layer::Unavailable(error),
+            };
         }
     }
 

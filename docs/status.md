@@ -80,7 +80,7 @@ Workflows use the supported geometry, material and resource limits in
 | P02-10 | Preview named static environment reflections | Complete |
 | P02-11 | Preview material emission | Complete |
 | P02-12 | Preview fixed base frames and looping AnimatedTexture | Complete |
-| P02-13 | Preview refraction and native water shading | Open |
+| P02-13 | Preview refraction and native water shading | Open · static above-water refraction works |
 | P02-14 | Preview detail texture layers | Complete |
 | P02-15 | Preview SSBump and linear half-float normals | Complete |
 | P02-16 | Preview extended material texture transforms | Complete |

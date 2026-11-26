@@ -206,6 +206,10 @@ impl Camera {
     }
 
     pub fn view_projection_with_far(&self, aspect: f32, far_z: Option<f32>) -> Mat4 {
+        self.view_projection_clips(aspect, Self::NEAR, far_z)
+    }
+
+    pub(crate) fn view_projection_clips(&self, aspect: f32, near: f32, far_z: Option<f32>) -> Mat4 {
         use glam::camera::rh::{proj::directx, view};
         let view = view::look_to_mat4(self.position, self.forward(), self.up());
         if self.projection != Projection::Perspective {
@@ -216,20 +220,18 @@ impl Camera {
                 -half,
                 half,
                 Self::ORTHO_DISTANCE * 2.0,
-                Self::NEAR,
+                near,
             ) * view;
         }
         // wgpu clip space is Y-up with depth in [0, 1], glam's DirectX convention.
         let proj = match far_z {
             Some(far) => {
-                assert!(far.is_finite() && far > Self::NEAR);
-                directx::perspective(self.fov_y_degrees.to_radians(), aspect, far, Self::NEAR)
+                assert!(far.is_finite() && far > near);
+                directx::perspective(self.fov_y_degrees.to_radians(), aspect, far, near)
             }
-            None => directx::perspective_infinite_reverse(
-                self.fov_y_degrees.to_radians(),
-                aspect,
-                Self::NEAR,
-            ),
+            None => {
+                directx::perspective_infinite_reverse(self.fov_y_degrees.to_radians(), aspect, near)
+            }
         };
         proj * view
     }

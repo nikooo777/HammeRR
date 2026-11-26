@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use glam::{DVec2, DVec3};
 use source_formats::vmf::{Side, Solid};
 
@@ -72,6 +74,46 @@ impl BrushGeometry {
     /// Uses strict sidedness and exact duplicate suppression for collision geometry.
     pub fn from_planes_strict(planes: &[Plane]) -> Result<Self, BrushError> {
         Self::from_planes_with_epsilon(planes, 0.0)
+    }
+
+    pub fn check_axis_aligned_cuboid(&self, epsilon: f64) -> Result<(), &'static str> {
+        let mut normals = BTreeSet::new();
+        let mut corners = BTreeSet::new();
+        for face in &self.faces {
+            let axis = (0..3)
+                .find(|&axis| {
+                    let mut normal = DVec3::ZERO;
+                    normal[axis] = face.plane.normal[axis].signum();
+                    face.plane.normal == normal
+                })
+                .ok_or("only axis-aligned cuboids are supported")?;
+            normals.insert((axis, face.plane.normal[axis] > 0.0));
+            for point in &face.vertices {
+                let mut corner = [false; 3];
+                for axis in 0..3 {
+                    if (point[axis] - self.mins[axis]).abs() <= epsilon {
+                        corner[axis] = false;
+                    } else if (point[axis] - self.maxs[axis]).abs() <= epsilon {
+                        corner[axis] = true;
+                    } else {
+                        return Err("only complete axis-aligned cuboid corners are supported");
+                    }
+                }
+                corners.insert(corner);
+            }
+        }
+        let size = self.maxs - self.mins;
+        let volume = size.x * size.y * size.z;
+        if self.faces.len() != 6
+            || normals.len() != 6
+            || corners.len() != 8
+            || size.min_element() <= epsilon
+            || !(volume as f32).is_finite()
+            || volume as f32 <= 0.0
+        {
+            return Err("one nondegenerate six-plane, eight-corner cuboid is required");
+        }
+        Ok(())
     }
 
     fn from_planes_with_epsilon(planes: &[Plane], epsilon: f64) -> Result<Self, BrushError> {
